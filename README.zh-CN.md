@@ -6,7 +6,9 @@
 
 镜像 `CoreUObject` 序列化逻辑手写解析，不依赖任何第三方 uasset crate。
 
-[![Rust](https://img.shields.io/badge/Rust-2021%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Release](https://img.shields.io/github/v/release/cyber-tao/cc-uax?logo=github)](https://github.com/cyber-tao/cc-uax/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/release.yml?branch=main&label=build)](https://github.com/cyber-tao/cc-uax/actions/workflows/release.yml)
 [![UE5](https://img.shields.io/badge/Unreal%20Engine-5.7-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=flat)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-5851DB)](#)
@@ -60,13 +62,56 @@
 
 ## 📦 安装
 
-```pwsh
-git clone <repo> cc-uax
-cd cc-uax
-cargo build --release
+### 一键安装（推荐）
+
+自动下载当前平台最新的预编译二进制，把 `cc-uax` 装到 `PATH`，并为 Claude Code 与 Codex 同时配置好 [agent skill](#-作为-agent-skill 使用)。
+
+**Linux / macOS**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/main/install.sh | bash
 ```
 
-产物位于 `target/release/cc-uax`（开发构建：`target/debug/cc-uax`）。无运行时依赖；SQLite 静态链接。
+**Windows（PowerShell）**
+
+```powershell
+irm https://raw.githubusercontent.com/cyber-tao/cc-uax/main/install.ps1 | iex
+```
+
+预编译二进制发布在 [Releases](https://github.com/cyber-tao/cc-uax/releases) 页面：
+
+| 平台 | Target |
+|---|---|
+| Linux x86_64 / aarch64 | `x86_64-unknown-linux-gnu`、`aarch64-unknown-linux-gnu` |
+| Windows x86_64 | `x86_64-pc-windows-msvc` |
+| macOS x86_64 / Apple Silicon | `x86_64-apple-darwin`、`aarch64-apple-darwin` |
+
+安装脚本支持的环境变量（执行前设置）：`INSTALL_DIR`（二进制位置）、`VERSION`（指定 tag）、`NO_SKILL=1`（跳过 skill 配置）。
+
+### 从源码构建
+
+需要 Rust ≥ 1.85（edition 2024）：
+
+```bash
+git clone https://github.com/cyber-tao/cc-uax.git
+cd cc-uax
+cargo build --release    # 产物在 target/release/cc-uax[.exe]
+```
+
+或直接安装到 `~/.cargo/bin`：`cargo install --path .`。无运行时依赖；SQLite 静态链接。
+
+## 🤖 作为 Agent Skill 使用
+
+`cc-uax` 同时附带一个遵循开放 agent-skills 标准的 [agent skill](skills/cc-uax/SKILL.md) —— **同一份 `SKILL.md` 在 Claude Code 和 OpenAI Codex 中都能用**。配置完成后，当你要求任一 agent 检查 `.uasset`/`.umap` 或追踪资产引用时，它会自动调用 `cc-uax`，无需手读二进制。
+
+一键安装脚本会同时为两个 agent 配置好 skill。如需手动配置，把 [skills/cc-uax/](skills/cc-uax/) 复制到：
+
+| Agent | 用户级位置 | 项目级位置 |
+|---|---|---|
+| Claude Code | `~/.claude/skills/cc-uax/` | `<repo>/.claude/skills/cc-uax/` |
+| Codex | `~/.agents/skills/cc-uax/` | `<repo>/.agents/skills/cc-uax/` |
+
+> skill 就是一个带 `SKILL.md`（YAML frontmatter 含 `name`、`description`）的目录。放进项目级路径并提交，团队每个成员都能自动获得该 skill。
 
 ## 🚀 用法
 
@@ -159,6 +204,13 @@ cc-uax/
 │   └── cache.rs        # SQLite 反向引用缓存（仅二进制侧）
 ├── tests/
 │   └── units.rs        # 手写字节向量集成测试
+├── skills/
+│   └── cc-uax/
+│       └── SKILL.md    # Agent skill（Claude Code + Codex 兼容）
+├── .github/workflows/
+│   └── release.yml     # 多平台构建 + tag 触发 GitHub Release
+├── install.sh          # 一键安装（Linux / macOS）
+├── install.ps1         # 一键安装（Windows）
 ├── Cargo.toml          # lib + bin 双 target
 ├── CLAUDE.md           # 给 Claude Code 的架构指引
 └── README.md

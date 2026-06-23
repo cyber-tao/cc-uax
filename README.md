@@ -6,7 +6,9 @@
 
 Parses UE5 package binaries by mirroring `CoreUObject` serialization — no third-party uasset crate involved.
 
-[![Rust](https://img.shields.io/badge/Rust-2021%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Release](https://img.shields.io/github/v/release/cyber-tao/cc-uax?logo=github)](https://github.com/cyber-tao/cc-uax/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/release.yml?branch=main&label=build)](https://github.com/cyber-tao/cc-uax/actions/workflows/release.yml)
 [![UE5](https://img.shields.io/badge/Unreal%20Engine-5.7-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=flat)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-5851DB)](#)
@@ -60,13 +62,56 @@ Parses UE5 package binaries by mirroring `CoreUObject` serialization — no thir
 
 ## 📦 Installation
 
-```pwsh
-git clone <repo> cc-uax
-cd cc-uax
-cargo build --release
+### One-line installer (recommended)
+
+Downloads the latest prebuilt binary for your platform, installs `cc-uax` on your `PATH`, and wires up the [agent skill](#-use-as-an-agent-skill) for both Claude Code and Codex.
+
+**Linux / macOS**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/main/install.sh | bash
 ```
 
-Binary lands at `target/release/cc-uax` (dev build: `target/debug/cc-uax`). No runtime dependencies; SQLite is statically linked.
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/cyber-tao/cc-uax/main/install.ps1 | iex
+```
+
+Prebuilt binaries are published on the [Releases](https://github.com/cyber-tao/cc-uax/releases) page:
+
+| Platform | Target |
+|---|---|
+| Linux x86_64 / aarch64 | `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` |
+| Windows x86_64 | `x86_64-pc-windows-msvc` |
+| macOS x86_64 / Apple Silicon | `x86_64-apple-darwin`, `aarch64-apple-darwin` |
+
+Installer options (set as env vars before invoking): `INSTALL_DIR` (binary location), `VERSION` (pin a tag), `NO_SKILL=1` (skip skill setup).
+
+### Build from source
+
+Requires Rust ≥ 1.85 (edition 2024):
+
+```bash
+git clone https://github.com/cyber-tao/cc-uax.git
+cd cc-uax
+cargo build --release    # binary at target/release/cc-uax[.exe]
+```
+
+Or install straight to `~/.cargo/bin`: `cargo install --path .`. No runtime dependencies; SQLite is statically linked.
+
+## 🤖 Use as an Agent Skill
+
+`cc-uax` doubles as an [agent skill](skills/cc-uax/SKILL.md) following the open agent-skills standard — **the same `SKILL.md` works in both Claude Code and OpenAI Codex**. Once installed, either agent automatically invokes `cc-uax` whenever you ask it to inspect a `.uasset`/`.umap` or trace asset references, so you never hand-read the binary.
+
+The one-line installer configures the skill for both agents. To set it up manually, copy [skills/cc-uax/](skills/cc-uax/) into:
+
+| Agent | User-level location | Project-level location |
+|---|---|---|
+| Claude Code | `~/.claude/skills/cc-uax/` | `<repo>/.claude/skills/cc-uax/` |
+| Codex | `~/.agents/skills/cc-uax/` | `<repo>/.agents/skills/cc-uax/` |
+
+> A skill is just a directory with a `SKILL.md` (YAML frontmatter: `name`, `description`). Drop it into the project-level path and commit it to share with every contributor.
 
 ## 🚀 Usage
 
@@ -159,6 +204,13 @@ cc-uax/
 │   └── cache.rs        # SQLite reverse-ref cache (binary-only)
 ├── tests/
 │   └── units.rs        # Hand-built byte-vector integration tests
+├── skills/
+│   └── cc-uax/
+│       └── SKILL.md    # Agent skill (Claude Code + Codex compatible)
+├── .github/workflows/
+│   └── release.yml     # Multi-platform build + GitHub Release on tag
+├── install.sh          # One-line installer (Linux / macOS)
+├── install.ps1         # One-line installer (Windows)
 ├── Cargo.toml          # lib + bin dual targets
 ├── CLAUDE.md           # Architecture guide for Claude Code
 └── README.md
