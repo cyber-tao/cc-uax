@@ -1,0 +1,26 @@
+# ---- Rust / Cargo ----
+# build artifacts
+/target
+
+# rustfmt backup files
+**/*.rs.bk
+
+# MSVC Windows builds of Rust crates generate *.pdb
+*.pdb
+
+# Cargo.lock: keep for binary crates (default), uncomment to ignore for libraries
+# Cargo.lock
+
+# ---- IDE / editor ----
+/.vscode/
+/.idea/
+*.swp
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Project-specific ----
+/.serena/
+/out_*.json
+/names_only.json
