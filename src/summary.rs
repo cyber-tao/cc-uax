@@ -98,6 +98,13 @@ impl PackageFileSummary {
         self.package_flags & PKG_FILTER_EDITOR_ONLY != 0
     }
 
+    pub fn custom_version(&self, key: Guid) -> Option<i32> {
+        self.custom_versions
+            .iter()
+            .find(|c| c.key == key)
+            .map(|c| c.version)
+    }
+
     pub fn parse(r: &mut Reader) -> Result<Self> {
         let tag = r.read_u32()?;
         if tag == PACKAGE_FILE_TAG_SWAPPED {

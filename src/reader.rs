@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Guid(pub [u32; 4]);
 
 impl Guid {

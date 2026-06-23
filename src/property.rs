@@ -108,9 +108,10 @@ pub fn parse_object_properties(
 ) -> Vec<PropertyEntry> {
     if ue5_version >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
         && let Ok(control) = r.read_u8()
-            && control & 0x02 != 0 {
-                let _ = r.read_u8();
-            }
+        && control & 0x02 != 0
+    {
+        let _ = r.read_u8();
+    }
     parse_properties(r, ctx, end_limit)
 }
 
@@ -419,7 +420,7 @@ fn parse_soft_object(r: &mut Reader, ctx: &ParseCtx) -> Result<Value> {
     }
 }
 
-fn parse_text(r: &mut Reader) -> Result<Value> {
+pub(crate) fn parse_text(r: &mut Reader) -> Result<Value> {
     let flags = r.read_u32()?;
     let history_type = r.read_i8()?;
     match history_type {

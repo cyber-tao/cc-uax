@@ -46,6 +46,25 @@ pub mod ue4 {
     pub const HIGHEST: i32 = 522;
 }
 
+pub mod custom {
+    use crate::reader::Guid;
+
+    pub const FRAMEWORK_OBJECT_VERSION: Guid =
+        Guid([0xCFFC_743F, 0x43B0_4480, 0x9391_14DF, 0x171D_2073]);
+    pub const BLUEPRINTS_OBJECT_VERSION: Guid =
+        Guid([0xB0D8_32E4, 0x1F89_4F0D, 0xACCF_7EB7, 0x36FD_4AA2]);
+    pub const RELEASE_OBJECT_VERSION: Guid =
+        Guid([0x9C54_D522, 0xA826_4FBE, 0x9421_0746, 0x61B4_82D0]);
+    pub const UE5_MAIN_STREAM_OBJECT_VERSION: Guid =
+        Guid([0x697D_D581, 0xE64F_41AB, 0xAA4A_51EC, 0xBEB7_B628]);
+    pub const UE5_RELEASE_STREAM_OBJECT_VERSION: Guid =
+        Guid([0xD89B_5E42, 0x24BD_4D46, 0x8412_ACA8, 0xDF64_1779]);
+
+    pub const EDGRAPH_PIN_SOURCE_INDEX: i32 = 50;
+    pub const PIN_TYPE_INCLUDES_UOBJECT_WRAPPER_FLAG: i32 = 32;
+    pub const SERIALIZE_FLOAT_PIN_SINGLE_PRECISION: i32 = 36;
+}
+
 pub const PACKAGE_FILE_TAG: u32 = 0x9E2A_83C1;
 
 pub const PACKAGE_FILE_TAG_SWAPPED: u32 = 0xC183_2A9E;

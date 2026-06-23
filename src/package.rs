@@ -1,12 +1,13 @@
 use crate::name::NameMap;
 use crate::object::{ObjectExport, ObjectImport};
+use crate::pin::{Pin, PinRef, PinSerCtx, direction_label, parse_node_pins};
 use crate::property::{ParseCtx, entries_to_json, parse_object_properties};
-use crate::reader::Reader;
+use crate::reader::{Guid, Reader};
 use crate::summary::PackageFileSummary;
 use crate::version::ue5;
 use anyhow::Result;
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 const PACKAGE_CLASS_NAME: &str = "Package";
 const SCRIPT_PATH_PREFIX: &str = "/Script/";
@@ -203,20 +204,23 @@ impl Package {
         };
         let mut reader = Reader::new(data);
         let file_len = reader.len();
+        let pin_ctx = PinSerCtx::from_summary(&self.summary);
+        let has_script = !self.summary.is_unversioned()
+            && self.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET;
 
-        let mut arr = Vec::with_capacity(self.exports.len());
+        let mut objs: Vec<serde_json::Map<String, Value>> = Vec::with_capacity(self.exports.len());
+        let mut export_pins: Vec<Option<Vec<Pin>>> = Vec::with_capacity(self.exports.len());
+
         for (i, exp) in self.exports.iter().enumerate() {
             let pkg_index = (i as i32) + 1;
+            let class_full = self.resolve_full_name(exp.class_index.0, 0);
             let mut obj = serde_json::Map::new();
             obj.insert("index".into(), json!(pkg_index));
             obj.insert(
                 "name".into(),
                 json!(self.names.resolve_raw(exp.object_name)),
             );
-            obj.insert(
-                "class".into(),
-                name_or_null(self.resolve_full_name(exp.class_index.0, 0)),
-            );
+            obj.insert("class".into(), name_or_null(class_full.clone()));
             obj.insert(
                 "super".into(),
                 name_or_null(self.resolve_full_name(exp.super_index.0, 0)),
@@ -243,8 +247,6 @@ impl Package {
                 obj.insert("is_asset".into(), json!(true));
             }
 
-            let has_script = !self.summary.is_unversioned()
-                && self.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET;
             if has_script {
                 obj.insert(
                     "script_serialization_start".into(),
@@ -256,6 +258,7 @@ impl Package {
                 );
             }
 
+            let mut pins = None;
             if !opts.no_properties && exp.serial_size > 0 && exp.serial_offset >= 0 {
                 let (start, end) = if has_script {
                     (
@@ -289,16 +292,157 @@ impl Package {
                 } else if has_script && end == start {
                     obj.insert("properties".into(), Value::Array(Vec::new()));
                 }
+
+                pins = self.try_parse_pins(
+                    &mut reader,
+                    exp,
+                    &class_full,
+                    has_script,
+                    file_len,
+                    &ctx,
+                    &pin_ctx,
+                );
+                if pins.is_none() {
+                    let pin_start = exp.serial_offset + exp.script_serialization_end_offset;
+                    let pin_end = exp.serial_offset + exp.serial_size;
+                    if has_script && is_graph_node_class(&class_full) && pin_end > pin_start {
+                        obj.insert("pins_unparsed_bytes".into(), json!(pin_end - pin_start));
+                    }
+                }
             }
 
-            arr.push(Value::Object(obj));
+            objs.push(obj);
+            export_pins.push(pins);
         }
+
+        let mut pin_name_by_id: HashMap<(i32, Guid), String> = HashMap::new();
+        for (i, pins) in export_pins.iter().enumerate() {
+            if let Some(pins) = pins {
+                let node_index = (i as i32) + 1;
+                for p in pins {
+                    pin_name_by_id.insert((node_index, p.pin_id), p.name.clone());
+                }
+            }
+        }
+
+        let arr: Vec<Value> = objs
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut obj)| {
+                if let Some(pins) = &export_pins[i] {
+                    obj.insert("pins".into(), self.pins_to_json(pins, &pin_name_by_id));
+                }
+                Value::Object(obj)
+            })
+            .collect();
         Value::Array(arr)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_parse_pins(
+        &self,
+        reader: &mut Reader,
+        exp: &ObjectExport,
+        class_full: &str,
+        has_script: bool,
+        file_len: u64,
+        ctx: &ParseCtx,
+        pin_ctx: &PinSerCtx,
+    ) -> Option<Vec<Pin>> {
+        if !has_script || !is_graph_node_class(class_full) {
+            return None;
+        }
+        let pin_start = exp.serial_offset + exp.script_serialization_end_offset;
+        let pin_end = exp.serial_offset + exp.serial_size;
+        if pin_start < 0 || pin_end <= pin_start || (pin_end as u64) > file_len {
+            return None;
+        }
+        reader.seek(pin_start as u64).ok()?;
+        parse_node_pins(reader, pin_end as u64, ctx, pin_ctx)
+    }
+
+    fn pins_to_json(&self, pins: &[Pin], names: &HashMap<(i32, Guid), String>) -> Value {
+        let arr: Vec<Value> = pins
+            .iter()
+            .map(|p| {
+                let mut o = serde_json::Map::new();
+                o.insert("name".into(), json!(p.name));
+                o.insert("direction".into(), json!(direction_label(p.direction)));
+                if !p.category.is_empty() {
+                    o.insert("category".into(), json!(p.category));
+                }
+                if !p.sub_category.is_empty() {
+                    o.insert("sub_category".into(), json!(p.sub_category));
+                }
+                if p.sub_category_object != 0 {
+                    o.insert(
+                        "sub_category_object".into(),
+                        self.resolve_object_ref(p.sub_category_object),
+                    );
+                }
+                if !p.default_value.is_empty() {
+                    o.insert("default_value".into(), json!(p.default_value));
+                }
+                if p.default_object != 0 {
+                    o.insert(
+                        "default_object".into(),
+                        self.resolve_object_ref(p.default_object),
+                    );
+                }
+                o.insert("pin_id".into(), json!(p.pin_id.to_hex()));
+                if !p.linked_to.is_empty() {
+                    let links: Vec<Value> = p
+                        .linked_to
+                        .iter()
+                        .map(|r| self.link_to_json(r, names))
+                        .collect();
+                    o.insert("linked_to".into(), Value::Array(links));
+                }
+                if !p.sub_pins.is_empty() {
+                    let links: Vec<Value> = p
+                        .sub_pins
+                        .iter()
+                        .map(|r| self.link_to_json(r, names))
+                        .collect();
+                    o.insert("sub_pins".into(), Value::Array(links));
+                }
+                if let Some(parent) = &p.parent_pin {
+                    o.insert("parent_pin".into(), self.link_to_json(parent, names));
+                }
+                Value::Object(o)
+            })
+            .collect();
+        Value::Array(arr)
+    }
+
+    fn link_to_json(&self, r: &PinRef, names: &HashMap<(i32, Guid), String>) -> Value {
+        let mut o = serde_json::Map::new();
+        o.insert(
+            "node".into(),
+            name_or_null(self.resolve_full_name(r.node_index, 0)),
+        );
+        o.insert("node_index".into(), json!(r.node_index));
+        match names.get(&(r.node_index, r.pin_id)) {
+            Some(name) => {
+                o.insert("pin".into(), json!(name));
+            }
+            None => {
+                o.insert("pin_id".into(), json!(r.pin_id.to_hex()));
+            }
+        }
+        Value::Object(o)
     }
 }
 
 fn name_or_null(s: String) -> Value {
     if s.is_empty() { Value::Null } else { json!(s) }
+}
+
+fn is_graph_node_class(class_full: &str) -> bool {
+    let simple = class_full.rsplit(['.', '/']).next().unwrap_or(class_full);
+    simple.starts_with("K2Node")
+        || simple.starts_with("EdGraphNode")
+        || simple.contains("GraphNode")
 }
 
 pub fn collect_package_references<I, S>(imports: I) -> (Vec<String>, Vec<String>)
