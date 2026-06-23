@@ -22,9 +22,9 @@ If missing, install via the one-line installer (downloads the latest prebuilt bi
 
 ```bash
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.sh | bash
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/cyber-tao/cc-uax/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
 ```
 
 Or build from source: `cargo install --path .` (puts `cc-uax` in `~/.cargo/bin`).

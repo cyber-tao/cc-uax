@@ -69,13 +69,13 @@ Downloads the latest prebuilt binary for your platform, installs `cc-uax` on you
 **Linux / macOS**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.sh | bash
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-irm https://raw.githubusercontent.com/cyber-tao/cc-uax/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
 ```
 
 Prebuilt binaries are published on the [Releases](https://github.com/cyber-tao/cc-uax/releases) page:
