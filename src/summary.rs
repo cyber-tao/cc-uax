@@ -1,6 +1,6 @@
 use crate::reader::{Guid, Reader};
-use crate::version::{ue4, ue5, PACKAGE_FILE_TAG, PACKAGE_FILE_TAG_SWAPPED};
-use anyhow::{bail, Result};
+use crate::version::{PACKAGE_FILE_TAG, PACKAGE_FILE_TAG_SWAPPED, ue4, ue5};
+use anyhow::{Result, bail};
 
 const PKG_FILTER_EDITOR_ONLY: u32 = 0x8000_0000;
 
@@ -101,7 +101,9 @@ impl PackageFileSummary {
     pub fn parse(r: &mut Reader) -> Result<Self> {
         let tag = r.read_u32()?;
         if tag == PACKAGE_FILE_TAG_SWAPPED {
-            bail!("package uses swapped (big-endian) byte order, possibly a cooked console package; unsupported");
+            bail!(
+                "package uses swapped (big-endian) byte order, possibly a cooked console package; unsupported"
+            );
         }
         if tag != PACKAGE_FILE_TAG {
             bail!(
@@ -111,10 +113,14 @@ impl PackageFileSummary {
 
         let legacy_file_version = r.read_i32()?;
         if legacy_file_version >= 0 {
-            bail!("looks like a legacy UE3 package (LegacyFileVersion={legacy_file_version}); unsupported");
+            bail!(
+                "looks like a legacy UE3 package (LegacyFileVersion={legacy_file_version}); unsupported"
+            );
         }
         if legacy_file_version < -9 {
-            bail!("package format version too new (LegacyFileVersion={legacy_file_version}); out of known range");
+            bail!(
+                "package format version too new (LegacyFileVersion={legacy_file_version}); out of known range"
+            );
         }
 
         if legacy_file_version != -4 {
@@ -268,7 +274,9 @@ impl PackageFileSummary {
 
         let compressed_chunks_count = r.read_i32()?;
         if compressed_chunks_count != 0 {
-            bail!("package uses package-level compression (CompressedChunks={compressed_chunks_count}); cannot parse");
+            bail!(
+                "package uses package-level compression (CompressedChunks={compressed_chunks_count}); cannot parse"
+            );
         }
 
         let package_source = r.read_u32()?;

@@ -1,7 +1,7 @@
 use crate::name::NameMap;
 use crate::reader::Reader;
-use anyhow::{bail, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, bail};
+use serde_json::{Value, json};
 
 const PREVIEW_MAX: usize = 64;
 
@@ -106,13 +106,11 @@ pub fn parse_object_properties(
     end_limit: u64,
     ue5_version: i32,
 ) -> Vec<PropertyEntry> {
-    if ue5_version >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION {
-        if let Ok(control) = r.read_u8() {
-            if control & 0x02 != 0 {
+    if ue5_version >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
+        && let Ok(control) = r.read_u8()
+            && control & 0x02 != 0 {
                 let _ = r.read_u8();
             }
-        }
-    }
     parse_properties(r, ctx, end_limit)
 }
 

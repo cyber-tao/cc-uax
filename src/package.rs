@@ -1,11 +1,11 @@
 use crate::name::NameMap;
 use crate::object::{ObjectExport, ObjectImport};
-use crate::property::{entries_to_json, parse_object_properties, ParseCtx};
+use crate::property::{ParseCtx, entries_to_json, parse_object_properties};
 use crate::reader::Reader;
 use crate::summary::PackageFileSummary;
 use crate::version::ue5;
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 const PACKAGE_CLASS_NAME: &str = "Package";
@@ -298,11 +298,7 @@ impl Package {
 }
 
 fn name_or_null(s: String) -> Value {
-    if s.is_empty() {
-        Value::Null
-    } else {
-        json!(s)
-    }
+    if s.is_empty() { Value::Null } else { json!(s) }
 }
 
 pub fn collect_package_references<I, S>(imports: I) -> (Vec<String>, Vec<String>)

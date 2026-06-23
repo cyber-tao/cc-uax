@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use cc_uax::package::package_path_from_relative;
 use cc_uax::{JsonOptions, Package};
 use clap::Parser;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{IsTerminal, Write};
@@ -103,12 +103,11 @@ fn main() -> Result<()> {
         if let Some(scan_dir) = args.scan_dir.as_deref() {
             let (self_pkg, referenced_by) =
                 compute_referenced_by(&args.input, scan_dir, &args.mount, !args.no_cache)?;
-            if let Value::Object(ref mut m) = json {
-                if let Some(Value::Object(refs)) = m.get_mut("references") {
+            if let Value::Object(ref mut m) = json
+                && let Some(Value::Object(refs)) = m.get_mut("references") {
                     refs.insert("self".into(), json!(self_pkg));
                     refs.insert("referenced_by".into(), json!(referenced_by));
                 }
-            }
         }
     } else if args.scan_dir.is_some() {
         eprintln!("Note: --scan-dir only takes effect together with --references");
