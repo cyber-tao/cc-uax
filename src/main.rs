@@ -19,9 +19,11 @@ use cache::{CacheEntry, RefCache};
     about = "Parse UE5 Blueprint (.uasset) files into JSON",
     arg_required_else_help = true,
     after_help = r#"EXAMPLES:
-  cc-uax asset.uasset                  Pretty-print parsed JSON to stdout
-  cc-uax asset.uasset -c -o out.json   Write compact JSON to out.json
-  cc-uax asset.uasset -s               Print only the package summary"#
+  cc-uax asset.uasset                     Full JSON (summary + imports + exports)
+  cc-uax asset.uasset -S logic            Graph nodes + pin connectivity only
+  cc-uax asset.uasset -S debug            Summary + imports + full properties + layout
+  cc-uax asset.uasset -S exports,pins     Pick sections explicitly
+  cc-uax asset.uasset -c -o out.json      Write compact JSON to a file"#
 )]
 struct Args {
     #[arg(
@@ -40,6 +42,14 @@ struct Args {
 
     #[arg(short, long, help = "Output compact JSON instead of pretty-printed")]
     compact: bool,
+
+    #[arg(
+        short = 'S',
+        long,
+        value_name = "LIST",
+        help = "Comma-separated output sections or a preset (overrides -s/-P/-r). Sections: summary, imports, exports, pins, properties, layout, names, references. Presets: logic, debug, full, refs, min"
+    )]
+    sections: Option<String>,
 
     #[arg(short, long, help = "Include the full name table in the output")]
     names: bool,
@@ -90,24 +100,39 @@ fn main() -> Result<()> {
     let package = Package::parse(&data)
         .with_context(|| format!("Failed to parse: {}", args.input.display()))?;
 
-    let opts = JsonOptions {
-        include_names: args.names,
-        summary_only: args.summary_only,
-        no_properties: args.no_properties,
-        references_only: args.references,
+    let mut sections = if let Some(spec) = args.sections.as_deref() {
+        JsonOptions::parse(spec).with_context(|| format!("Invalid --sections value: '{spec}'"))?
+    } else if args.summary_only {
+        let mut s = JsonOptions::none();
+        s.summary = true;
+        s
+    } else if args.references {
+        let mut s = JsonOptions::none();
+        s.references = true;
+        s
+    } else if args.no_properties {
+        let mut s = JsonOptions::full();
+        s.properties = false;
+        s
+    } else {
+        JsonOptions::full()
     };
+    if args.names {
+        sections.names = true;
+    }
 
-    let mut json = package.to_json(&data, &opts);
+    let mut json = package.to_json(&data, &sections);
 
-    if args.references {
+    if sections.references {
         if let Some(scan_dir) = args.scan_dir.as_deref() {
             let (self_pkg, referenced_by) =
                 compute_referenced_by(&args.input, scan_dir, &args.mount, !args.no_cache)?;
             if let Value::Object(ref mut m) = json
-                && let Some(Value::Object(refs)) = m.get_mut("references") {
-                    refs.insert("self".into(), json!(self_pkg));
-                    refs.insert("referenced_by".into(), json!(referenced_by));
-                }
+                && let Some(Value::Object(refs)) = m.get_mut("references")
+            {
+                refs.insert("self".into(), json!(self_pkg));
+                refs.insert("referenced_by".into(), json!(referenced_by));
+            }
         }
     } else if args.scan_dir.is_some() {
         eprintln!("Note: --scan-dir only takes effect together with --references");

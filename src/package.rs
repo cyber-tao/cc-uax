@@ -1,23 +1,125 @@
 use crate::name::NameMap;
 use crate::object::{ObjectExport, ObjectImport};
 use crate::pin::{Pin, PinRef, PinSerCtx, direction_label, parse_node_pins};
-use crate::property::{ParseCtx, entries_to_json, parse_object_properties};
+use crate::property::{ParseCtx, PropertyEntry, entries_to_json, parse_object_properties};
 use crate::reader::{Guid, Reader};
 use crate::summary::PackageFileSummary;
 use crate::version::ue5;
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 
 const PACKAGE_CLASS_NAME: &str = "Package";
 const SCRIPT_PATH_PREFIX: &str = "/Script/";
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct JsonOptions {
-    pub include_names: bool,
-    pub summary_only: bool,
-    pub no_properties: bool,
-    pub references_only: bool,
+    pub summary: bool,
+    pub imports: bool,
+    pub names: bool,
+    pub references: bool,
+    pub exports: bool,
+    pub pins: bool,
+    pub properties: bool,
+    pub layout: bool,
+}
+
+impl Default for JsonOptions {
+    fn default() -> Self {
+        Self::full()
+    }
+}
+
+impl JsonOptions {
+    pub fn none() -> Self {
+        Self {
+            summary: false,
+            imports: false,
+            names: false,
+            references: false,
+            exports: false,
+            pins: false,
+            properties: false,
+            layout: false,
+        }
+    }
+
+    pub fn full() -> Self {
+        Self {
+            summary: true,
+            imports: true,
+            names: false,
+            references: false,
+            exports: true,
+            pins: true,
+            properties: true,
+            layout: true,
+        }
+    }
+
+    pub fn parse(spec: &str) -> Result<Self> {
+        let mut s = Self::none();
+        let mut seen = false;
+        for raw in spec.split(',') {
+            let tok = raw.trim();
+            if tok.is_empty() {
+                continue;
+            }
+            seen = true;
+            match tok.to_ascii_lowercase().as_str() {
+                "full" | "all" => s.merge(&Self::full()),
+                "logic" | "graph" => {
+                    s.summary = true;
+                    s.exports = true;
+                    s.pins = true;
+                }
+                "debug" => {
+                    s.summary = true;
+                    s.imports = true;
+                    s.exports = true;
+                    s.properties = true;
+                    s.layout = true;
+                }
+                "refs" => s.references = true,
+                "min" => s.summary = true,
+                "summary" => s.summary = true,
+                "imports" => s.imports = true,
+                "names" => s.names = true,
+                "references" => s.references = true,
+                "exports" | "identity" => s.exports = true,
+                "pins" => {
+                    s.exports = true;
+                    s.pins = true;
+                }
+                "properties" | "props" => {
+                    s.exports = true;
+                    s.properties = true;
+                }
+                "layout" => {
+                    s.exports = true;
+                    s.layout = true;
+                }
+                other => bail!(
+                    "unknown section '{other}'; valid sections: summary, imports, exports, identity, pins, properties, layout, names, references; presets: logic, debug, full, refs, min"
+                ),
+            }
+        }
+        if !seen {
+            bail!("no sections specified");
+        }
+        Ok(s)
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.summary |= other.summary;
+        self.imports |= other.imports;
+        self.names |= other.names;
+        self.references |= other.references;
+        self.exports |= other.exports;
+        self.pins |= other.pins;
+        self.properties |= other.properties;
+        self.layout |= other.layout;
+    }
 }
 
 pub struct Package {
@@ -108,14 +210,19 @@ impl Package {
 
     pub fn to_json(&self, data: &[u8], opts: &JsonOptions) -> Value {
         let mut root = serde_json::Map::new();
-        root.insert("summary".into(), self.summary_json());
-        if opts.include_names {
+        if opts.summary {
+            root.insert("summary".into(), self.summary_json());
+        }
+        if opts.names {
             root.insert("names".into(), json!(self.names.names));
         }
-        if opts.references_only {
+        if opts.references {
             root.insert("references".into(), self.references_json());
-        } else if !opts.summary_only {
+        }
+        if opts.imports {
             root.insert("imports".into(), self.imports_json());
+        }
+        if opts.exports {
             root.insert("exports".into(), self.exports_json(data, opts));
         }
         Value::Object(root)
@@ -214,6 +321,7 @@ impl Package {
         for (i, exp) in self.exports.iter().enumerate() {
             let pkg_index = (i as i32) + 1;
             let class_full = self.resolve_full_name(exp.class_index.0, 0);
+            let is_node = is_graph_node_class(&class_full);
             let mut obj = serde_json::Map::new();
             obj.insert("index".into(), json!(pkg_index));
             obj.insert(
@@ -221,45 +329,46 @@ impl Package {
                 json!(self.names.resolve_raw(exp.object_name)),
             );
             obj.insert("class".into(), name_or_null(class_full.clone()));
-            obj.insert(
-                "super".into(),
-                name_or_null(self.resolve_full_name(exp.super_index.0, 0)),
-            );
-            obj.insert(
-                "template".into(),
-                name_or_null(self.resolve_full_name(exp.template_index.0, 0)),
-            );
-            obj.insert(
-                "outer".into(),
-                name_or_null(self.resolve_full_name(exp.outer_index.0, 0)),
-            );
-            obj.insert(
-                "full_name".into(),
-                json!(self.resolve_full_name(pkg_index, 0)),
-            );
-            obj.insert(
-                "object_flags".into(),
-                json!(format!("0x{:08X}", exp.object_flags)),
-            );
-            obj.insert("serial_offset".into(), json!(exp.serial_offset));
-            obj.insert("serial_size".into(), json!(exp.serial_size));
             if exp.is_asset {
                 obj.insert("is_asset".into(), json!(true));
             }
-
-            if has_script {
+            if opts.layout {
                 obj.insert(
-                    "script_serialization_start".into(),
-                    json!(exp.script_serialization_start_offset),
+                    "super".into(),
+                    name_or_null(self.resolve_full_name(exp.super_index.0, 0)),
                 );
                 obj.insert(
-                    "script_serialization_end".into(),
-                    json!(exp.script_serialization_end_offset),
+                    "template".into(),
+                    name_or_null(self.resolve_full_name(exp.template_index.0, 0)),
                 );
+                obj.insert(
+                    "outer".into(),
+                    name_or_null(self.resolve_full_name(exp.outer_index.0, 0)),
+                );
+                obj.insert(
+                    "full_name".into(),
+                    json!(self.resolve_full_name(pkg_index, 0)),
+                );
+                obj.insert(
+                    "object_flags".into(),
+                    json!(format!("0x{:08X}", exp.object_flags)),
+                );
+                obj.insert("serial_offset".into(), json!(exp.serial_offset));
+                obj.insert("serial_size".into(), json!(exp.serial_size));
+                if has_script {
+                    obj.insert(
+                        "script_serialization_start".into(),
+                        json!(exp.script_serialization_start_offset),
+                    );
+                    obj.insert(
+                        "script_serialization_end".into(),
+                        json!(exp.script_serialization_end_offset),
+                    );
+                }
             }
 
-            let mut pins = None;
-            if !opts.no_properties && exp.serial_size > 0 && exp.serial_offset >= 0 {
+            let in_bounds = exp.serial_size > 0 && exp.serial_offset >= 0;
+            if (opts.properties || is_node) && in_bounds {
                 let (start, end) = if has_script {
                     (
                         exp.serial_offset + exp.script_serialization_start_offset,
@@ -280,19 +389,30 @@ impl Package {
                         end as u64,
                         self.summary.file_version_ue5,
                     );
-                    obj.insert("properties".into(), entries_to_json(&props));
-                    let consumed = reader.pos().saturating_sub(start as u64);
-                    let range = (end - start) as u64;
-                    if consumed < range {
-                        obj.insert(
-                            "properties_unconsumed_bytes".into(),
-                            json!(range - consumed),
-                        );
+                    if let Some((member, from)) = distill_member(&props) {
+                        obj.insert("member".into(), json!(member));
+                        if let Some(from) = from {
+                            obj.insert("member_from".into(), from);
+                        }
                     }
-                } else if has_script && end == start {
+                    if opts.properties {
+                        obj.insert("properties".into(), entries_to_json(&props));
+                        let consumed = reader.pos().saturating_sub(start as u64);
+                        let range = (end - start) as u64;
+                        if consumed < range {
+                            obj.insert(
+                                "properties_unconsumed_bytes".into(),
+                                json!(range - consumed),
+                            );
+                        }
+                    }
+                } else if opts.properties && has_script && end == start {
                     obj.insert("properties".into(), Value::Array(Vec::new()));
                 }
+            }
 
+            let mut pins = None;
+            if opts.pins && in_bounds {
                 pins = self.try_parse_pins(
                     &mut reader,
                     exp,
@@ -305,7 +425,7 @@ impl Package {
                 if pins.is_none() {
                     let pin_start = exp.serial_offset + exp.script_serialization_end_offset;
                     let pin_end = exp.serial_offset + exp.serial_size;
-                    if has_script && is_graph_node_class(&class_full) && pin_end > pin_start {
+                    if has_script && is_node && pin_end > pin_start {
                         obj.insert("pins_unparsed_bytes".into(), json!(pin_end - pin_start));
                     }
                 }
@@ -313,6 +433,10 @@ impl Package {
 
             objs.push(obj);
             export_pins.push(pins);
+        }
+
+        if !opts.pins {
+            return Value::Array(objs.into_iter().map(Value::Object).collect());
         }
 
         let mut pin_name_by_id: HashMap<(i32, Guid), String> = HashMap::new();
@@ -443,6 +567,41 @@ fn is_graph_node_class(class_full: &str) -> bool {
     simple.starts_with("K2Node")
         || simple.starts_with("EdGraphNode")
         || simple.contains("GraphNode")
+}
+
+fn distill_member(props: &[PropertyEntry]) -> Option<(String, Option<Value>)> {
+    const REF_PROPS: [&str; 4] = [
+        "FunctionReference",
+        "EventReference",
+        "VariableReference",
+        "DelegateReference",
+    ];
+    for e in props {
+        if !REF_PROPS.contains(&e.name.as_str()) {
+            continue;
+        }
+        let inner = match e.value.get("properties").and_then(Value::as_array) {
+            Some(a) => a,
+            None => continue,
+        };
+        let mut member = None;
+        let mut from = None;
+        for p in inner {
+            match p.get("name").and_then(Value::as_str) {
+                Some("MemberName") => {
+                    member = p.get("value").and_then(Value::as_str).map(str::to_owned);
+                }
+                Some("MemberParent") => {
+                    from = p.get("value").cloned();
+                }
+                _ => {}
+            }
+        }
+        if let Some(m) = member {
+            return Some((m, from));
+        }
+    }
+    None
 }
 
 pub fn collect_package_references<I, S>(imports: I) -> (Vec<String>, Vec<String>)
