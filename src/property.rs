@@ -167,7 +167,7 @@ pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<P
         }
         let value_start = r.pos();
         let aligned = value_start.saturating_add(size as u64);
-        if aligned > end_limit.max(r.len()) {
+        if aligned > end_limit {
             break;
         }
 
