@@ -1,6 +1,7 @@
 use cc_uax::name::NameMap;
 use cc_uax::object::PackageIndex;
 use cc_uax::package::{collect_package_references, package_path_from_relative};
+use cc_uax::pin::PinSerCtx;
 use cc_uax::property::{ParseCtx, TypeName, parse_properties};
 use cc_uax::reader::{RawName, Reader};
 use cc_uax::{OutputSections, Package};
@@ -304,6 +305,7 @@ fn nested_struct_respects_declared_value_end() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -346,6 +348,7 @@ fn native_struct_array_falls_back_to_hex() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -431,6 +434,7 @@ fn text_property_unknown_history_falls_back_to_hex() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, end);
@@ -486,6 +490,7 @@ fn native_struct_box_decodes() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -540,6 +545,7 @@ fn native_struct_rich_curve_key_array_keeps_stride() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -580,6 +586,7 @@ fn material_scalar_input_resolves_expression() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -616,6 +623,7 @@ fn native_struct_per_platform_float_decodes() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -650,6 +658,7 @@ fn native_struct_movie_scene_frame_range_decodes() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -703,6 +712,7 @@ fn native_struct_movie_scene_float_channel_decodes() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -753,6 +763,7 @@ fn text_ordered_format_decodes() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -794,6 +805,7 @@ fn text_string_table_entry_decodes() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -833,6 +845,7 @@ fn multicast_inline_delegate_decodes() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -875,6 +888,7 @@ fn native_struct_instanced_struct_decodes() {
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -886,4 +900,50 @@ fn native_struct_instanced_struct_decodes() {
     assert_eq!(props.len(), 1);
     assert_eq!(props[0]["name"].as_str(), Some("Inner"));
     assert_eq!(props[0]["value"].as_i64(), Some(99));
+}
+
+#[test]
+fn native_struct_edgraph_pin_type_decodes() {
+    let names = NameMap {
+        names: vec![
+            "PinType".to_string(),
+            "StructProperty".to_string(),
+            "EdGraphPinType".to_string(),
+            "int".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 3); // category = "int"
+    push_raw_name(&mut value, 4); // sub_category = "None"
+    push_i32(&mut value, -9); // sub_category_object
+    value.push(0); // container_type = None
+    push_i32(&mut value, 0); // bIsReference
+    push_i32(&mut value, 0); // bIsWeakPointer
+    push_i32(&mut value, 0); // member parent
+    push_raw_name(&mut value, 4); // member name = "None"
+    value.extend_from_slice(&[0u8; 16]); // member guid
+    push_i32(&mut value, 0); // bIsConst
+    push_i32(&mut value, 0); // bIsUObjectWrapper
+    push_i32(&mut value, 0); // bSerializeAsSinglePrecisionFloat
+    assert_eq!(value.len(), 69);
+    let d = build_struct_property(2, 4, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+        pins: PinSerCtx {
+            filter_editor_only: false,
+            has_source_index: false,
+            has_uobject_wrapper: true,
+            has_single_precision_float: true,
+        },
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["category"].as_str(), Some("int"));
+    assert_eq!(v["sub_category_object"]["index"].as_i64(), Some(-9));
 }

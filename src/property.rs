@@ -1,4 +1,5 @@
 use crate::name::NameMap;
+use crate::pin::PinSerCtx;
 use crate::reader::Reader;
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
@@ -69,6 +70,7 @@ impl TypeName {
 pub struct ParseCtx<'a> {
     pub names: &'a NameMap,
     pub resolve_object: &'a dyn Fn(i32) -> Value,
+    pub pins: PinSerCtx,
 }
 
 #[derive(Debug, Clone)]
@@ -546,6 +548,15 @@ fn parse_native_struct(
         "MovieSceneDoubleChannel" => parse_movie_scene_channel(r, true, value_end)?,
         "PerQualityLevelInt" => parse_per_quality_level(r, ScalarKind::I32, value_end)?,
         "PerQualityLevelFloat" => parse_per_quality_level(r, ScalarKind::F32, value_end)?,
+        "EdGraphPinType" => {
+            let (category, sub_category, sub_category_object) =
+                crate::pin::parse_pin_type(r, ctx, &ctx.pins)?;
+            json!({
+                "category": category,
+                "sub_category": sub_category,
+                "sub_category_object": (ctx.resolve_object)(sub_category_object),
+            })
+        }
         "InstancedStruct" => {
             // Modern format (>= CustomVersionAdded): no legacy header/version prefix.
             let script_struct = r.read_i32()?;

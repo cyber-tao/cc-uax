@@ -308,13 +308,14 @@ impl Package {
 
     fn exports_json(&self, data: &[u8], opts: &OutputSections) -> Value {
         let resolve = |idx: i32| self.resolve_object_ref(idx);
+        let pin_ctx = PinSerCtx::from_summary(&self.summary);
         let ctx = ParseCtx {
             names: &self.names,
             resolve_object: &resolve,
+            pins: pin_ctx,
         };
         let mut reader = Reader::new(data);
         let file_len = reader.len();
-        let pin_ctx = PinSerCtx::from_summary(&self.summary);
         let has_script = self.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET;
 
         let mut objs: Vec<serde_json::Map<String, Value>> = Vec::with_capacity(self.exports.len());

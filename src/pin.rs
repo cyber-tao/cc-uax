@@ -8,6 +8,7 @@ const MAX_PIN_COUNT: i32 = 4096;
 const CONTAINER_TYPE_MAP: u8 = 3;
 const PIN_DIRECTION_INPUT: u8 = 0;
 
+#[derive(Clone, Copy, Default)]
 pub struct PinSerCtx {
     pub filter_editor_only: bool,
     pub has_source_index: bool,
@@ -145,7 +146,11 @@ fn parse_pin(r: &mut Reader, ctx: &ParseCtx, vc: &PinSerCtx) -> Result<Pin> {
     })
 }
 
-fn parse_pin_type(r: &mut Reader, ctx: &ParseCtx, vc: &PinSerCtx) -> Result<(String, String, i32)> {
+pub(crate) fn parse_pin_type(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    vc: &PinSerCtx,
+) -> Result<(String, String, i32)> {
     let category = ctx.names.resolve_raw(r.read_raw_name()?);
     let sub_category = ctx.names.resolve_raw(r.read_raw_name()?);
     let sub_category_object = r.read_i32()?;
