@@ -53,7 +53,7 @@ The per-export `serial_offset`/`serial_size` windowing is what guarantees byte a
 - `TypeName` — UE5.7 `FPropertyTypeName` (nested type name with parameters).
 - `ParseCtx` — carries a `&Package` reference so object-property values can be resolved to full names + package indices.
 - `parse_value` dispatches into `parse_collection` / `parse_map` / `parse_element` / `parse_struct` / `parse_native_struct` / `parse_soft_object` / `parse_text`.
-- **Hex fallback**: types with custom binary serialization that are not yet structured (e.g. Niagara nodes, `AnimNotifyEvent`) are emitted as a hex preview capped by `PREVIEW_MAX`, preserving `type` and `size`. The hex path exists specifically to keep byte alignment intact — any new unknown struct should go through `to_hex` rather than guessing fields.
+- **Hex fallback**: types with custom binary serialization that are not yet structured (e.g. Niagara nodes) are emitted as a hex preview capped by `PREVIEW_MAX`, preserving `type` and `size`. The hex path exists specifically to keep byte alignment intact — any new unknown struct should go through `to_hex` rather than guessing fields.
 
 ## Blueprint pin decoding ([src/pin.rs](src/pin.rs))
 

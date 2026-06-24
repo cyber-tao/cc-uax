@@ -43,11 +43,14 @@ The name says it plainly: **cc** = Claude Code, **uax** = uasset. The tool also 
   | References | `ObjectProperty` → full name + package index, `SoftObjectPath`, `FieldPath` |
   | Containers | `ArrayProperty`, `SetProperty`, `MapProperty` |
   | Nested | recursive tagged structs |
-  | Native structs | `Vector` / `Vector3f` / `Rotator` / `Quat` / `Color` / `LinearColor` / `Transform` / `Guid` / `DateTime` … |
+  | Native structs | `Vector` / `Vector3f` / `Rotator` / `Quat` / `Color` / `LinearColor` / `Transform` / `Transform3f` / `Box` / `Box2D` / `Guid` / `DateTime` / `FrameNumber` / `FrameRate` / `IntVector2` / `IntVector4` / `RichCurveKey` … |
+  | Material inputs | `ExpressionInput` + Scalar / Vector / Vector2 / Color / ShadingModel / Substrate / MaterialAttributes |
+  | Sequencer & curves | `FrameRange`, `FloatChannel`, `DoubleChannel`, per-platform Float / Int / Bool / FrameRate |
+  | Runtime structs | `InstancedStruct`, `PerQualityLevelInt` / `Float`, delegates (`Delegate` / `MulticastInline` / `MulticastSparse`), `EdGraphPinType` |
 
 - **Blueprint graph logic** — `UEdGraphNode` pins are decoded right after the tagged-property region: every node's pins, pin types, default values/objects, and `LinkedTo` edges, so the full node-to-node execution & data graph is reconstructable. Graph nodes also expose a distilled `member` (the function / event / variable they reference) plus `member_from` (its owning C++ class) for quick cross-referencing with source.
 - **Selectable output sections** — `--sections` (alias `-S`) composes exactly the blocks you want, or picks a preset (`logic`, `debug`, `full`) — keeping logic analysis lean and bug-hunting thorough.
-- **Graceful hex fallback** — types with custom binary serialization not yet structured (e.g. Niagara nodes, `AnimNotifyEvent`) emit a `type`+`size`-tagged hex preview that **preserves byte alignment**.
+- **Graceful hex fallback** — types with custom binary serialization not yet structured (e.g. Niagara nodes) emit a `type`+`size`-tagged hex preview that **preserves byte alignment**.
 - **Reference graph**
   - `-S refs` — forward refs from the import table, split into `assets` vs `scripts`, de-duplicated & sorted.
   - `--scan-dir` — reverse refs: which assets reference *this* file (`referenced_by`), via `--mount` path mapping.
@@ -263,7 +266,7 @@ cc-uax/
 
 - ✅ **Validated** on **1,423 `.uasset`** files from a UE5.7 project — all parsed, every object's property region fully byte-aligned.
 - ❌ Cooked packages (unversioned / package compression) and UE4 legacy formats are **not** supported.
-- 🔧 A few native-binary structs render as hex preview pending structured decoders.
+- 🔧 Most native-binary structs are now decoded structurally; a few (e.g. Niagara) still render as hex preview pending decoders.
 - 🔧 `referenced_by` derives package paths from disk — the input file must live under `--scan-dir` mapped to `--mount`. Only hard references (imports) are counted, not soft ones.
 - 🔧 Cache invalidates on mtime + size and auto-rebuilds when the built-in schema version changes.
 
