@@ -37,15 +37,15 @@ Or build from source: `cargo install --path .` (puts `cc-uax` in `~/.cargo/bin`)
 
 | Task | Command |
 |---|---|
-| Header — versions, counts, engine version | `cc-uax -S summary <file>` |
-| Blueprint graph logic — nodes + pin connectivity | `cc-uax -S logic <file>` |
-| Forward refs — what this asset imports (assets/scripts) | `cc-uax -S refs <file>` |
-| Reverse refs — who references this asset | `cc-uax -S refs -d <Content-dir> <file>` |
-| Property-focused dump (properties + byte layout, no pins) | `cc-uax -S debug <file>` |
-| Export/import structure without property decode | `cc-uax -S exports,layout <file>` |
-| Full parse (everything) | `cc-uax <file>` |
-| Pick exact sections | `cc-uax -S exports,pins,properties <file>` |
-| Summary + full name table | `cc-uax -S summary,names <file>` |
+| Header — versions, counts, engine version | `cc-uax -c -S summary <file>` |
+| Blueprint graph logic — nodes + pin connectivity | `cc-uax -c -S logic <file>` |
+| Forward refs — what this asset imports (assets/scripts) | `cc-uax -c -S refs <file>` |
+| Reverse refs — who references this asset | `cc-uax -c -S refs -d <Content-dir> <file>` |
+| Property-focused dump (properties + byte layout, no pins) | `cc-uax -c -S debug <file>` |
+| Export/import structure without property decode | `cc-uax -c -S exports,layout <file>` |
+| Full parse (everything) | `cc-uax -c <file>` |
+| Pick exact sections | `cc-uax -c -S exports,pins,properties <file>` |
+| Summary + full name table | `cc-uax -c -S summary,names <file>` |
 
 `-S`/`--sections` is the single content selector — presets `logic` (graph nodes + pins), `debug` (properties + layout), `full` (default, everything); or comma-separate section keys `summary,imports,exports,pins,properties,layout,names,references` (`refs` aliases `references`). Omitting `-S` yields `full`.
 
@@ -53,33 +53,35 @@ Or build from source: `cargo install --path .` (puts `cc-uax` in `~/.cargo/bin`)
 
 ```bash
 # Header — versions and package name
-cc-uax -S summary MM_Death_Back_01.uasset
+cc-uax -c -S summary MM_Death_Back_01.uasset
 # → "file_version_ue5": 1017, "package_name": "/Game/.../MM_Death_Back_01"
 
 # Blueprint graph logic — node members + pin LinkedTo edges (lean, no full properties)
-cc-uax -S logic BP_CombatDamageableBox.uasset
+cc-uax -c -S logic BP_CombatDamageableBox.uasset
 # → exports[].member ("SetMaterial"), member_from ("/Script/Engine.PrimitiveComponent"),
 #   pins[].linked_to[] ({node, pin}) — the reconstructable node-to-node graph
 
 # Forward references — assets/scripts this file imports
-cc-uax -S refs MM_Death_Back_01.uasset
+cc-uax -c -S refs MM_Death_Back_01.uasset
 # → "references": {"assets": ["/Game/.../SK_Mannequin", ...], "scripts": ["/Script/Engine", ...]}
 
 # Reverse references — scan the project's Content/ to find dependents
-cc-uax -S refs -d /proj/Content SK_Mannequin.uasset
+cc-uax -c -S refs -d /proj/Content SK_Mannequin.uasset
 # → "referenced_by": ["/Game/.../MM_Death_Back_01", ... 110 entries]
 ```
 
-Add `-c` for compact (single-line) JSON, `-o <FILE>` to write to a file instead of stdout:
+`-c` / `--compact` emits compact single-line JSON; `-o <FILE>` writes to a file instead of stdout.
+
+> **Default to `-c` whenever the JSON goes back into your context.** Compact output trims roughly 15-30% of the tokens (indentation + newlines) at zero information loss — the model parses it just as easily. Omit `-c` (pretty-print) only when writing to a file for a human to read.
 
 ```bash
-cc-uax -c -o out.json MM_Death_Back_01.uasset    # compact JSON to out.json
+cc-uax -o out.json MM_Death_Back_01.uasset    # pretty JSON to a file (for humans)
 ```
 
 `.umap` (level) files use the exact same commands — they share the UE5 package format:
 
 ```bash
-cc-uax -S summary Lvl_ThirdPerson.umap
+cc-uax -c -S summary Lvl_ThirdPerson.umap
 # → "package_name": "/Game/ThirdPerson/Lvl_ThirdPerson"
 ```
 
