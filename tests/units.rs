@@ -441,3 +441,405 @@ fn text_property_unknown_history_falls_back_to_hex() {
     let unparsed = entries[0].value.get("@unparsed").and_then(|v| v.as_str());
     assert_eq!(unparsed, Some("0000000004"));
 }
+
+fn push_f32(v: &mut Vec<u8>, x: f32) {
+    v.extend_from_slice(&x.to_le_bytes());
+}
+fn push_f64(v: &mut Vec<u8>, x: f64) {
+    v.extend_from_slice(&x.to_le_bytes());
+}
+
+// Wrap pre-built `value` bytes as a single StructProperty named index 0 with a
+// struct type name at `struct_idx`, then a trailing None (index `none_idx`).
+fn build_struct_property(struct_idx: i32, none_idx: i32, value: &[u8]) -> Vec<u8> {
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // property name
+    push_raw_name(&mut d, 1); // "StructProperty"
+    push_i32(&mut d, 1); // one type parameter
+    push_raw_name(&mut d, struct_idx); // struct name
+    push_i32(&mut d, 0);
+    push_i32(&mut d, value.len() as i32);
+    d.push(0x08); // HasBinaryOrNativeSerialize
+    d.extend_from_slice(value);
+    push_raw_name(&mut d, none_idx); // None
+    d
+}
+
+#[test]
+fn native_struct_box_decodes() {
+    let names = NameMap {
+        names: vec![
+            "MyBox".to_string(),
+            "StructProperty".to_string(),
+            "Box".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    for x in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
+        push_f64(&mut value, x);
+    }
+    value.push(1); // is_valid
+    assert_eq!(value.len(), 49);
+    let d = build_struct_property(2, 3, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["is_valid"].as_bool(), Some(true));
+    assert_eq!(entries[0].value["min"]["x"].as_f64(), Some(1.0));
+    assert_eq!(entries[0].value["max"]["z"].as_f64(), Some(6.0));
+}
+
+#[test]
+fn native_struct_rich_curve_key_array_keeps_stride() {
+    let names = NameMap {
+        names: vec![
+            "Keys".to_string(),
+            "ArrayProperty".to_string(),
+            "StructProperty".to_string(),
+            "RichCurveKey".to_string(),
+            "None".to_string(),
+        ],
+    };
+    fn push_key(v: &mut Vec<u8>, interp: u8, time: f32, value: f32) {
+        v.push(interp); // interp mode
+        v.push(0); // tangent mode
+        v.push(0); // tangent weight mode
+        push_f32(v, time);
+        push_f32(v, value);
+        push_f32(v, 0.0); // arrive tangent
+        push_f32(v, 0.0); // arrive tangent weight
+        push_f32(v, 0.0); // leave tangent
+        push_f32(v, 0.0); // leave tangent weight
+    }
+    let mut value = Vec::new();
+    push_i32(&mut value, 2); // array count
+    push_key(&mut value, 2, 0.0, 10.0);
+    push_key(&mut value, 3, 1.0, 20.0);
+    assert_eq!(value.len(), 4 + 2 * 27);
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Keys
+    push_raw_name(&mut d, 1); // ArrayProperty
+    push_i32(&mut d, 1); // one param
+    push_raw_name(&mut d, 2); // StructProperty
+    push_i32(&mut d, 1); // one param
+    push_raw_name(&mut d, 3); // RichCurveKey
+    push_i32(&mut d, 0);
+    push_i32(&mut d, value.len() as i32);
+    d.push(0x08);
+    d.extend_from_slice(&value);
+    push_raw_name(&mut d, 4); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let arr = entries[0].value.as_array().unwrap();
+    assert_eq!(arr.len(), 2);
+    assert_eq!(arr[0]["interp_mode"].as_u64(), Some(2));
+    assert_eq!(arr[0]["value"].as_f64(), Some(10.0));
+    assert_eq!(arr[1]["interp_mode"].as_u64(), Some(3));
+    assert_eq!(arr[1]["value"].as_f64(), Some(20.0));
+    assert_eq!(arr[1]["time"].as_f64(), Some(1.0));
+}
+
+#[test]
+fn material_scalar_input_resolves_expression() {
+    let names = NameMap {
+        names: vec![
+            "Input".to_string(),
+            "StructProperty".to_string(),
+            "ScalarMaterialInput".to_string(),
+            "R".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, -5); // expression object index
+    push_i32(&mut value, 1); // output index
+    push_raw_name(&mut value, 3); // input name "R"
+    for m in [1, 1, 0, 0, 0] {
+        push_i32(&mut value, m); // mask, maskR..maskA
+    }
+    push_i32(&mut value, 1); // use constant (bool32)
+    push_f32(&mut value, 0.5); // constant
+    assert_eq!(value.len(), 44);
+    let d = build_struct_property(2, 4, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["expression"]["index"].as_i64(), Some(-5));
+    assert_eq!(v["input_name"].as_str(), Some("R"));
+    assert_eq!(v["output_index"].as_i64(), Some(1));
+    assert_eq!(v["use_constant"].as_bool(), Some(true));
+    assert_eq!(v["constant"].as_f64(), Some(0.5));
+    assert_eq!(v["mask"].as_array().unwrap().len(), 5);
+}
+
+#[test]
+fn native_struct_per_platform_float_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Scale".to_string(),
+            "StructProperty".to_string(),
+            "PerPlatformFloat".to_string(),
+            "Mobile".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, 0); // bCooked = false
+    push_f32(&mut value, 1.0); // default
+    push_i32(&mut value, 1); // map count
+    push_raw_name(&mut value, 3); // "Mobile"
+    push_f32(&mut value, 0.5); // override value
+    let d = build_struct_property(2, 4, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["default"].as_f64(), Some(1.0));
+    let pp = v["per_platform"].as_array().unwrap();
+    assert_eq!(pp.len(), 1);
+    assert_eq!(pp[0]["platform"].as_str(), Some("Mobile"));
+    assert_eq!(pp[0]["value"].as_f64(), Some(0.5));
+}
+
+#[test]
+fn native_struct_movie_scene_frame_range_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Range".to_string(),
+            "StructProperty".to_string(),
+            "MovieSceneFrameRange".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    value.push(1); // lower bound type (inclusive)
+    push_i32(&mut value, 10);
+    value.push(2); // upper bound type (exclusive)
+    push_i32(&mut value, 100);
+    assert_eq!(value.len(), 10);
+    let d = build_struct_property(2, 3, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["lower_bound"].as_i64(), Some(10));
+    assert_eq!(v["upper_bound"].as_i64(), Some(100));
+    assert_eq!(v["lower_bound_type"].as_u64(), Some(1));
+    assert_eq!(v["upper_bound_type"].as_u64(), Some(2));
+}
+
+#[test]
+fn native_struct_movie_scene_float_channel_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Channel".to_string(),
+            "StructProperty".to_string(),
+            "MovieSceneFloatChannel".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    value.push(4); // pre-infinity extrap
+    value.push(4); // post-infinity extrap
+    push_i32(&mut value, 4); // times element size
+    push_i32(&mut value, 1); // times count
+    push_i32(&mut value, 7); // frame number
+    push_i32(&mut value, 28); // values element size
+    push_i32(&mut value, 1); // values count
+    // one 28-byte FMovieSceneFloatValue
+    push_f32(&mut value, 1.5); // value (offset 0)
+    push_f32(&mut value, 0.0); // arrive tangent
+    push_f32(&mut value, 0.0); // leave tangent
+    push_f32(&mut value, 0.0); // arrive tangent weight
+    push_f32(&mut value, 0.0); // leave tangent weight
+    value.push(0); // tangent weight mode (offset 20)
+    value.extend_from_slice(&[0, 0, 0]); // tangent padding
+    value.push(2); // interp mode (offset 24)
+    value.push(1); // tangent mode (offset 25)
+    value.push(0); // padding byte
+    value.push(0); // unserialized padding
+    push_f32(&mut value, 9.0); // default value
+    push_i32(&mut value, 0); // has default value (false)
+    push_i32(&mut value, 30); // tick numerator
+    push_i32(&mut value, 1); // tick denominator
+    push_i32(&mut value, 0); // show curve (false)
+    assert_eq!(value.len(), 70);
+    let d = build_struct_property(2, 3, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["times"].as_array().unwrap()[0].as_i64(), Some(7));
+    let vals = v["values"].as_array().unwrap();
+    assert_eq!(vals.len(), 1);
+    assert_eq!(vals[0]["value"].as_f64(), Some(1.5));
+    assert_eq!(vals[0]["interp_mode"].as_u64(), Some(2));
+    assert_eq!(vals[0]["tangent_mode"].as_u64(), Some(1));
+    assert_eq!(v["default_value"].as_f64(), Some(9.0));
+    assert_eq!(v["tick_resolution"]["numerator"].as_i64(), Some(30));
+    assert_eq!(v["show_curve"].as_bool(), Some(false));
+}
+
+#[test]
+fn text_ordered_format_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Label".to_string(),
+            "TextProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_u32(&mut value, 0); // outer FText flags
+    value.push(2u8); // OrderedFormat
+    push_u32(&mut value, 0); // nested format text flags
+    value.push(0u8); // nested history = Base
+    push_fstring(&mut value, ""); // namespace
+    push_fstring(&mut value, "KEY"); // key
+    push_fstring(&mut value, "{0} apples"); // source
+    push_i32(&mut value, 1); // argument count
+    value.push(0u8); // arg type 0 = Int
+    push_i64(&mut value, 42);
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Label
+    push_raw_name(&mut d, 1); // TextProperty
+    push_i32(&mut d, 0); // type name inner param count
+    push_i32(&mut d, value.len() as i32);
+    d.push(0); // flags
+    d.extend_from_slice(&value);
+    push_raw_name(&mut d, 2); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["history"].as_str(), Some("OrderedFormat"));
+    assert_eq!(v["format"]["text"].as_str(), Some("{0} apples"));
+    let args = v["arguments"].as_array().unwrap();
+    assert_eq!(args.len(), 1);
+    assert_eq!(args[0].as_i64(), Some(42));
+}
+
+#[test]
+fn text_string_table_entry_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Label".to_string(),
+            "TextProperty".to_string(),
+            "MyTable".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_u32(&mut value, 0); // flags
+    value.push(11u8); // StringTableEntry
+    push_raw_name(&mut value, 2); // table id "MyTable"
+    push_fstring(&mut value, "ENTRY_KEY");
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Label
+    push_raw_name(&mut d, 1); // TextProperty
+    push_i32(&mut d, 0);
+    push_i32(&mut d, value.len() as i32);
+    d.push(0);
+    d.extend_from_slice(&value);
+    push_raw_name(&mut d, 3); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["history"].as_str(), Some("StringTableEntry"));
+    assert_eq!(v["table_id"].as_str(), Some("MyTable"));
+    assert_eq!(v["key"].as_str(), Some("ENTRY_KEY"));
+}
+
+#[test]
+fn multicast_inline_delegate_decodes() {
+    let names = NameMap {
+        names: vec![
+            "OnFire".to_string(),
+            "MulticastInlineDelegateProperty".to_string(),
+            "HandleFire".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, 1); // invocation count
+    push_i32(&mut value, -3); // object index
+    push_raw_name(&mut value, 2); // function name
+    assert_eq!(value.len(), 16);
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // OnFire
+    push_raw_name(&mut d, 1); // MulticastInlineDelegateProperty
+    push_i32(&mut d, 0);
+    push_i32(&mut d, value.len() as i32);
+    d.push(0);
+    d.extend_from_slice(&value);
+    push_raw_name(&mut d, 3); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let arr = entries[0].value.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["function"].as_str(), Some("HandleFire"));
+    assert_eq!(arr[0]["object"]["index"].as_i64(), Some(-3));
+}

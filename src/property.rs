@@ -244,11 +244,30 @@ fn parse_value(
         "EnumProperty" => json!(ctx.names.resolve_raw(r.read_raw_name()?)),
         "NameProperty" => json!(ctx.names.resolve_raw(r.read_raw_name()?)),
         "StrProperty" => json!(r.read_fstring()?),
-        "TextProperty" => parse_text(r)?,
+        "TextProperty" => parse_text(r, ctx.names, 0)?,
         "ObjectProperty" | "ClassProperty" | "WeakObjectProperty" | "LazyObjectProperty"
         | "ObjectPtrProperty" | "ClassPtrProperty" | "InterfaceProperty" => {
             let idx = r.read_i32()?;
             (ctx.resolve_object)(idx)
+        }
+        "DelegateProperty" => {
+            let object = r.read_i32()?;
+            let function = ctx.names.resolve_raw(r.read_raw_name()?);
+            json!({ "object": (ctx.resolve_object)(object), "function": function })
+        }
+        "MulticastInlineDelegateProperty" | "MulticastSparseDelegateProperty" => {
+            let count = r.read_i32()?;
+            let remaining = value_end.saturating_sub(r.pos());
+            if count < 0 || (count as u64).saturating_mul(12) > remaining {
+                bail!("delegate invocation count out of range: {count}");
+            }
+            let mut arr = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                let object = r.read_i32()?;
+                let function = ctx.names.resolve_raw(r.read_raw_name()?);
+                arr.push(json!({ "object": (ctx.resolve_object)(object), "function": function }));
+            }
+            Value::Array(arr)
         }
         "SoftObjectProperty" | "SoftClassProperty" => parse_soft_object(r, ctx)?,
         "FieldPathProperty" => {
@@ -364,7 +383,7 @@ fn parse_struct(
     if struct_name == "SoftObjectPath" || struct_name == "SoftClassPath" {
         return parse_soft_object(r, ctx);
     }
-    if let Some(v) = parse_native_struct(r, struct_name)? {
+    if let Some(v) = parse_native_struct(r, struct_name, ctx, value_end)? {
         return Ok(v);
     }
     if prefer_native_for_unknown {
@@ -374,7 +393,12 @@ fn parse_struct(
     Ok(json!({ "@struct": struct_name, "properties": entries_to_json(&nested) }))
 }
 
-fn parse_native_struct(r: &mut Reader, name: &str) -> Result<Option<Value>> {
+fn parse_native_struct(
+    r: &mut Reader,
+    name: &str,
+    ctx: &ParseCtx,
+    value_end: u64,
+) -> Result<Option<Value>> {
     let v = match name {
         "Vector"
         | "Vector_NetQuantize"
@@ -413,9 +437,265 @@ fn parse_native_struct(r: &mut Reader, name: &str) -> Result<Option<Value>> {
             let scale = json!({ "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()? });
             json!({ "rotation": rot, "translation": trans, "scale3d": scale })
         }
+        "Transform3f" => {
+            let rot = json!({
+                "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()?, "w": r.read_f32()?
+            });
+            let trans = json!({ "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()? });
+            let scale = json!({ "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()? });
+            json!({ "rotation": rot, "translation": trans, "scale3d": scale })
+        }
+        "Box" => {
+            let min = json!({ "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()? });
+            let max = json!({ "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()? });
+            let is_valid = r.read_u8()? != 0;
+            json!({ "min": min, "max": max, "is_valid": is_valid })
+        }
+        "Box2D" => {
+            let min = json!({ "x": r.read_f64()?, "y": r.read_f64()? });
+            let max = json!({ "x": r.read_f64()?, "y": r.read_f64()? });
+            let is_valid = r.read_bool32()?;
+            json!({ "min": min, "max": max, "is_valid": is_valid })
+        }
+        "FrameNumber" => json!({ "value": r.read_i32()? }),
+        "FrameRate" => json!({ "numerator": r.read_i32()?, "denominator": r.read_i32()? }),
+        "IntVector2" => json!({ "x": r.read_i32()?, "y": r.read_i32()? }),
+        "IntVector4" => json!({
+            "x": r.read_i32()?, "y": r.read_i32()?, "z": r.read_i32()?, "w": r.read_i32()?
+        }),
+        "DeprecateSlateVector2D" => json!({ "x": r.read_f32()?, "y": r.read_f32()? }),
+        "RichCurveKey" => {
+            let interp_mode = r.read_u8()?;
+            let tangent_mode = r.read_u8()?;
+            let tangent_weight_mode = r.read_u8()?;
+            json!({
+                "interp_mode": interp_mode,
+                "tangent_mode": tangent_mode,
+                "tangent_weight_mode": tangent_weight_mode,
+                "time": r.read_f32()? as f64,
+                "value": r.read_f32()? as f64,
+                "arrive_tangent": r.read_f32()? as f64,
+                "arrive_tangent_weight": r.read_f32()? as f64,
+                "leave_tangent": r.read_f32()? as f64,
+                "leave_tangent_weight": r.read_f32()? as f64,
+            })
+        }
+        "PerPlatformFloat" => parse_per_platform(r, ctx.names, ScalarKind::F32, value_end)?,
+        "PerPlatformInt" => parse_per_platform(r, ctx.names, ScalarKind::I32, value_end)?,
+        "PerPlatformBool" => parse_per_platform(r, ctx.names, ScalarKind::Bool32, value_end)?,
+        "PerPlatformFrameRate" => {
+            parse_per_platform(r, ctx.names, ScalarKind::FrameRate, value_end)?
+        }
+        "ExpressionInput" | "MaterialAttributesInput" => {
+            Value::Object(parse_expression_input(r, ctx)?)
+        }
+        "ScalarMaterialInput" => {
+            let mut o = parse_expression_input(r, ctx)?;
+            o.insert("use_constant".into(), json!(r.read_bool32()?));
+            o.insert("constant".into(), json!(r.read_f32()? as f64));
+            Value::Object(o)
+        }
+        "Vector2MaterialInput" => {
+            let mut o = parse_expression_input(r, ctx)?;
+            o.insert("use_constant".into(), json!(r.read_bool32()?));
+            o.insert(
+                "constant".into(),
+                json!({ "x": r.read_f32()?, "y": r.read_f32()? }),
+            );
+            Value::Object(o)
+        }
+        "VectorMaterialInput" => {
+            let mut o = parse_expression_input(r, ctx)?;
+            o.insert("use_constant".into(), json!(r.read_bool32()?));
+            o.insert(
+                "constant".into(),
+                json!({ "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()? }),
+            );
+            Value::Object(o)
+        }
+        "ColorMaterialInput" => {
+            let mut o = parse_expression_input(r, ctx)?;
+            o.insert("use_constant".into(), json!(r.read_bool32()?));
+            o.insert(
+                "constant".into(),
+                json!({
+                    "r": r.read_f32()?, "g": r.read_f32()?, "b": r.read_f32()?, "a": r.read_f32()?
+                }),
+            );
+            Value::Object(o)
+        }
+        "ShadingModelMaterialInput" | "SubstrateMaterialInput" => {
+            let mut o = parse_expression_input(r, ctx)?;
+            o.insert("use_constant".into(), json!(r.read_bool32()?));
+            o.insert("constant".into(), json!(r.read_u32()?));
+            Value::Object(o)
+        }
+        "MovieSceneFrameRange" => {
+            let lower_type = r.read_u8()?;
+            let lower = r.read_i32()?;
+            let upper_type = r.read_u8()?;
+            let upper = r.read_i32()?;
+            json!({
+                "lower_bound_type": lower_type,
+                "lower_bound": lower,
+                "upper_bound_type": upper_type,
+                "upper_bound": upper,
+            })
+        }
+        "MovieSceneFloatChannel" => parse_movie_scene_channel(r, false, value_end)?,
+        "MovieSceneDoubleChannel" => parse_movie_scene_channel(r, true, value_end)?,
         _ => return Ok(None),
     };
     Ok(Some(v))
+}
+
+#[derive(Clone, Copy)]
+enum ScalarKind {
+    F32,
+    I32,
+    Bool32,
+    FrameRate,
+}
+
+fn read_scalar(r: &mut Reader, kind: ScalarKind) -> Result<Value> {
+    Ok(match kind {
+        ScalarKind::F32 => json!(r.read_f32()? as f64),
+        ScalarKind::I32 => json!(r.read_i32()?),
+        ScalarKind::Bool32 => json!(r.read_bool32()?),
+        ScalarKind::FrameRate => {
+            json!({ "numerator": r.read_i32()?, "denominator": r.read_i32()? })
+        }
+    })
+}
+
+fn parse_per_platform(
+    r: &mut Reader,
+    names: &NameMap,
+    kind: ScalarKind,
+    value_end: u64,
+) -> Result<Value> {
+    let cooked = r.read_bool32()?;
+    let default = read_scalar(r, kind)?;
+    let mut per_platform = Vec::new();
+    if !cooked {
+        let count = r.read_i32()?;
+        let remaining = value_end.saturating_sub(r.pos());
+        if count < 0 || count as u64 > remaining {
+            bail!("PerPlatform map count out of range: {count}");
+        }
+        for _ in 0..count {
+            let key = names.resolve_raw(r.read_raw_name()?);
+            let value = read_scalar(r, kind)?;
+            per_platform.push(json!({ "platform": key, "value": value }));
+        }
+    }
+    Ok(json!({ "default": default, "per_platform": per_platform }))
+}
+
+fn parse_expression_input(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+) -> Result<serde_json::Map<String, Value>> {
+    let expression = r.read_i32()?;
+    let output_index = r.read_i32()?;
+    let input_name = ctx.names.resolve_raw(r.read_raw_name()?);
+    let mask = r.read_i32()?;
+    let mask_r = r.read_i32()?;
+    let mask_g = r.read_i32()?;
+    let mask_b = r.read_i32()?;
+    let mask_a = r.read_i32()?;
+    let mut o = serde_json::Map::new();
+    o.insert("expression".into(), (ctx.resolve_object)(expression));
+    o.insert("output_index".into(), json!(output_index));
+    o.insert("input_name".into(), json!(input_name));
+    o.insert("mask".into(), json!([mask, mask_r, mask_g, mask_b, mask_a]));
+    Ok(o)
+}
+
+fn parse_movie_scene_channel(r: &mut Reader, is_double: bool, value_end: u64) -> Result<Value> {
+    let pre_infinity = r.read_u8()?;
+    let post_infinity = r.read_u8()?;
+
+    // Times: serialized element size (sizeof FFrameNumber == 4), count, then raw int32 data.
+    let times_elem_size = r.read_i32()?;
+    if times_elem_size != 4 {
+        bail!("unexpected MovieScene time element size: {times_elem_size}");
+    }
+    let times_count = r.read_i32()?;
+    let remaining = value_end.saturating_sub(r.pos());
+    if times_count < 0 || (times_count as u64).saturating_mul(4) > remaining {
+        bail!("MovieScene times count out of range: {times_count}");
+    }
+    let mut times = Vec::with_capacity(times_count as usize);
+    for _ in 0..times_count {
+        times.push(json!(r.read_i32()?));
+    }
+
+    // Values: serialized element size (POD struct dumped with padding), count, raw data.
+    let value_size: u64 = if is_double { 8 } else { 4 };
+    let val_elem_size = r.read_i32()?;
+    if (val_elem_size as i64) < (value_size + 22) as i64 || val_elem_size > 64 {
+        bail!("unexpected MovieScene value element size: {val_elem_size}");
+    }
+    let val_count = r.read_i32()?;
+    let remaining = value_end.saturating_sub(r.pos());
+    if val_count < 0 || (val_count as u64).saturating_mul(val_elem_size as u64) > remaining {
+        bail!("MovieScene values count out of range: {val_count}");
+    }
+    let mut values = Vec::with_capacity(val_count as usize);
+    for _ in 0..val_count {
+        let elem_start = r.pos();
+        let value = if is_double {
+            json!(r.read_f64()?)
+        } else {
+            json!(r.read_f32()? as f64)
+        };
+        let arrive_tangent = r.read_f32()? as f64;
+        let leave_tangent = r.read_f32()? as f64;
+        let arrive_tangent_weight = r.read_f32()? as f64;
+        let leave_tangent_weight = r.read_f32()? as f64;
+        let tangent_weight_mode = r.read_u8()?;
+        // InterpMode/TangentMode follow the 20-byte tangent block (past its padding).
+        r.seek(elem_start + value_size + 20)?;
+        let interp_mode = r.read_u8()?;
+        let tangent_mode = r.read_u8()?;
+        r.seek(elem_start + val_elem_size as u64)?;
+        values.push(json!({
+            "value": value,
+            "interp_mode": interp_mode,
+            "tangent_mode": tangent_mode,
+            "tangent_weight_mode": tangent_weight_mode,
+            "arrive_tangent": arrive_tangent,
+            "leave_tangent": leave_tangent,
+            "arrive_tangent_weight": arrive_tangent_weight,
+            "leave_tangent_weight": leave_tangent_weight,
+        }));
+    }
+
+    let default_value = if is_double {
+        json!(r.read_f64()?)
+    } else {
+        json!(r.read_f32()? as f64)
+    };
+    let has_default_value = r.read_bool32()?;
+    let tick_numerator = r.read_i32()?;
+    let tick_denominator = r.read_i32()?;
+    let mut out = serde_json::Map::new();
+    out.insert("pre_infinity_extrap".into(), json!(pre_infinity));
+    out.insert("post_infinity_extrap".into(), json!(post_infinity));
+    out.insert("times".into(), Value::Array(times));
+    out.insert("values".into(), Value::Array(values));
+    out.insert("default_value".into(), default_value);
+    out.insert("has_default_value".into(), json!(has_default_value));
+    out.insert(
+        "tick_resolution".into(),
+        json!({ "numerator": tick_numerator, "denominator": tick_denominator }),
+    );
+    // bShowCurve is serialized for current engine versions; consume only if present.
+    if r.pos() + 4 <= value_end {
+        out.insert("show_curve".into(), json!(r.read_bool32()?));
+    }
+    Ok(Value::Object(out))
 }
 
 fn parse_soft_object(r: &mut Reader, ctx: &ParseCtx) -> Result<Value> {
@@ -434,7 +714,10 @@ fn parse_soft_object(r: &mut Reader, ctx: &ParseCtx) -> Result<Value> {
     }
 }
 
-pub(crate) fn parse_text(r: &mut Reader) -> Result<Value> {
+pub(crate) fn parse_text(r: &mut Reader, names: &NameMap, depth: usize) -> Result<Value> {
+    if depth > 32 {
+        bail!("FText nesting too deep");
+    }
     let flags = r.read_u32()?;
     let history_type = r.read_i8()?;
     match history_type {
@@ -455,8 +738,60 @@ pub(crate) fn parse_text(r: &mut Reader) -> Result<Value> {
                 "text": source, "namespace": namespace, "key": key, "flags": flags
             }))
         }
+        1 => {
+            // NamedFormat: source format text + TMap<FString, FFormatArgumentValue>.
+            let format = parse_text(r, names, depth + 1)?;
+            let count = r.read_i32()?;
+            if count < 0 || count as u64 > r.remaining() {
+                bail!("FText named-format argument count out of range: {count}");
+            }
+            let mut arguments = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                let name = r.read_fstring()?;
+                let value = parse_format_argument(r, names, depth + 1)?;
+                arguments.push(json!({ "name": name, "value": value }));
+            }
+            Ok(json!({
+                "history": "NamedFormat", "format": format, "arguments": arguments, "flags": flags
+            }))
+        }
+        2 => {
+            // OrderedFormat: source format text + TArray<FFormatArgumentValue>.
+            let format = parse_text(r, names, depth + 1)?;
+            let count = r.read_i32()?;
+            if count < 0 || count as u64 > r.remaining() {
+                bail!("FText ordered-format argument count out of range: {count}");
+            }
+            let mut arguments = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                arguments.push(parse_format_argument(r, names, depth + 1)?);
+            }
+            Ok(json!({
+                "history": "OrderedFormat", "format": format, "arguments": arguments, "flags": flags
+            }))
+        }
+        11 => {
+            // StringTableEntry: TableId (FName) + Key (FString).
+            let table_id = names.resolve_raw(r.read_raw_name()?);
+            let key = r.read_fstring()?;
+            Ok(json!({
+                "history": "StringTableEntry", "table_id": table_id, "key": key, "flags": flags
+            }))
+        }
         other => bail!("unsupported FText history type: {other}"),
     }
+}
+
+fn parse_format_argument(r: &mut Reader, names: &NameMap, depth: usize) -> Result<Value> {
+    let arg_type = r.read_i8()?;
+    Ok(match arg_type {
+        0 => json!(r.read_i64()?),             // Int
+        1 | 5 => json!(r.read_u64()?),         // UInt / Gender
+        2 => json!(r.read_f32()? as f64),      // Float
+        3 => json!(r.read_f64()?),             // Double
+        4 => parse_text(r, names, depth + 1)?, // Text
+        other => bail!("unknown FText format argument type: {other}"),
+    })
 }
 
 fn to_hex(bytes: &[u8]) -> String {
