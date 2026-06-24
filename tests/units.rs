@@ -843,3 +843,47 @@ fn multicast_inline_delegate_decodes() {
     assert_eq!(arr[0]["function"].as_str(), Some("HandleFire"));
     assert_eq!(arr[0]["object"]["index"].as_i64(), Some(-3));
 }
+
+#[test]
+fn native_struct_instanced_struct_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Data".to_string(),
+            "StructProperty".to_string(),
+            "InstancedStruct".to_string(),
+            "Inner".to_string(),
+            "IntProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    // Inner struct tagged properties: one IntProperty "Inner" = 99, then None.
+    let mut inner = Vec::new();
+    push_raw_name(&mut inner, 3); // Inner
+    push_raw_name(&mut inner, 4); // IntProperty
+    push_i32(&mut inner, 0); // type name inner param count
+    push_i32(&mut inner, 4); // size
+    inner.push(0); // flags
+    push_i32(&mut inner, 99);
+    push_raw_name(&mut inner, 5); // None
+
+    let mut value = Vec::new();
+    push_i32(&mut value, -7); // script struct object index
+    push_i32(&mut value, inner.len() as i32); // serial size
+    value.extend_from_slice(&inner);
+    let d = build_struct_property(2, 5, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["script_struct"]["index"].as_i64(), Some(-7));
+    let props = v["properties"].as_array().unwrap();
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0]["name"].as_str(), Some("Inner"));
+    assert_eq!(props[0]["value"].as_i64(), Some(99));
+}

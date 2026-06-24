@@ -544,6 +544,26 @@ fn parse_native_struct(
         }
         "MovieSceneFloatChannel" => parse_movie_scene_channel(r, false, value_end)?,
         "MovieSceneDoubleChannel" => parse_movie_scene_channel(r, true, value_end)?,
+        "PerQualityLevelInt" => parse_per_quality_level(r, ScalarKind::I32, value_end)?,
+        "PerQualityLevelFloat" => parse_per_quality_level(r, ScalarKind::F32, value_end)?,
+        "InstancedStruct" => {
+            // Modern format (>= CustomVersionAdded): no legacy header/version prefix.
+            let script_struct = r.read_i32()?;
+            let serial_size = r.read_i32()?;
+            if serial_size < 0 {
+                bail!("InstancedStruct serial size out of range: {serial_size}");
+            }
+            let inner_end = r.pos().saturating_add(serial_size as u64);
+            if inner_end > value_end {
+                bail!("InstancedStruct serial size exceeds value window: {serial_size}");
+            }
+            let nested = parse_properties(r, ctx, inner_end);
+            r.seek(inner_end)?;
+            json!({
+                "script_struct": (ctx.resolve_object)(script_struct),
+                "properties": entries_to_json(&nested)
+            })
+        }
         _ => return Ok(None),
     };
     Ok(Some(v))
@@ -590,6 +610,25 @@ fn parse_per_platform(
         }
     }
     Ok(json!({ "default": default, "per_platform": per_platform }))
+}
+
+fn parse_per_quality_level(r: &mut Reader, kind: ScalarKind, value_end: u64) -> Result<Value> {
+    let cooked = r.read_bool32()?;
+    let default = read_scalar(r, kind)?;
+    let mut per_quality = Vec::new();
+    if !cooked {
+        let count = r.read_i32()?;
+        let remaining = value_end.saturating_sub(r.pos());
+        if count < 0 || count as u64 > remaining {
+            bail!("PerQualityLevel map count out of range: {count}");
+        }
+        for _ in 0..count {
+            let quality_level = r.read_i32()?;
+            let value = read_scalar(r, kind)?;
+            per_quality.push(json!({ "quality_level": quality_level, "value": value }));
+        }
+    }
+    Ok(json!({ "default": default, "per_quality": per_quality }))
 }
 
 fn parse_expression_input(
