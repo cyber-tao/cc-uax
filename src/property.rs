@@ -389,11 +389,25 @@ fn parse_struct(
     if let Some(v) = parse_native_struct(r, struct_name, ctx, value_end)? {
         return Ok(v);
     }
-    if prefer_native_for_unknown {
+    if prefer_native_for_unknown && !is_tagged_fallback_struct(struct_name) {
         bail!("unknown native struct: {struct_name}");
     }
     let nested = parse_properties(r, ctx, value_end);
     Ok(json!({ "@struct": struct_name, "properties": entries_to_json(&nested) }))
+}
+
+/// Structs that declare `WithSerializer` (so their property tag carries the
+/// `HasBinaryOrNativeSerialize` flag) but whose `Serialize` returns `false` to
+/// only register a custom version — their payload is still tagged properties.
+fn is_tagged_fallback_struct(name: &str) -> bool {
+    matches!(
+        name,
+        "ConstraintInstance"
+            | "Timeline"
+            | "AnimNotifyEvent"
+            | "PostProcessSettings"
+            | "HierarchicalSimplification"
+    )
 }
 
 fn parse_native_struct(

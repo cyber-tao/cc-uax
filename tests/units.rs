@@ -1000,3 +1000,48 @@ fn soft_object_property_resolves_list_index() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].value["asset_path"].as_str(), Some("/Game/B.B"));
 }
+
+#[test]
+fn tagged_fallback_struct_parses_as_properties() {
+    let names = NameMap {
+        names: vec![
+            "Constraint".to_string(),
+            "StructProperty".to_string(),
+            "ConstraintInstance".to_string(),
+            "Inner".to_string(),
+            "IntProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    // Tagged properties: IntProperty "Inner" = 7, then None.
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 3); // Inner
+    push_raw_name(&mut value, 4); // IntProperty
+    push_i32(&mut value, 0); // type name inner param count
+    push_i32(&mut value, 4); // size
+    value.push(0); // flags
+    push_i32(&mut value, 7);
+    push_raw_name(&mut value, 5); // None
+
+    // build_struct_property sets the HasBinaryOrNativeSerialize flag (0x08), so
+    // the struct would normally bail; ConstraintInstance is an allowlisted
+    // tagged-fallback struct and must parse as properties instead.
+    let d = build_struct_property(2, 5, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["@struct"].as_str(), Some("ConstraintInstance"));
+    let props = v["properties"].as_array().unwrap();
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0]["name"].as_str(), Some("Inner"));
+    assert_eq!(props[0]["value"].as_i64(), Some(7));
+}
