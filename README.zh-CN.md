@@ -4,7 +4,7 @@
 
 **把 Unreal Engine 5 `.uasset`/`.umap` 资产包解析为 JSON —— 属性、蓝图节点图、资源引用关系。**
 
-单一 CLI：把任意 UE5 编辑器资产导出为结构化 JSON，重建蓝图节点连线，并在整个项目中追踪谁引用了谁。
+单一 CLI：把不透明的 UE5 编辑器资产转成结构化 JSON —— 让 Claude Code 终于能读懂你游戏里的蓝图、属性与资产引用。
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Release](https://img.shields.io/github/v/release/cyber-tao/cc-uax?logo=github)](https://github.com/cyber-tao/cc-uax/releases)
@@ -22,7 +22,11 @@
 
 ## 📖 关于
 
-`cc-uax` 是一个命令行工具，读取虚幻引擎 5 的 `.uasset`/`.umap` 资产包文件，并将内容导出为结构化的 **JSON** —— 完整包头、tagged 属性、蓝图节点与 pin 连线图，以及前向与反向资源引用。以单一自包含二进制发布，无运行时依赖。
+我是 UE5 游戏开发者，做 `cc-uax` 这个工具只为了一件事：**让 Claude Code 能读懂虚幻引擎的资产文件。**
+
+一个真实的 UE5 项目，其内容全在不透明的 `.uasset`/`.umap` 二进制里——每一张蓝图图、每一个数据资产、每一个关卡都是一团 AI 编程助手打不开的 blob。它们能写 C++、能改文本，却看不见节点的连线、tagged 属性，也看不见一个 Actor 引用了哪些材质和数据表。`cc-uax` 正是补上这一环：它读取任意 UE5 编辑器资产，把内容导出为结构化的 **JSON** —— 完整包头、tagged 属性、蓝图节点与 pin 连线图，以及前向与反向资源引用——让 agent 能像理解你的代码一样，去理解你游戏里的内容。以单一自包含二进制发布，无运行时依赖。
+
+名字说得很直白：**cc** = Claude Code，**uax** = uasset。它同时还附带一个 [agent skill](#-作为-agent-skill-使用)——配置好后，Claude Code（或 OpenAI Codex）会在你要求检查 `.uasset`/`.umap` 时自动调用 `cc-uax`，无需手读二进制。
 
 > 目标范围：UE5（`FileVersionUE5 >= 1000`）的 **versioned、未 cooked 的编辑器资产**。Cooked / unversioned 包与 UE4 旧格式明确不在支持范围内。
 

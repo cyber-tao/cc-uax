@@ -4,7 +4,7 @@
 
 **Parse Unreal Engine 5 `.uasset`/`.umap` packages to JSON — properties, Blueprint graph, and asset references.**
 
-A single CLI that dumps any UE5 editor asset to structured JSON, reconstructs Blueprint node-to-node wiring, and traces who-references-whom across a project.
+A single CLI that turns opaque UE5 editor assets into structured JSON — so Claude Code can finally read your game's Blueprints, properties, and asset references.
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Release](https://img.shields.io/github/v/release/cyber-tao/cc-uax?logo=github)](https://github.com/cyber-tao/cc-uax/releases)
@@ -22,7 +22,11 @@ A single CLI that dumps any UE5 editor asset to structured JSON, reconstructs Bl
 
 ## 📖 About
 
-`cc-uax` is a command-line tool that reads Unreal Engine 5 `.uasset`/`.umap` package files and dumps their contents as structured **JSON** — full header, tagged properties, the Blueprint node-and-pin graph, and both forward and reverse asset references. It ships as a single self-contained binary with no runtime dependencies.
+I'm a UE5 game developer, and I built `cc-uax` for one very specific reason: **to let Claude Code read Unreal Engine assets.**
+
+A real UE5 project lives inside opaque `.uasset`/`.umap` binaries — every Blueprint graph, Data Asset, and level is a blob that AI coding assistants simply cannot open. They can write C++ and edit text, but they can't see the node wiring, the tagged properties, or which materials and data tables an actor references. `cc-uax` bridges that gap: it reads any UE5 editor asset and emits it as structured **JSON** — full header, tagged properties, the Blueprint node-and-pin graph, and both forward and reverse asset references — so an agent can reason about your game's content the same way it reasons about your code. It ships as a single self-contained binary with no runtime dependencies.
+
+The name says it plainly: **cc** = Claude Code, **uax** = uasset. The tool also doubles as an [agent skill](#-use-as-an-agent-skill) — once wired up, Claude Code (or OpenAI Codex) calls `cc-uax` automatically the moment you ask it to inspect a `.uasset`/`.umap`, so you never hand-read the binary.
 
 > Scope: **versioned, uncooked editor assets** on UE5 (`FileVersionUE5 >= 1000`). Cooked / unversioned packages and UE4 legacy formats are intentionally out of scope.
 
@@ -120,9 +124,6 @@ The one-line installer configures the skill for both agents. To set it up manual
 ```text
 cc-uax <input.uasset> [options]
 
-  -o, --output <FILE>   Write JSON to a file (default: stdout)
-  -c, --compact         Compact JSON (default: pretty-printed)
-  -S, --sections <LIST> Comma-separated sections or a preset (see Output sections)
   -o, --output <FILE>   Write JSON to a file (default: stdout)
   -c, --compact         Compact JSON (default: pretty-printed)
   -S, --sections <LIST> Sections to emit, comma-separated, or a preset (see Output sections)
