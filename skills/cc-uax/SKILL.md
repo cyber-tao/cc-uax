@@ -7,7 +7,7 @@ description: Parse and inspect Unreal Engine 5 .uasset/.umap package files, and 
 
 It is a **system-installed CLI tool** — `cc-uax` lives on `PATH` and behaves identically on Windows, Linux, and macOS. All commands below are plain `cc-uax` invocations.
 
-Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 ∈ [1000, 1018]`, little-endian). Cooked / unversioned / big-endian / UE4-legacy packages are rejected — see Gotchas.
+Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`, little-endian). Cooked / unversioned / big-endian / UE4-legacy packages are rejected — see Gotchas.
 
 ## Prerequisites
 
@@ -43,11 +43,11 @@ Or build from source: `cargo install --path .` (puts `cc-uax` in `~/.cargo/bin`)
 | Reverse refs — who references this asset | `cc-uax -c -S refs -d <Content-dir> <file>` |
 | Property-focused dump (properties + byte layout, no pins) | `cc-uax -c -S debug <file>` |
 | Export/import structure without property decode | `cc-uax -c -S exports,layout <file>` |
-| Full parse (everything) | `cc-uax -c <file>` |
+| Full export parse (default: summary/imports/exports with pins, properties, layout) | `cc-uax -c <file>` |
 | Pick exact sections | `cc-uax -c -S exports,pins,properties <file>` |
 | Summary + full name table | `cc-uax -c -S summary,names <file>` |
 
-`-S`/`--sections` is the single content selector — presets `logic` (graph nodes + pins), `debug` (properties + layout), `full` (default, everything); or comma-separate section keys `summary,imports,exports,pins,properties,layout,names,references` (`refs` aliases `references`). Omitting `-S` yields `full`.
+`-S`/`--sections` is the single content selector — presets `logic` (graph nodes + pins), `debug` (properties + layout), `full` (default: summary + imports + exports with pins/properties/layout; excludes `names` and `references` unless requested); or comma-separate section keys `summary,imports,exports`/`identity`, `pins,properties,layout,names,references` (`refs` aliases `references`). Omitting `-S` yields `full`.
 
 ### Verified examples (real UE5.6 asset, `FileVersionUE5 = 1017`)
 

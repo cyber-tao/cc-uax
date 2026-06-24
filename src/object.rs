@@ -1,6 +1,6 @@
 use crate::reader::{RawName, Reader};
 use crate::version::{ue4, ue5};
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackageIndex(pub i32);
@@ -50,11 +50,31 @@ impl ObjectImport {
         ue5v: i32,
         filter_editor_only: bool,
     ) -> Result<Vec<ObjectImport>> {
-        let mut out = Vec::with_capacity(count.max(0) as usize);
-        if offset <= 0 || count <= 0 {
-            return Ok(out);
+        if count < 0 {
+            bail!("import count out of range: {count}");
+        }
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        if offset <= 0 {
+            bail!("import table offset must be positive when import count is {count}");
         }
         r.seek(offset as u64)?;
+        let min_entry_bytes = 28u64
+            + if ue4v >= ue4::NON_OUTER_PACKAGE_IMPORT && !filter_editor_only {
+                8
+            } else {
+                0
+            }
+            + if ue5v >= ue5::OPTIONAL_RESOURCES {
+                4
+            } else {
+                0
+            };
+        if (count as u64).saturating_mul(min_entry_bytes) > r.remaining() {
+            bail!("import table count out of range: {count}");
+        }
+        let mut out = Vec::with_capacity(count as usize);
         for _ in 0..count {
             let class_package = r.read_raw_name()?;
             let class_name = r.read_raw_name()?;
@@ -118,11 +138,21 @@ impl ObjectExport {
         ue4v: i32,
         ue5v: i32,
     ) -> Result<Vec<ObjectExport>> {
-        let mut out = Vec::with_capacity(count.max(0) as usize);
-        if offset <= 0 || count <= 0 {
-            return Ok(out);
+        if count < 0 {
+            bail!("export count out of range: {count}");
+        }
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        if offset <= 0 {
+            bail!("export table offset must be positive when export count is {count}");
         }
         r.seek(offset as u64)?;
+        let min_entry_bytes = export_entry_min_bytes(ue4v, ue5v);
+        if (count as u64).saturating_mul(min_entry_bytes) > r.remaining() {
+            bail!("export table count out of range: {count}");
+        }
+        let mut out = Vec::with_capacity(count as usize);
         for _ in 0..count {
             let class_index = PackageIndex(r.read_i32()?);
             let super_index = PackageIndex(r.read_i32()?);
@@ -207,4 +237,38 @@ impl ObjectExport {
         }
         Ok(out)
     }
+}
+
+fn export_entry_min_bytes(ue4v: i32, ue5v: i32) -> u64 {
+    let mut n = 4 + 4 + 4 + 8 + 4 + 12 + 4;
+    if ue4v >= ue4::TEMPLATEINDEX_IN_COOKED_EXPORTS {
+        n += 4;
+    }
+    n += if ue4v >= ue4::SERIALSIZE_64BIT_EXPORTMAP {
+        16
+    } else {
+        8
+    };
+    if ue5v < ue5::REMOVE_OBJECT_EXPORT_PACKAGE_GUID {
+        n += 16;
+    }
+    if ue5v >= ue5::TRACK_OBJECT_EXPORT_IS_INHERITED {
+        n += 4;
+    }
+    if ue4v >= ue4::LOAD_FOR_EDITOR_GAME {
+        n += 4;
+    }
+    if ue4v >= ue4::COOKED_ASSETS_IN_EDITOR_SUPPORT {
+        n += 4;
+    }
+    if ue5v >= ue5::OPTIONAL_RESOURCES {
+        n += 4;
+    }
+    if ue4v >= ue4::PRELOAD_DEPENDENCIES_IN_COOKED_EXPORTS {
+        n += 20;
+    }
+    if ue5v >= ue5::SCRIPT_SERIALIZATION_OFFSET {
+        n += 16;
+    }
+    n
 }

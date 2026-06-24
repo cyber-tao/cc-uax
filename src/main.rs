@@ -206,7 +206,7 @@ fn compute_referenced_by(
             .modified()
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
+            .map(|d| d.as_nanos() as i64)
             .unwrap_or(0);
 
         let cached_refs = cache
@@ -241,7 +241,9 @@ fn compute_referenced_by(
             );
         }
 
-        if rel_key != self_rel_key && refs.iter().any(|r| r.eq_ignore_ascii_case(&self_pkg)) {
+        if !rel_key.eq_ignore_ascii_case(&self_rel_key)
+            && refs.iter().any(|r| r.eq_ignore_ascii_case(&self_pkg))
+        {
             referenced_by.insert(package_path_from_relative(&rel_key, mount));
         }
     }

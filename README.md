@@ -190,7 +190,6 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 
 ```jsonc
 {
-  "summary":    { /* versions / engine / table counts */ },
   "references": {
     "assets":        [ "/Game/...", "/Engine/..." ],
     "scripts":       [ "/Script/CoreUObject", "/Script/Engine" ],
@@ -201,6 +200,8 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 }
 ```
 
+Add `summary` explicitly, e.g. `-S summary,refs`, if you want header fields alongside reference output.
+
 ### Output sections
 
 `--sections <LIST>` (alias `-S`) selects which blocks to emit; items are comma-separated and may mix section keys with a preset. When omitted, the default is `full`.
@@ -209,7 +210,7 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 |---|---|---|
 | `logic` | `summary` + exports (identity + `member` + `pins`) | Graph / framework analysis alongside C++ |
 | `debug` | `summary` + `imports` + exports (`properties` + `layout`) | Bug hunting / serialization checks |
-| `full`  | `summary` + `imports` + exports (`pins` + `properties` + `layout`) — the default | Complete dump |
+| `full`  | `summary` + `imports` + exports (`pins` + `properties` + `layout`) — the default; excludes `names` and `references` unless requested | Complete export dump |
 
 Section keys (composable, e.g. `-S exports,pins,properties` or `-S full,names`): `summary`, `imports`, `exports` (identity base), `pins`, `properties`, `layout` (serial offsets / flags / script window), `names`, `references` (alias `refs`).
 

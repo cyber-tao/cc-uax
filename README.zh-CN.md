@@ -190,7 +190,6 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 
 ```jsonc
 {
-  "summary":    { /* 版本 / 引擎 / 各表计数 */ },
   "references": {
     "assets":        [ "/Game/...", "/Engine/..." ],
     "scripts":       [ "/Script/CoreUObject", "/Script/Engine" ],
@@ -201,6 +200,8 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 }
 ```
 
+如果希望引用输出同时包含包头字段，请显式使用 `-S summary,refs`。
+
 ### 输出区块
 
 `--sections <LIST>`（别名 `-S`）选择输出哪些区块；用逗号分隔，可混用区块键与预设。省略时默认 `full`。
@@ -209,7 +210,7 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 |---|---|---|
 | `logic` | `summary` + exports（identity + `member` + `pins`） | 对照 C++ 的图 / 框架分析 |
 | `debug` | `summary` + `imports` + exports（`properties` + `layout`） | 查 BUG / 序列化核对 |
-| `full`  | `summary` + `imports` + exports（`pins` + `properties` + `layout`）— 默认 | 完整导出 |
+| `full`  | `summary` + `imports` + exports（`pins` + `properties` + `layout`）— 默认；除非显式请求，否则不包含 `names` 和 `references` | 完整 export 导出 |
 
 区块键（可组合，如 `-S exports,pins,properties` 或 `-S full,names`）：`summary`、`imports`、`exports`（identity 基础）、`pins`、`properties`、`layout`（serial 偏移 / flags / script 窗口）、`names`、`references`（别名 `refs`）。
 

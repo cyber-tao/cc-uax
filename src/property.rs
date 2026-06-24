@@ -174,7 +174,7 @@ pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<P
         let value = if type_name.name == "BoolProperty" {
             json!(bool_val)
         } else {
-            match parse_value(r, &type_name, ctx, is_binary_native) {
+            match parse_value(r, &type_name, ctx, is_binary_native, aligned) {
                 Ok(v) => v,
                 Err(_) => {
                     let _ = r.seek(value_start);
@@ -221,6 +221,7 @@ fn parse_value(
     ty: &TypeName,
     ctx: &ParseCtx,
     prefer_native: bool,
+    value_end: u64,
 ) -> Result<Value> {
     let v = match ty.name.as_str() {
         "BoolProperty" => json!(r.read_u8()? != 0),
@@ -264,20 +265,20 @@ fn parse_value(
         }
         "StructProperty" => {
             let struct_name = ty.param(0).map(|p| p.name.as_str()).unwrap_or("");
-            parse_struct(r, struct_name, ctx, prefer_native)?
+            parse_struct(r, struct_name, ctx, prefer_native, value_end)?
         }
         "ArrayProperty" => {
             let inner = ty
                 .param(0)
                 .ok_or_else(|| anyhow::anyhow!("ArrayProperty missing element type"))?;
-            parse_collection(r, inner, ctx, false)?
+            parse_collection(r, inner, ctx, false, prefer_native, value_end)?
         }
         "SetProperty" => {
             let inner = ty
                 .param(0)
                 .ok_or_else(|| anyhow::anyhow!("SetProperty missing element type"))?;
             let _num_to_remove = r.read_i32()?;
-            parse_collection(r, inner, ctx, true)?
+            parse_collection(r, inner, ctx, true, prefer_native, value_end)?
         }
         "MapProperty" => {
             let key_ty = ty
@@ -286,7 +287,7 @@ fn parse_value(
             let val_ty = ty
                 .param(1)
                 .ok_or_else(|| anyhow::anyhow!("MapProperty missing value type"))?;
-            parse_map(r, key_ty, val_ty, ctx)?
+            parse_map(r, key_ty, val_ty, ctx, prefer_native, value_end)?
         }
         _ => bail!("unknown property type: {}", ty.name),
     };
@@ -305,14 +306,17 @@ fn parse_collection(
     inner: &TypeName,
     ctx: &ParseCtx,
     _is_set: bool,
+    prefer_native: bool,
+    value_end: u64,
 ) -> Result<Value> {
     let count = r.read_i32()?;
-    if count < 0 || count as u64 > r.remaining() {
+    let remaining_in_value = value_end.saturating_sub(r.pos());
+    if count < 0 || count as u64 > remaining_in_value {
         bail!("collection element count out of range: {count}");
     }
     let mut arr = Vec::with_capacity(count as usize);
     for _ in 0..count {
-        arr.push(parse_element(r, inner, ctx)?);
+        arr.push(parse_element(r, inner, ctx, prefer_native, value_end)?);
     }
     Ok(Value::Array(arr))
 }
@@ -322,23 +326,32 @@ fn parse_map(
     key_ty: &TypeName,
     val_ty: &TypeName,
     ctx: &ParseCtx,
+    prefer_native: bool,
+    value_end: u64,
 ) -> Result<Value> {
     let _num_to_remove = r.read_i32()?;
     let count = r.read_i32()?;
-    if count < 0 || count as u64 > r.remaining() {
+    let remaining_in_value = value_end.saturating_sub(r.pos());
+    if count < 0 || count as u64 > remaining_in_value {
         bail!("Map element count out of range: {count}");
     }
     let mut arr = Vec::with_capacity(count as usize);
     for _ in 0..count {
-        let key = parse_element(r, key_ty, ctx)?;
-        let value = parse_element(r, val_ty, ctx)?;
+        let key = parse_element(r, key_ty, ctx, prefer_native, value_end)?;
+        let value = parse_element(r, val_ty, ctx, prefer_native, value_end)?;
         arr.push(json!({ "key": key, "value": value }));
     }
     Ok(Value::Array(arr))
 }
 
-fn parse_element(r: &mut Reader, ty: &TypeName, ctx: &ParseCtx) -> Result<Value> {
-    parse_value(r, ty, ctx, false)
+fn parse_element(
+    r: &mut Reader,
+    ty: &TypeName,
+    ctx: &ParseCtx,
+    prefer_native: bool,
+    value_end: u64,
+) -> Result<Value> {
+    parse_value(r, ty, ctx, prefer_native, value_end)
 }
 
 fn parse_struct(
@@ -346,6 +359,7 @@ fn parse_struct(
     struct_name: &str,
     ctx: &ParseCtx,
     prefer_native_for_unknown: bool,
+    value_end: u64,
 ) -> Result<Value> {
     if struct_name == "SoftObjectPath" || struct_name == "SoftClassPath" {
         return parse_soft_object(r, ctx);
@@ -356,7 +370,7 @@ fn parse_struct(
     if prefer_native_for_unknown {
         bail!("unknown native struct: {struct_name}");
     }
-    let nested = parse_properties(r, ctx, r.len());
+    let nested = parse_properties(r, ctx, value_end);
     Ok(json!({ "@struct": struct_name, "properties": entries_to_json(&nested) }))
 }
 

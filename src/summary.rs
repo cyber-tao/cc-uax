@@ -149,6 +149,12 @@ impl PackageFileSummary {
                 "package is unversioned (no version info, typically a cooked package); this tool targets versioned editor assets"
             );
         }
+        if file_version_ue5 < ue5::INITIAL_VERSION {
+            bail!(
+                "unsupported package FileVersionUE5={file_version_ue5}; this tool targets UE5 versioned editor assets (FileVersionUE5 >= {})",
+                ue5::INITIAL_VERSION
+            );
+        }
 
         let ue4v = file_version_ue4;
         let ue5v = file_version_ue5;

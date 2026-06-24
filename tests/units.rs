@@ -2,7 +2,7 @@ use cc_uax::name::NameMap;
 use cc_uax::object::PackageIndex;
 use cc_uax::package::{collect_package_references, package_path_from_relative};
 use cc_uax::property::{ParseCtx, TypeName, parse_properties};
-use cc_uax::reader::Reader;
+use cc_uax::reader::{RawName, Reader};
 use cc_uax::{OutputSections, Package};
 
 #[test]
@@ -137,6 +137,10 @@ fn push_i32(v: &mut Vec<u8>, x: i32) {
 fn push_i64(v: &mut Vec<u8>, x: i64) {
     v.extend_from_slice(&x.to_le_bytes());
 }
+fn push_raw_name(v: &mut Vec<u8>, index: i32) {
+    push_i32(v, index);
+    push_i32(v, 0);
+}
 fn push_fstring(v: &mut Vec<u8>, s: &str) {
     if s.is_empty() {
         push_i32(v, 0);
@@ -212,6 +216,32 @@ fn build_minimal_package() -> Vec<u8> {
 }
 
 #[test]
+fn package_rejects_pre_ue5_version() {
+    let mut d = Vec::new();
+    push_u32(&mut d, 0x9E2A_83C1); // PACKAGE_FILE_TAG
+    push_i32(&mut d, -8); // legacy_file_version
+    push_i32(&mut d, 0); // legacy ue3 version
+    push_i32(&mut d, 522); // file_version_ue4
+    push_i32(&mut d, 999); // below UE5 initial version
+    push_i32(&mut d, 0); // file_version_licensee
+
+    let err = Package::parse(&d).err().unwrap().to_string();
+    assert!(err.contains("FileVersionUE5=999"));
+}
+
+#[test]
+fn name_map_rejects_negative_count() {
+    let data = [];
+    let mut r = Reader::new(&data);
+
+    let err = NameMap::parse(&mut r, 0, -1, 522)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("name count out of range"));
+}
+
+#[test]
 fn package_parse_minimal_header() {
     let data = build_minimal_package();
     let pkg = Package::parse(&data).expect("minimal package should parse");
@@ -228,6 +258,150 @@ fn package_parse_minimal_header() {
     assert_eq!(json["summary"]["file_version_ue5"], 1018);
     assert!(json["imports"].as_array().unwrap().is_empty());
     assert!(json["exports"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn nested_struct_respects_declared_value_end() {
+    let names = NameMap {
+        names: vec![
+            "Outer".to_string(),
+            "StructProperty".to_string(),
+            "MyStruct".to_string(),
+            "Inner".to_string(),
+            "IntProperty".to_string(),
+            "After".to_string(),
+            "None".to_string(),
+        ],
+    };
+
+    let mut nested = Vec::new();
+    push_raw_name(&mut nested, 3); // Inner
+    push_raw_name(&mut nested, 4); // IntProperty
+    push_i32(&mut nested, 0); // type name inner param count
+    push_i32(&mut nested, 4); // size
+    nested.push(0); // flags
+    push_i32(&mut nested, 123);
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Outer
+    push_raw_name(&mut d, 1); // StructProperty
+    push_i32(&mut d, 1); // one type parameter
+    push_raw_name(&mut d, 2); // MyStruct
+    push_i32(&mut d, 0);
+    push_i32(&mut d, nested.len() as i32);
+    d.push(0); // flags
+    d.extend_from_slice(&nested);
+
+    push_raw_name(&mut d, 5); // After
+    push_raw_name(&mut d, 4); // IntProperty
+    push_i32(&mut d, 0);
+    push_i32(&mut d, 4);
+    d.push(0);
+    push_i32(&mut d, 456);
+
+    push_raw_name(&mut d, 6); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].name, "Outer");
+    let nested_props = entries[0].value["properties"].as_array().unwrap();
+    assert_eq!(nested_props.len(), 1);
+    assert_eq!(nested_props[0]["name"], "Inner");
+    assert_eq!(entries[1].name, "After");
+    assert_eq!(entries[1].value.as_i64(), Some(456));
+}
+
+#[test]
+fn native_struct_array_falls_back_to_hex() {
+    let names = NameMap {
+        names: vec![
+            "NativeArray".to_string(),
+            "ArrayProperty".to_string(),
+            "StructProperty".to_string(),
+            "UnknownNative".to_string(),
+            "None".to_string(),
+        ],
+    };
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // NativeArray
+    push_raw_name(&mut d, 1); // ArrayProperty
+    push_i32(&mut d, 1);
+    push_raw_name(&mut d, 2); // StructProperty
+    push_i32(&mut d, 1);
+    push_raw_name(&mut d, 3); // UnknownNative
+    push_i32(&mut d, 0);
+    push_i32(&mut d, 8); // count + one opaque 4-byte element
+    d.push(0x08); // binary/native value
+    push_i32(&mut d, 1); // array count
+    d.extend_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
+    push_raw_name(&mut d, 4); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let unparsed = entries[0].value.get("@unparsed").and_then(|v| v.as_str());
+    assert_eq!(unparsed, Some("01000000aabbccdd"));
+}
+
+#[test]
+fn invalid_script_window_is_reported_in_layout() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let pkg = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec!["Obj".to_string()],
+        },
+        imports: Vec::new(),
+        exports: vec![cc_uax::object::ObjectExport {
+            class_index: PackageIndex(0),
+            super_index: PackageIndex(0),
+            template_index: PackageIndex(0),
+            outer_index: PackageIndex(0),
+            object_name: RawName {
+                index: 0,
+                number: 0,
+            },
+            object_flags: 0,
+            serial_size: 4,
+            serial_offset: 0,
+            forced_export: false,
+            not_for_client: false,
+            not_for_server: false,
+            is_inherited_instance: false,
+            package_flags: 0,
+            not_always_loaded_for_editor_game: false,
+            is_asset: false,
+            generate_public_hash: false,
+            first_export_dependency: -1,
+            serialization_before_serialization_deps: -1,
+            create_before_serialization_deps: -1,
+            serialization_before_create_deps: -1,
+            create_before_create_deps: -1,
+            script_serialization_start_offset: 0,
+            script_serialization_end_offset: 8,
+        }],
+    };
+    let mut sections = OutputSections::none();
+    sections.exports = true;
+    sections.layout = true;
+    sections.properties = true;
+
+    let json = pkg.to_json(&[0; 4], &sections);
+    let err = json["exports"][0]["serial_window_error"].as_str().unwrap();
+    assert!(err.contains("outside serial size"));
+    assert!(json["exports"][0].get("properties").is_none());
 }
 
 #[test]

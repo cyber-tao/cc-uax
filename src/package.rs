@@ -12,6 +12,13 @@ use std::collections::{BTreeSet, HashMap};
 const PACKAGE_CLASS_NAME: &str = "Package";
 const SCRIPT_PATH_PREFIX: &str = "/Script/";
 
+#[derive(Debug, Clone, Copy)]
+struct ExportSerialWindow {
+    property_start: u64,
+    property_end: u64,
+    serial_end: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct OutputSections {
     pub summary: bool,
@@ -362,26 +369,26 @@ impl Package {
                 }
             }
 
-            let in_bounds = exp.serial_size > 0 && exp.serial_offset >= 0;
-            if (opts.properties || is_node) && in_bounds {
-                let (start, end) = if has_script {
-                    (
-                        exp.serial_offset + exp.script_serialization_start_offset,
-                        exp.serial_offset + exp.script_serialization_end_offset,
-                    )
-                } else {
-                    (exp.serial_offset, exp.serial_offset + exp.serial_size)
-                };
+            let serial_window = match export_serial_window(exp, has_script, file_len) {
+                Ok(w) => w,
+                Err(err) => {
+                    if opts.layout {
+                        obj.insert("serial_window_error".into(), json!(err));
+                    }
+                    None
+                }
+            };
+            if (opts.properties || is_node)
+                && let Some(window) = serial_window
+            {
+                let start = window.property_start;
+                let end = window.property_end;
 
-                if end > start
-                    && start >= 0
-                    && (end as u64) <= file_len
-                    && reader.seek(start as u64).is_ok()
-                {
+                if end > start && reader.seek(start).is_ok() {
                     let props = parse_object_properties(
                         &mut reader,
                         &ctx,
-                        end as u64,
+                        end,
                         self.summary.file_version_ue5,
                     );
                     if let Some((member, from)) = distill_member(&props) {
@@ -392,8 +399,8 @@ impl Package {
                     }
                     if opts.properties {
                         obj.insert("properties".into(), entries_to_json(&props));
-                        let consumed = reader.pos().saturating_sub(start as u64);
-                        let range = (end - start) as u64;
+                        let consumed = reader.pos().saturating_sub(start);
+                        let range = end - start;
                         if consumed < range {
                             obj.insert(
                                 "properties_unconsumed_bytes".into(),
@@ -401,27 +408,27 @@ impl Package {
                             );
                         }
                     }
-                } else if opts.properties && has_script && end == start {
+                } else if opts.properties && end == start {
                     obj.insert("properties".into(), Value::Array(Vec::new()));
                 }
             }
 
             let mut pins = None;
-            if opts.pins && in_bounds {
+            if opts.pins
+                && let Some(window) = serial_window
+            {
                 pins = self.try_parse_pins(
                     &mut reader,
-                    exp,
                     &class_full,
                     has_script,
-                    file_len,
                     &ctx,
                     &pin_ctx,
+                    window,
                 );
                 if pins.is_none() {
-                    let pin_start = exp.serial_offset + exp.script_serialization_end_offset;
-                    let pin_end = exp.serial_offset + exp.serial_size;
-                    if has_script && is_node && pin_end > pin_start {
-                        obj.insert("pins_unparsed_bytes".into(), json!(pin_end - pin_start));
+                    let pin_bytes = window.serial_end.saturating_sub(window.property_end);
+                    if has_script && is_node && pin_bytes > 0 {
+                        obj.insert("pins_unparsed_bytes".into(), json!(pin_bytes));
                     }
                 }
             }
@@ -468,23 +475,22 @@ impl Package {
     fn try_parse_pins(
         &self,
         reader: &mut Reader,
-        exp: &ObjectExport,
         class_full: &str,
         has_script: bool,
-        file_len: u64,
         ctx: &ParseCtx,
         pin_ctx: &PinSerCtx,
+        window: ExportSerialWindow,
     ) -> Option<Vec<Pin>> {
         if !has_script || !is_graph_node_class(class_full) {
             return None;
         }
-        let pin_start = exp.serial_offset + exp.script_serialization_end_offset;
-        let pin_end = exp.serial_offset + exp.serial_size;
-        if pin_start < 0 || pin_end <= pin_start || (pin_end as u64) > file_len {
+        let pin_start = window.property_end;
+        let pin_end = window.serial_end;
+        if pin_end <= pin_start {
             return None;
         }
-        reader.seek(pin_start as u64).ok()?;
-        parse_node_pins(reader, pin_end as u64, ctx, pin_ctx)
+        reader.seek(pin_start).ok()?;
+        parse_node_pins(reader, pin_end, ctx, pin_ctx)
     }
 
     fn pins_to_json(
@@ -580,6 +586,60 @@ impl Package {
 
 fn name_or_null(s: String) -> Value {
     if s.is_empty() { Value::Null } else { json!(s) }
+}
+
+fn export_serial_window(
+    exp: &ObjectExport,
+    has_script: bool,
+    file_len: u64,
+) -> std::result::Result<Option<ExportSerialWindow>, String> {
+    if exp.serial_size <= 0 {
+        return Ok(None);
+    }
+    if exp.serial_offset < 0 {
+        return Err(format!(
+            "negative serial offset {} for non-empty export",
+            exp.serial_offset
+        ));
+    }
+
+    let serial_start = exp.serial_offset as u64;
+    let serial_size = exp.serial_size as u64;
+    let serial_end = serial_start
+        .checked_add(serial_size)
+        .ok_or_else(|| "serial range overflows u64".to_string())?;
+    if serial_end > file_len {
+        return Err(format!(
+            "serial range [{serial_start}, {serial_end}) exceeds file length {file_len}"
+        ));
+    }
+
+    if !has_script {
+        return Ok(Some(ExportSerialWindow {
+            property_start: serial_start,
+            property_end: serial_end,
+            serial_end,
+        }));
+    }
+
+    let script_start = exp.script_serialization_start_offset;
+    let script_end = exp.script_serialization_end_offset;
+    if script_start < 0 || script_end < script_start || script_end > exp.serial_size {
+        return Err(format!(
+            "script serialization range [{script_start}, {script_end}) is outside serial size {}",
+            exp.serial_size
+        ));
+    }
+
+    Ok(Some(ExportSerialWindow {
+        property_start: serial_start
+            .checked_add(script_start as u64)
+            .ok_or_else(|| "script serialization start overflows u64".to_string())?,
+        property_end: serial_start
+            .checked_add(script_end as u64)
+            .ok_or_else(|| "script serialization end overflows u64".to_string())?,
+        serial_end,
+    }))
 }
 
 fn is_graph_node_class(class_full: &str) -> bool {
