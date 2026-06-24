@@ -1,0 +1,41 @@
+# git-cliff configuration — categorized Conventional Commits changelog used
+# as the GitHub Release body for cc-uax.
+#
+# The release workflow runs `git cliff --latest --strip header` and feeds the
+# output to softprops/action-gh-release as `body`; GitHub's auto-generated
+# release notes are then appended after it (the API pre-pends `body`).
+#
+# Docs: https://git-cliff.org/docs/configuration
+
+[changelog]
+header = ""
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}\
+- {% if commit.scope %}*({{ commit.scope }})* {% endif %}{% if commit.breaking %}**⚠️ BREAKING** — {% endif %}{{ commit.message | upper_first | trim }} (`{{ commit.id | truncate(length=7, end="") }}`)
+{% endfor %}\
+{% endfor %}\
+"""
+trim = true
+footer = ""
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+# `commit.group` defaults to the conventional-commit type (feat / fix / ...).
+# The leading HTML comments are sort keys only — `striptags` strips them.
+commit_parsers = [
+  # Release / version-bump commits stay out of the rendered changelog.
+  { field = "scope", pattern = "^release$", skip = true },
+  { field = "group", pattern = "^feat$", group = "<!-- 0 -->🚀 Features" },
+  { field = "group", pattern = "^fix$", group = "<!-- 1 -->🐛 Bug Fixes" },
+  { field = "group", pattern = "^perf$", group = "<!-- 2 -->⚡ Performance" },
+  { field = "group", pattern = "^refactor$", group = "<!-- 3 -->♻️ Refactor" },
+  { field = "group", pattern = "^docs$", group = "<!-- 4 -->📝 Documentation" },
+  { field = "group", pattern = "^style$", group = "<!-- 5 -->🎨 Styling" },
+  { field = "group", pattern = "^test$", group = "<!-- 6 -->🧪 Testing" },
+  { field = "group", pattern = "^chore$|^ci$|^build$", group = "<!-- 7 -->⚙️ Miscellaneous" },
+  { message = ".*", group = "<!-- 8 -->🌀 Miscellaneous" },
+]

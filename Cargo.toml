@@ -1,6 +1,6 @@
 [package]
 name = "cc-uax"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Parse Unreal Engine 5 .uasset/.umap packages to JSON — header, tagged properties, Blueprint node graph, and forward/reverse asset references."
 license = "MIT"

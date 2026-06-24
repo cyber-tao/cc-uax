@@ -102,8 +102,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout (full history for changelog generation)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -114,9 +116,22 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
+      - name: Generate changelog body
+        id: git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: CHANGES.md
+          GITHUB_REPO: ${{ github.repository }}
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          # git-cliff body is pre-pended; GitHub's auto notes (contributors,
+          # full commit list, compare link) are appended after it.
+          body: ${{ steps.git-cliff.outputs.content }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: artifacts/*
