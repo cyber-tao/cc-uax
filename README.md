@@ -8,7 +8,7 @@ A single CLI that turns opaque UE5 editor assets into structured JSON — so Cla
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Release](https://img.shields.io/github/v/release/cyber-tao/cc-uax?logo=github)](https://github.com/cyber-tao/cc-uax/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/release.yml?branch=main&label=build)](https://github.com/cyber-tao/cc-uax/actions/workflows/release.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/release.yml?branch=master&label=build)](https://github.com/cyber-tao/cc-uax/actions/workflows/release.yml)
 [![UE5](https://img.shields.io/badge/Unreal%20Engine-5.7-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=flat)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-5851DB)](#)
@@ -49,7 +49,7 @@ The name says it plainly: **cc** = Claude Code, **uax** = uasset. The tool also 
 - **Selectable output sections** — `--sections` (alias `-S`) composes exactly the blocks you want, or picks a preset (`logic`, `debug`, `full`) — keeping logic analysis lean and bug-hunting thorough.
 - **Graceful hex fallback** — types with custom binary serialization not yet structured (e.g. Niagara nodes, `AnimNotifyEvent`) emit a `type`+`size`-tagged hex preview that **preserves byte alignment**.
 - **Reference graph**
-  - `--references` — forward refs from the import table, split into `assets` vs `scripts`, de-duplicated & sorted.
+  - `-S refs` — forward refs from the import table, split into `assets` vs `scripts`, de-duplicated & sorted.
   - `--scan-dir` — reverse refs: which assets reference *this* file (`referenced_by`), via `--mount` path mapping.
 - **Incremental scan cache** — SQLite-backed (`.cc-uax-cache.sqlite`), keyed by mtime + size, with a live stderr progress bar. `--no-cache` opts out.
 
@@ -96,7 +96,7 @@ Installer options (set as env vars before invoking): `INSTALL_DIR` (binary locat
 
 ### Build from source
 
-Requires Rust ≥ 1.85 (edition 2024):
+Requires Rust ≥ 1.88 (edition 2024, uses let-chains):
 
 ```bash
 git clone https://github.com/cyber-tao/cc-uax.git

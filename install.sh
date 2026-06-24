@@ -2,7 +2,7 @@
 #
 # cc-uax one-line installer for Linux / macOS.
 #
-#   curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.sh | bash
 #
 # What it does:
 #   1. Detects OS + arch and maps to a release target

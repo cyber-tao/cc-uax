@@ -1,7 +1,7 @@
 #
 # cc-uax one-line installer for Windows (PowerShell).
 #
-#   irm https://raw.githubusercontent.com/cyber-tao/cc-uax/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
 #
 # What it does:
 #   1. Resolves the latest release from GitHub

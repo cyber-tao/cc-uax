@@ -8,7 +8,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Release](https://img.shields.io/github/v/release/cyber-tao/cc-uax?logo=github)](https://github.com/cyber-tao/cc-uax/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/release.yml?branch=main&label=build)](https://github.com/cyber-tao/cc-uax/actions/workflows/release.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/release.yml?branch=master&label=build)](https://github.com/cyber-tao/cc-uax/actions/workflows/release.yml)
 [![UE5](https://img.shields.io/badge/Unreal%20Engine-5.7-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=flat)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-5851DB)](#)
@@ -49,7 +49,7 @@
 - **可选输出区块** —— `--sections`（别名 `-S`）按需组合要输出的区块，或直接选预设（`logic`、`debug`、`full`）—— 让逻辑分析精简、查 BUG 全面。
 - **优雅的十六进制回退** —— 暂未结构化、带自定义二进制序列化的类型（如 Niagara 节点、`AnimNotifyEvent`）输出带 `type` + `size` 标注的十六进制预览，**保证字节对齐不被破坏**。
 - **引用图谱**
-  - `--references` —— 从 import 表提取前向引用，拆分为 `assets` 与 `scripts`，去重排序。
+  - `-S refs` —— 从 import 表提取前向引用，拆分为 `assets` 与 `scripts`，去重排序。
   - `--scan-dir` —— 反向引用：哪些资产引用了*当前文件*（`referenced_by`），通过 `--mount` 路径映射。
 - **增量扫描缓存** —— 基于 SQLite（`.cc-uax-cache.sqlite`），按修改时间 + 大小作键，带实时 stderr 进度条。`--no-cache` 可关闭。
 
@@ -96,7 +96,7 @@ irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
 
 ### 从源码构建
 
-需要 Rust ≥ 1.85（edition 2024）：
+需要 Rust ≥ 1.88（edition 2024，使用 let-chains）：
 
 ```bash
 git clone https://github.com/cyber-tao/cc-uax.git
