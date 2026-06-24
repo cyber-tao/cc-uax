@@ -1,8 +1,9 @@
 use cc_uax::name::NameMap;
 use cc_uax::object::PackageIndex;
 use cc_uax::package::{collect_package_references, package_path_from_relative};
-use cc_uax::property::TypeName;
+use cc_uax::property::{ParseCtx, TypeName, parse_properties};
 use cc_uax::reader::Reader;
+use cc_uax::{OutputSections, Package};
 
 #[test]
 fn fstring_ansi() {
@@ -122,4 +123,147 @@ fn package_path_mapping() {
         package_path_from_relative("/Widgets/W_HUD.uasset", "/MyPlugin"),
         "/MyPlugin/Widgets/W_HUD"
     );
+}
+
+fn push_u16(v: &mut Vec<u8>, x: u16) {
+    v.extend_from_slice(&x.to_le_bytes());
+}
+fn push_u32(v: &mut Vec<u8>, x: u32) {
+    v.extend_from_slice(&x.to_le_bytes());
+}
+fn push_i32(v: &mut Vec<u8>, x: i32) {
+    v.extend_from_slice(&x.to_le_bytes());
+}
+fn push_i64(v: &mut Vec<u8>, x: i64) {
+    v.extend_from_slice(&x.to_le_bytes());
+}
+fn push_fstring(v: &mut Vec<u8>, s: &str) {
+    if s.is_empty() {
+        push_i32(v, 0);
+        return;
+    }
+    push_i32(v, (s.len() + 1) as i32);
+    v.extend_from_slice(s.as_bytes());
+    v.push(0);
+}
+
+// Minimal versioned UE5 package header (legacy=-8, ue4=522, ue5=1018,
+// FilterEditorOnly set to skip editor-only fields, all tables empty).
+fn build_minimal_package() -> Vec<u8> {
+    let mut d = Vec::new();
+    push_u32(&mut d, 0x9E2A_83C1); // PACKAGE_FILE_TAG
+    push_i32(&mut d, -8); // legacy_file_version
+    push_i32(&mut d, 0); // legacy ue3 version (legacy != -4)
+    push_i32(&mut d, 522); // file_version_ue4
+    push_i32(&mut d, 1018); // file_version_ue5
+    push_i32(&mut d, 0); // file_version_licensee
+    d.extend_from_slice(&[0u8; 20]); // saved_hash (ue5 >= 1016)
+    push_i32(&mut d, 0); // total_header_size
+    push_i32(&mut d, 0); // custom version count
+    push_fstring(&mut d, "TestPkg"); // package_name
+    push_u32(&mut d, 0x8000_0000); // package_flags = FilterEditorOnly
+    push_i32(&mut d, 0); // name_count
+    push_i32(&mut d, 0); // name_offset
+    push_i32(&mut d, 0); // soft_object_paths_count (ue5 >= 1008)
+    push_i32(&mut d, 0); // soft_object_paths_offset
+    push_i32(&mut d, 0); // gatherable_text_data_count (ue4 >= 459)
+    push_i32(&mut d, 0); // gatherable_text_data_offset
+    push_i32(&mut d, 0); // export_count
+    push_i32(&mut d, 0); // export_offset
+    push_i32(&mut d, 0); // import_count
+    push_i32(&mut d, 0); // import_offset
+    push_i32(&mut d, 0); // cell_export_count (ue5 >= 1015)
+    push_i32(&mut d, 0); // cell_export_offset
+    push_i32(&mut d, 0); // cell_import_count
+    push_i32(&mut d, 0); // cell_import_offset
+    push_i32(&mut d, 0); // metadata_offset (ue5 >= 1014)
+    push_i32(&mut d, 0); // depends_offset
+    push_i32(&mut d, 0); // soft_package_references_count (ue4 >= 384)
+    push_i32(&mut d, 0); // soft_package_references_offset
+    push_i32(&mut d, 0); // searchable_names_offset (ue4 >= 510)
+    push_i32(&mut d, 0); // thumbnail_table_offset
+    push_i32(&mut d, 0); // import_type_hierarchies_count (ue5 >= 1018)
+    push_i32(&mut d, 0); // import_type_hierarchies_offset
+    push_i32(&mut d, 0); // generation_count
+    push_u16(&mut d, 5); // engine_version.major (ue4 >= 336)
+    push_u16(&mut d, 7); // .minor
+    push_u16(&mut d, 0); // .patch
+    push_u32(&mut d, 0); // .changelist
+    push_fstring(&mut d, ""); // .branch
+    push_u16(&mut d, 5); // compatible_engine_version (ue4 >= 444)
+    push_u16(&mut d, 7);
+    push_u16(&mut d, 0);
+    push_u32(&mut d, 0);
+    push_fstring(&mut d, "");
+    push_u32(&mut d, 0); // compression_flags
+    push_i32(&mut d, 0); // compressed_chunks_count
+    push_u32(&mut d, 0); // package_source
+    push_i32(&mut d, 0); // additional_packages_to_cook count
+    push_i32(&mut d, 0); // asset_registry_data_offset
+    push_i64(&mut d, 0); // bulk_data_start_offset
+    push_i32(&mut d, 0); // world_tile_info_data_offset (ue4 >= 224)
+    push_i32(&mut d, 0); // chunk ids count (ue4 >= 392)
+    push_i32(&mut d, 0); // preload_dependency_count (ue4 >= 507)
+    push_i32(&mut d, 0); // preload_dependency_offset
+    push_i32(&mut d, 0); // names_referenced_from_export_data_count (ue5 >= 1001)
+    push_i64(&mut d, 0); // payload_toc_offset (ue5 >= 1002)
+    push_i32(&mut d, 0); // data_resource_offset (ue5 >= 1009)
+    d
+}
+
+#[test]
+fn package_parse_minimal_header() {
+    let data = build_minimal_package();
+    let pkg = Package::parse(&data).expect("minimal package should parse");
+
+    assert_eq!(pkg.summary.file_version_ue4, 522);
+    assert_eq!(pkg.summary.file_version_ue5, 1018);
+    assert_eq!(pkg.summary.package_name, "TestPkg");
+    assert_eq!(pkg.summary.export_count, 0);
+    assert!(pkg.imports.is_empty());
+    assert!(pkg.exports.is_empty());
+
+    let json = pkg.to_json(&data, &OutputSections::full());
+    assert_eq!(json["summary"]["package_name"], "TestPkg");
+    assert_eq!(json["summary"]["file_version_ue5"], 1018);
+    assert!(json["imports"].as_array().unwrap().is_empty());
+    assert!(json["exports"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn text_property_unknown_history_falls_back_to_hex() {
+    let names = NameMap {
+        names: vec![
+            "MyText".to_string(),
+            "TextProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+
+    let mut d = Vec::new();
+    push_i32(&mut d, 0); // property name FName index ("MyText")
+    push_i32(&mut d, 0); // .number
+    push_i32(&mut d, 1); // type name FName index ("TextProperty")
+    push_i32(&mut d, 0); // .number
+    push_i32(&mut d, 0); // type name inner param count
+    push_i32(&mut d, 5); // size
+    d.push(0); // flags
+    push_u32(&mut d, 0); // FText flags
+    d.push(4u8); // FText history_type = 4 (unhandled)
+    push_i32(&mut d, 2); // terminator FName index ("None")
+    push_i32(&mut d, 0); // .number
+
+    let end = d.len() as u64;
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, end);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "MyText");
+    assert_eq!(entries[0].type_str, "TextProperty");
+    let unparsed = entries[0].value.get("@unparsed").and_then(|v| v.as_str());
+    assert_eq!(unparsed, Some("0000000004"));
 }
