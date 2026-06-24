@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use cc_uax::package::package_path_from_relative;
-use cc_uax::{JsonOptions, Package};
+use cc_uax::{OutputSections, Package};
 use clap::Parser;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
@@ -47,31 +47,15 @@ struct Args {
         short = 'S',
         long,
         value_name = "LIST",
-        help = "Comma-separated output sections or a preset (overrides -s/-P/-r). Sections: summary, imports, exports, pins, properties, layout, names, references. Presets: logic, debug, full, refs, min"
+        help = "Output sections to emit (comma-separated), or a preset. Sections: summary, imports, exports, pins, properties, layout, names, references. Presets: logic, debug, full (default)"
     )]
     sections: Option<String>,
-
-    #[arg(short, long, help = "Include the full name table in the output")]
-    names: bool,
-
-    #[arg(short, long, help = "Print only the package header summary")]
-    summary_only: bool,
-
-    #[arg(short = 'P', long, help = "Skip parsing of export properties")]
-    no_properties: bool,
-
-    #[arg(
-        short,
-        long,
-        help = "List only external package references (assets / scripts)"
-    )]
-    references: bool,
 
     #[arg(
         short = 'd',
         long,
         value_name = "DIR",
-        help = "Scan <DIR> recursively to also list assets that reference this file (with -r)"
+        help = "Scan <DIR> recursively to also list assets that reference this file (with -S refs)"
     )]
     scan_dir: Option<PathBuf>,
 
@@ -100,26 +84,11 @@ fn main() -> Result<()> {
     let package = Package::parse(&data)
         .with_context(|| format!("Failed to parse: {}", args.input.display()))?;
 
-    let mut sections = if let Some(spec) = args.sections.as_deref() {
-        JsonOptions::parse(spec).with_context(|| format!("Invalid --sections value: '{spec}'"))?
-    } else if args.summary_only {
-        let mut s = JsonOptions::none();
-        s.summary = true;
-        s
-    } else if args.references {
-        let mut s = JsonOptions::none();
-        s.references = true;
-        s
-    } else if args.no_properties {
-        let mut s = JsonOptions::full();
-        s.properties = false;
-        s
-    } else {
-        JsonOptions::full()
+    let sections = match args.sections.as_deref() {
+        Some(spec) => OutputSections::parse(spec)
+            .with_context(|| format!("Invalid --sections value: '{spec}'"))?,
+        None => OutputSections::full(),
     };
-    if args.names {
-        sections.names = true;
-    }
 
     let mut json = package.to_json(&data, &sections);
 
@@ -135,7 +104,7 @@ fn main() -> Result<()> {
             }
         }
     } else if args.scan_dir.is_some() {
-        eprintln!("Note: --scan-dir only takes effect together with --references");
+        eprintln!("Note: --scan-dir only takes effect together with -S refs");
     }
 
     if let Value::Object(ref mut m) = json {

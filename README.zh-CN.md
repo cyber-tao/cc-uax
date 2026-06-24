@@ -41,7 +41,9 @@
   | 嵌套 | 递归 tagged 结构体 |
   | 原生结构体 | `Vector` / `Vector3f` / `Rotator` / `Quat` / `Color` / `LinearColor` / `Transform` / `Guid` / `DateTime` … |
 
-- **优雅的十六进制回退** —— 带自定义二进制序列化的类型（如 `EdGraphPinType`、Niagara、`AnimNotifyEvent`）输出带 `type` + `size` 标注的十六进制预览，**保证字节对齐不被破坏**。
+- **蓝图图逻辑** —— 紧随 tagged property 区间之后解码 `UEdGraphNode` 的 pin：每个节点的 pins、pin 类型、默认值/默认对象，以及 `LinkedTo` 连线，从而可重建完整的节点间执行与数据流图。图节点还会蒸馏出 `member`（其引用的函数 / 事件 / 变量）与 `member_from`（所属 C++ 类），便于与源码交叉对照。
+- **可选输出区块** —— `--sections`（别名 `-S`）按需组合要输出的区块，或直接选预设（`logic`、`debug`、`full`）—— 让逻辑分析精简、查 BUG 全面。
+- **优雅的十六进制回退** —— 暂未结构化、带自定义二进制序列化的类型（如 Niagara 节点、`AnimNotifyEvent`）输出带 `type` + `size` 标注的十六进制预览，**保证字节对齐不被破坏**。
 - **引用图谱**
   - `--references` —— 从 import 表提取前向引用，拆分为 `assets` 与 `scripts`，去重排序。
   - `--scan-dir` —— 反向引用：哪些资产引用了*当前文件*（`referenced_by`），通过 `--mount` 路径映射。
@@ -120,11 +122,8 @@ cc-uax <input.uasset> [选项]
 
   -o, --output <FILE>   输出 JSON 到文件（默认：标准输出）
   -c, --compact         紧凑 JSON（默认：美化）
-  -n, --names           在输出中包含完整 name 表
-  -s, --summary-only    仅输出包头摘要
-  -P, --no-properties   不解析 export 属性，仅输出结构
-  -r, --references      仅列出该文件引用的外部资源
-  -d, --scan-dir <DIR>  递归扫描 <DIR>；附带列出谁引用了当前文件（配合 -r）
+  -S, --sections <LIST> 要输出的区块（逗号分隔）或预设（见“输出区块”）
+  -d, --scan-dir <DIR>  递归扫描 <DIR>；附带列出谁引用了当前文件（配合 -S refs）
   -m, --mount <PREFIX>  <DIR> 对应的挂载前缀（默认 /Game）
       --no-cache        关闭反向扫描磁盘缓存
   -h, --help            显示帮助
@@ -137,14 +136,20 @@ cc-uax <input.uasset> [选项]
 # 解析蓝图，美化输出到文件
 cc-uax BP_MyActor.uasset -o out.json
 
+# 只看图逻辑 —— 节点 + pin 连线（框架分析的精简视图）
+cc-uax BP_MyActor.uasset -S logic
+
+# 查 BUG 视图 —— 包头 + imports + 完整属性 + 字节布局
+cc-uax BP_MyActor.uasset -S debug
+
 # 只看包头信息
-cc-uax BP_MyActor.uasset --summary-only
+cc-uax BP_MyActor.uasset -S summary
 
 # 前向引用 —— 该资产依赖了哪些包
-cc-uax BP_MyActor.uasset --references
+cc-uax BP_MyActor.uasset -S refs
 
 # 反向引用 —— 谁引用了我（扫描 Content 目录树，挂载到 /Game）
-cc-uax BP_MyActor.uasset --references --scan-dir ./Content
+cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 ```
 
 ## 📋 输出结构
@@ -157,20 +162,25 @@ cc-uax BP_MyActor.uasset --references --scan-dir ./Content
   "imports":  [ { "index": -1, "class": "...", "name": "...", "full_name": "..." } ],
   "exports":  [
     {
-      "index": 1,
-      "name": "...",
-      "class": "/Script/Engine.Blueprint",
-      "super": "...", "outer": "...",
-      "serial_offset": 0, "serial_size": 0,
-      "properties": [
-        { "name": "ParentClass", "type": "ObjectProperty",
-          "value": { "ref": "...", "index": -4 } }
+      "index": 15,
+      "name": "K2Node_CallFunction_14",
+      "class": "/Script/BlueprintGraph.K2Node_CallFunction",
+      "member": "SetMaterial",                       // 蒸馏出的节点身份
+      "member_from": { "ref": "/Script/Engine.PrimitiveComponent", "index": -19 },
+      "properties": [ /* tagged property —— -S logic 时省略 */ ],
+      "pins": [
+        { "name": "execute", "direction": "input", "category": "exec",
+          "linked_to": [ { "node": "...K2Node_Knot_7", "node_index": 25, "pin": "OutputPin" } ] },
+        { "name": "Material", "direction": "input", "category": "object",
+          "default_object": { "ref": "/Game/.../MI_Box_Destroyed", "index": -45 } }
       ]
     }
   ],
   "file": "输入文件路径"
 }
 ```
+
+> `member` / `member_from` 与 `pins` 仅出现在图节点导出（`K2Node_*`、`EdGraphNode_*`）。底层的 `super` / `outer` / `serial_offset` / `object_flags` / `script_serialization_*` 字段归入 `layout` 区块（`-S layout`，或任何包含它的预设）。
 
 **引用模式**（`self` / `referenced_by` 仅在配合 `--scan-dir` 时出现）
 
@@ -187,19 +197,34 @@ cc-uax BP_MyActor.uasset --references --scan-dir ./Content
 }
 ```
 
+### 输出区块
+
+`--sections <LIST>`（别名 `-S`）选择输出哪些区块；用逗号分隔，可混用区块键与预设。省略时默认 `full`。
+
+| 预设 | 展开为 | 适用 |
+|---|---|---|
+| `logic` | `summary` + exports（identity + `member` + `pins`） | 对照 C++ 的图 / 框架分析 |
+| `debug` | `summary` + `imports` + exports（`properties` + `layout`） | 查 BUG / 序列化核对 |
+| `full`  | `summary` + `imports` + exports（`pins` + `properties` + `layout`）— 默认 | 完整导出 |
+
+区块键（可组合，如 `-S exports,pins,properties` 或 `-S full,names`）：`summary`、`imports`、`exports`（identity 基础）、`pins`、`properties`、`layout`（serial 偏移 / flags / script 窗口）、`names`、`references`（别名 `refs`）。
+
+只要单个区块直接写名字即可：`-S summary`（仅包头），或 `-S refs`（前向引用；加 `--scan-dir` 得反向引用）。
+
 ## 🏗️ 架构
 
 ```
 cc-uax/
 ├── src/
-│   ├── lib.rs          # 库入口 —— 导出 Package、JsonOptions
+│   ├── lib.rs          # 库入口 —— 导出 Package、OutputSections
 │   ├── main.rs         # CLI 入口 + 反向扫描 + cache 模块
-│   ├── package.rs      # 核心：Package 流水线 + 字节 Reader + Guid/RawName
+│   ├── package.rs      # 核心：Package 流水线 + JSON 输出（区块）+ pin 编排
 │   ├── summary.rs      # FPackageFileSummary（魔数、版本、表偏移）
 │   ├── name.rs         # NameMap —— Name 表解析与解析
 │   ├── object.rs       # PackageIndex（+/- ⇒ export/import）、Import、Export
 │   ├── property.rs     # 递归 tagged property 解码器 + 十六进制回退
-│   ├── version.rs      # UE5/UE4 文件版本常量 + PACKAGE_FILE_TAG
+│   ├── pin.rs          # EdGraphNode pin 解码器 —— pins、pin 类型、LinkedTo 连线
+│   ├── version.rs      # UE5/UE4 文件版本常量 + 自定义版本 GUID
 │   ├── reader.rs       # 小端字节流读取原语
 │   └── cache.rs        # SQLite 反向引用缓存（仅二进制侧）
 ├── tests/
@@ -223,6 +248,7 @@ cc-uax/
 3. `NameMap::parse` —— 解析 Name，含数字后缀（`Foo_3`）。
 4. Import / Export 表 —— `PackageIndex` 正负号选择表。
 5. 每个 export 的 `ScriptSerialization` 窗口 → `property.rs` 递归解码；未知结构体回退到十六进制，对齐永不破坏。
+6. 图节点 —— 属性窗口之后，`pin.rs` 解码 `UEdGraphNode` 的 pin 区域（`pins` + `LinkedTo`），并把节点身份蒸馏为 `member` / `member_from`。
 
 > 完整架构指引见 [CLAUDE.md](CLAUDE.md)。
 

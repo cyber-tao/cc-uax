@@ -7,4 +7,4 @@ pub mod reader;
 pub mod summary;
 pub mod version;
 
-pub use package::{JsonOptions, Package};
+pub use package::{OutputSections, Package};

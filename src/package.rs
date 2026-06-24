@@ -13,7 +13,7 @@ const PACKAGE_CLASS_NAME: &str = "Package";
 const SCRIPT_PATH_PREFIX: &str = "/Script/";
 
 #[derive(Debug, Clone)]
-pub struct JsonOptions {
+pub struct OutputSections {
     pub summary: bool,
     pub imports: bool,
     pub names: bool,
@@ -24,13 +24,13 @@ pub struct JsonOptions {
     pub layout: bool,
 }
 
-impl Default for JsonOptions {
+impl Default for OutputSections {
     fn default() -> Self {
         Self::full()
     }
 }
 
-impl JsonOptions {
+impl OutputSections {
     pub fn none() -> Self {
         Self {
             summary: false,
@@ -80,12 +80,10 @@ impl JsonOptions {
                     s.properties = true;
                     s.layout = true;
                 }
-                "refs" => s.references = true,
-                "min" => s.summary = true,
                 "summary" => s.summary = true,
                 "imports" => s.imports = true,
                 "names" => s.names = true,
-                "references" => s.references = true,
+                "references" | "refs" => s.references = true,
                 "exports" | "identity" => s.exports = true,
                 "pins" => {
                     s.exports = true;
@@ -100,7 +98,7 @@ impl JsonOptions {
                     s.layout = true;
                 }
                 other => bail!(
-                    "unknown section '{other}'; valid sections: summary, imports, exports, identity, pins, properties, layout, names, references; presets: logic, debug, full, refs, min"
+                    "unknown section '{other}'; valid: summary, imports, exports, pins, properties, layout, names, references; presets: logic, debug, full"
                 ),
             }
         }
@@ -208,7 +206,7 @@ impl Package {
         json!({ "ref": full, "index": index })
     }
 
-    pub fn to_json(&self, data: &[u8], opts: &JsonOptions) -> Value {
+    pub fn to_json(&self, data: &[u8], opts: &OutputSections) -> Value {
         let mut root = serde_json::Map::new();
         if opts.summary {
             root.insert("summary".into(), self.summary_json());
@@ -303,7 +301,7 @@ impl Package {
             .any(|p| p.eq_ignore_ascii_case(package_path))
     }
 
-    fn exports_json(&self, data: &[u8], opts: &JsonOptions) -> Value {
+    fn exports_json(&self, data: &[u8], opts: &OutputSections) -> Value {
         let resolve = |idx: i32| self.resolve_object_ref(idx);
         let ctx = ParseCtx {
             names: &self.names,

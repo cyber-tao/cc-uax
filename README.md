@@ -41,7 +41,9 @@ Parses UE5 package binaries by mirroring `CoreUObject` serialization — no thir
   | Nested | recursive tagged structs |
   | Native structs | `Vector` / `Vector3f` / `Rotator` / `Quat` / `Color` / `LinearColor` / `Transform` / `Guid` / `DateTime` … |
 
-- **Graceful hex fallback** — types with custom binary serialization (e.g. `EdGraphPinType`, Niagara, `AnimNotifyEvent`) emit a `type`+`size`-tagged hex preview that **preserves byte alignment**.
+- **Blueprint graph logic** — `UEdGraphNode` pins are decoded right after the tagged-property region: every node's pins, pin types, default values/objects, and `LinkedTo` edges, so the full node-to-node execution & data graph is reconstructable. Graph nodes also expose a distilled `member` (the function / event / variable they reference) plus `member_from` (its owning C++ class) for quick cross-referencing with source.
+- **Selectable output sections** — `--sections` (alias `-S`) composes exactly the blocks you want, or picks a preset (`logic`, `debug`, `full`) — keeping logic analysis lean and bug-hunting thorough.
+- **Graceful hex fallback** — types with custom binary serialization not yet structured (e.g. Niagara nodes, `AnimNotifyEvent`) emit a `type`+`size`-tagged hex preview that **preserves byte alignment**.
 - **Reference graph**
   - `--references` — forward refs from the import table, split into `assets` vs `scripts`, de-duplicated & sorted.
   - `--scan-dir` — reverse refs: which assets reference *this* file (`referenced_by`), via `--mount` path mapping.
@@ -120,11 +122,11 @@ cc-uax <input.uasset> [options]
 
   -o, --output <FILE>   Write JSON to a file (default: stdout)
   -c, --compact         Compact JSON (default: pretty-printed)
-  -n, --names           Include the full name table in the output
-  -s, --summary-only    Output only the package header summary
-  -P, --no-properties   Skip export property parsing, output structure only
-  -r, --references      List only external resources referenced by the file
-  -d, --scan-dir <DIR>  Recursively scan <DIR>; also list who references this file (with -r)
+  -S, --sections <LIST> Comma-separated sections or a preset (see Output sections)
+  -o, --output <FILE>   Write JSON to a file (default: stdout)
+  -c, --compact         Compact JSON (default: pretty-printed)
+  -S, --sections <LIST> Sections to emit, comma-separated, or a preset (see Output sections)
+  -d, --scan-dir <DIR>  Recursively scan <DIR>; also list who references this file (with -S refs)
   -m, --mount <PREFIX>  Mount prefix corresponding to <DIR> (default /Game)
       --no-cache        Disable the reverse-scan disk cache
   -h, --help            Show help
@@ -137,14 +139,20 @@ cc-uax <input.uasset> [options]
 # Parse a blueprint, pretty-print to a file
 cc-uax BP_MyActor.uasset -o out.json
 
+# Graph logic only — nodes + pin connectivity (lean view for framework analysis)
+cc-uax BP_MyActor.uasset -S logic
+
+# Bug-hunting view — summary + imports + full properties + byte layout
+cc-uax BP_MyActor.uasset -S debug
+
 # Inspect the header only
-cc-uax BP_MyActor.uasset --summary-only
+cc-uax BP_MyActor.uasset -S summary
 
 # Forward references — which packages this asset pulls in
-cc-uax BP_MyActor.uasset --references
+cc-uax BP_MyActor.uasset -S refs
 
 # Reverse references — who references me (scan a Content tree, mounted at /Game)
-cc-uax BP_MyActor.uasset --references --scan-dir ./Content
+cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 ```
 
 ## 📋 Output Schema
@@ -157,20 +165,25 @@ cc-uax BP_MyActor.uasset --references --scan-dir ./Content
   "imports":  [ { "index": -1, "class": "...", "name": "...", "full_name": "..." } ],
   "exports":  [
     {
-      "index": 1,
-      "name": "...",
-      "class": "/Script/Engine.Blueprint",
-      "super": "...", "outer": "...",
-      "serial_offset": 0, "serial_size": 0,
-      "properties": [
-        { "name": "ParentClass", "type": "ObjectProperty",
-          "value": { "ref": "...", "index": -4 } }
+      "index": 15,
+      "name": "K2Node_CallFunction_14",
+      "class": "/Script/BlueprintGraph.K2Node_CallFunction",
+      "member": "SetMaterial",                       // distilled node identity
+      "member_from": { "ref": "/Script/Engine.PrimitiveComponent", "index": -19 },
+      "properties": [ /* tagged properties — omitted by -S logic */ ],
+      "pins": [
+        { "name": "execute", "direction": "input", "category": "exec",
+          "linked_to": [ { "node": "...K2Node_Knot_7", "node_index": 25, "pin": "OutputPin" } ] },
+        { "name": "Material", "direction": "input", "category": "object",
+          "default_object": { "ref": "/Game/.../MI_Box_Destroyed", "index": -45 } }
       ]
     }
   ],
   "file": "input file path"
 }
 ```
+
+> `member` / `member_from` and `pins` appear only on graph-node exports (`K2Node_*`, `EdGraphNode_*`). The low-level `super` / `outer` / `serial_offset` / `object_flags` / `script_serialization_*` fields move under the `layout` section (`-S layout`, or any preset that includes it).
 
 **References mode** (`self` / `referenced_by` appear only with `--scan-dir`)
 
@@ -187,19 +200,34 @@ cc-uax BP_MyActor.uasset --references --scan-dir ./Content
 }
 ```
 
+### Output sections
+
+`--sections <LIST>` (alias `-S`) selects which blocks to emit; items are comma-separated and may mix section keys with a preset. When omitted, the default is `full`.
+
+| Preset | Expands to | Use for |
+|---|---|---|
+| `logic` | `summary` + exports (identity + `member` + `pins`) | Graph / framework analysis alongside C++ |
+| `debug` | `summary` + `imports` + exports (`properties` + `layout`) | Bug hunting / serialization checks |
+| `full`  | `summary` + `imports` + exports (`pins` + `properties` + `layout`) — the default | Complete dump |
+
+Section keys (composable, e.g. `-S exports,pins,properties` or `-S full,names`): `summary`, `imports`, `exports` (identity base), `pins`, `properties`, `layout` (serial offsets / flags / script window), `names`, `references` (alias `refs`).
+
+For a single block just name it: `-S summary` (header only), or `-S refs` (forward refs; add `--scan-dir` for reverse refs).
+
 ## 🏗️ Architecture
 
 ```
 cc-uax/
 ├── src/
-│   ├── lib.rs          # Library root — exports Package, JsonOptions
+│   ├── lib.rs          # Library root — exports Package, OutputSections
 │   ├── main.rs         # CLI entry + reverse-scan + cache module
-│   ├── package.rs      # Core: Package pipeline + byte Reader + Guid/RawName
+│   ├── package.rs      # Core: Package pipeline + JSON output (sections) + pin orchestration
 │   ├── summary.rs      # FPackageFileSummary (magic, versions, table offsets)
 │   ├── name.rs         # NameMap — name table parse & resolve
 │   ├── object.rs       # PackageIndex (+/- ⇒ export/import), Import, Export
 │   ├── property.rs     # Recursive tagged-property decoder + hex fallback
-│   ├── version.rs      # UE5/UE4 file-version constants + PACKAGE_FILE_TAG
+│   ├── pin.rs          # EdGraphNode pin decoder — pins, pin types, LinkedTo edges
+│   ├── version.rs      # UE5/UE4 file-version constants + custom-version GUIDs
 │   ├── reader.rs       # Little-endian byte-stream primitives
 │   └── cache.rs        # SQLite reverse-ref cache (binary-only)
 ├── tests/
@@ -223,6 +251,7 @@ cc-uax/
 3. `NameMap::parse` — resolves names including number suffixes (`Foo_3`).
 4. Import / Export tables — `PackageIndex` sign selects the table.
 5. Per-export `ScriptSerialization` window → `property.rs` recursively decodes; unknown structs fall back to hex so alignment never breaks.
+6. Graph nodes — after the property window, `pin.rs` decodes the `UEdGraphNode` pin region (`pins` + `LinkedTo`), and node identities are distilled into `member` / `member_from`.
 
 > See [CLAUDE.md](CLAUDE.md) for the full architectural guide.
 

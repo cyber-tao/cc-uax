@@ -3,7 +3,7 @@ name: cc-uax
 description: Parse and inspect Unreal Engine 5 .uasset/.umap package files, and query forward/reverse asset references. Use whenever you need to READ a UE5 asset (.uasset/.umap), extract its imports/exports/properties, find what packages an asset references, or find which assets reference a given package — invoke the cc-uax CLI instead of hand-reading the binary.
 ---
 
-`cc-uax` is a from-scratch Rust reader for UE5 Blueprint/package files (`.uasset`, `.umap`). It parses the `CoreUObject` binary format and emits JSON — header, name table, import/export tables, and tagged properties. It also computes forward references (what this asset depends on) and, by scanning a directory, reverse references (who depends on this asset).
+`cc-uax` is a from-scratch Rust reader for UE5 Blueprint/package files (`.uasset`, `.umap`). It parses the `CoreUObject` binary format and emits JSON — header, name table, import/export tables, tagged properties, and Blueprint graph-node pins with their `LinkedTo` connectivity. It also computes forward references (what this asset depends on) and, by scanning a directory, reverse references (who depends on this asset).
 
 It is a **system-installed CLI tool** — `cc-uax` lives on `PATH` and behaves identically on Windows, Linux, and macOS. All commands below are plain `cc-uax` invocations.
 
@@ -37,26 +37,36 @@ Or build from source: `cargo install --path .` (puts `cc-uax` in `~/.cargo/bin`)
 
 | Task | Command |
 |---|---|
-| Header — versions, counts, engine version | `cc-uax -s <file>` |
-| Forward refs — what this asset imports (assets/scripts) | `cc-uax -r <file>` |
-| Reverse refs — who references this asset | `cc-uax -r -d <Content-dir> <file>` |
-| Export/import table without property decode | `cc-uax -P <file>` |
-| Full parse with tagged properties | `cc-uax <file>` |
-| Summary + full name table | `cc-uax -s -n <file>` |
+| Header — versions, counts, engine version | `cc-uax -S summary <file>` |
+| Blueprint graph logic — nodes + pin connectivity | `cc-uax -S logic <file>` |
+| Forward refs — what this asset imports (assets/scripts) | `cc-uax -S refs <file>` |
+| Reverse refs — who references this asset | `cc-uax -S refs -d <Content-dir> <file>` |
+| Property-focused dump (properties + byte layout, no pins) | `cc-uax -S debug <file>` |
+| Export/import structure without property decode | `cc-uax -S exports,layout <file>` |
+| Full parse (everything) | `cc-uax <file>` |
+| Pick exact sections | `cc-uax -S exports,pins,properties <file>` |
+| Summary + full name table | `cc-uax -S summary,names <file>` |
+
+`-S`/`--sections` is the single content selector — presets `logic` (graph nodes + pins), `debug` (properties + layout), `full` (default, everything); or comma-separate section keys `summary,imports,exports,pins,properties,layout,names,references` (`refs` aliases `references`). Omitting `-S` yields `full`.
 
 ### Verified examples (real UE5.6 asset, `FileVersionUE5 = 1017`)
 
 ```bash
 # Header — versions and package name
-cc-uax -s MM_Death_Back_01.uasset
+cc-uax -S summary MM_Death_Back_01.uasset
 # → "file_version_ue5": 1017, "package_name": "/Game/.../MM_Death_Back_01"
 
+# Blueprint graph logic — node members + pin LinkedTo edges (lean, no full properties)
+cc-uax -S logic BP_CombatDamageableBox.uasset
+# → exports[].member ("SetMaterial"), member_from ("/Script/Engine.PrimitiveComponent"),
+#   pins[].linked_to[] ({node, pin}) — the reconstructable node-to-node graph
+
 # Forward references — assets/scripts this file imports
-cc-uax -r MM_Death_Back_01.uasset
+cc-uax -S refs MM_Death_Back_01.uasset
 # → "references": {"assets": ["/Game/.../SK_Mannequin", ...], "scripts": ["/Script/Engine", ...]}
 
 # Reverse references — scan the project's Content/ to find dependents
-cc-uax -r -d /proj/Content SK_Mannequin.uasset
+cc-uax -S refs -d /proj/Content SK_Mannequin.uasset
 # → "referenced_by": ["/Game/.../MM_Death_Back_01", ... 110 entries]
 ```
 
@@ -69,7 +79,7 @@ cc-uax -c -o out.json MM_Death_Back_01.uasset    # compact JSON to out.json
 `.umap` (level) files use the exact same commands — they share the UE5 package format:
 
 ```bash
-cc-uax -s Lvl_ThirdPerson.umap
+cc-uax -S summary Lvl_ThirdPerson.umap
 # → "package_name": "/Game/ThirdPerson/Lvl_ThirdPerson"
 ```
 
@@ -81,7 +91,7 @@ cc-uax --help
 
 ### Reverse-reference scanning
 
-`-r -d <Content-dir>` recursively scans `<Content-dir>` for `.uasset`/`.umap`, parses each, and reports which ones import `<file>`'s package path. The on-disk cache (`.cc-uax-cache.sqlite`) is written at the scan-dir root to speed up repeat runs; pass `--no-cache` to disable. Output adds `self` (the input's package path) and `referenced_by` under `references`.
+`-S refs -d <Content-dir>` recursively scans `<Content-dir>` for `.uasset`/`.umap`, parses each, and reports which ones import `<file>`'s package path. The on-disk cache (`.cc-uax-cache.sqlite`) is written at the scan-dir root to speed up repeat runs; pass `--no-cache` to disable. Output adds `self` (the input's package path) and `referenced_by` under `references`.
 
 ## Gotchas
 
@@ -89,7 +99,7 @@ cc-uax --help
 - **`-d` writes `.cc-uax-cache.sqlite` into the scan-dir.** When scanning a UE5 project you do not own, pass `--no-cache` or delete the file afterwards. The cache key is path+mtime+size.
 - **Git Bash / MSYS2 mangles `-m /Game`.** A leading-slash argument like `-m /Game` gets path-converted to `C:/Program Files/Git/Game`, corrupting the mount prefix (symptom: `self` starts with `/C:/Program Files/Git/Game/...`). Use a double slash — `-m //Game` — which MSYS2 restores to `/Game`; or run from PowerShell/cmd. Native Linux/macOS shells are unaffected.
 - **Cooked / unversioned / big-endian packages are rejected by design.** cc-uax targets editor-saved versioned assets only. These are hard limits, not bugs — see Troubleshooting for the exact messages.
-- **Some property values come back as `@unparsed` hex.** Structs with custom binary serialization that cc-uax hasn't decoded yet (e.g. `EdGraphPinType`, Niagara, `AnimNotifyEvent`, `AnimationAttributeIdentifier`) are emitted as a hex preview capped by `PREVIEW_MAX`, with `type` and `size` preserved. This keeps byte alignment intact so the next property still decodes. Treat `@unparsed` as "struct recognized, value not yet structured".
+- **Some property values come back as `@unparsed` hex.** Structs with custom binary serialization that cc-uax hasn't decoded yet (e.g. Niagara nodes, `AnimNotifyEvent`, `AnimationAttributeIdentifier`) are emitted as a hex preview capped by `PREVIEW_MAX`, with `type` and `size` preserved. This keeps byte alignment intact so the next property still decodes. Treat `@unparsed` as "struct recognized, value not yet structured". Blueprint graph-node pins, by contrast, are decoded structurally — use `-S logic` to get them.
 - **Only `.uasset` and `.umap` are package files.** Companion files (`.uexp`, `.ubulk`, `.ini`) are not UE5 package summaries — don't pass them.
 
 ## Troubleshooting
@@ -99,4 +109,4 @@ cc-uax --help
 - **`package is unversioned (... typically a cooked package)`**: the asset was saved by a cooked build. cc-uax cannot read it; find the source editor asset instead.
 - **`package uses swapped (big-endian) byte order, possibly a cooked console package`**: console cooked package. Out of scope.
 - **`looks like a legacy UE3 package`**: `LegacyFileVersion >= 0`. Out of scope.
-- **`-r -d` returns `referenced_by: []` but you expect hits**: almost always the scan-dir mismatch (point `-d` at `Content/`) or the MSYS2 mount mangling (use `-m //Game` under Git Bash). Confirm a suspected dependent actually imports the target's package path with `cc-uax -r <dependent>`.
+- **`-S refs -d` returns `referenced_by: []` but you expect hits**: almost always the scan-dir mismatch (point `-d` at `Content/`) or the MSYS2 mount mangling (use `-m //Game` under Git Bash). Confirm a suspected dependent actually imports the target's package path with `cc-uax -S refs <dependent>`.
