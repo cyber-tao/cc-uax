@@ -306,6 +306,7 @@ fn nested_struct_respects_declared_value_end() {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -349,6 +350,7 @@ fn native_struct_array_falls_back_to_hex() {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -395,6 +397,7 @@ fn invalid_script_window_is_reported_in_layout() {
             script_serialization_start_offset: 0,
             script_serialization_end_offset: 8,
         }],
+        soft_object_paths: Vec::new(),
     };
     let mut sections = OutputSections::none();
     sections.exports = true;
@@ -435,6 +438,7 @@ fn text_property_unknown_history_falls_back_to_hex() {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, end);
@@ -491,6 +495,7 @@ fn native_struct_box_decodes() {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -546,6 +551,7 @@ fn native_struct_rich_curve_key_array_keeps_stride() {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -587,6 +593,7 @@ fn material_scalar_input_resolves_expression() {
         names: &names,
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -624,6 +631,7 @@ fn native_struct_per_platform_float_decodes() {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -659,6 +667,7 @@ fn native_struct_movie_scene_frame_range_decodes() {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -713,6 +722,7 @@ fn native_struct_movie_scene_float_channel_decodes() {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -764,6 +774,7 @@ fn text_ordered_format_decodes() {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -806,6 +817,7 @@ fn text_string_table_entry_decodes() {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -846,6 +858,7 @@ fn multicast_inline_delegate_decodes() {
         names: &names,
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -889,6 +902,7 @@ fn native_struct_instanced_struct_decodes() {
         names: &names,
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -938,6 +952,7 @@ fn native_struct_edgraph_pin_type_decodes() {
             has_uobject_wrapper: true,
             has_single_precision_float: true,
         },
+        soft_object_paths: &[],
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -946,4 +961,42 @@ fn native_struct_edgraph_pin_type_decodes() {
     let v = &entries[0].value;
     assert_eq!(v["category"].as_str(), Some("int"));
     assert_eq!(v["sub_category_object"]["index"].as_i64(), Some(-9));
+}
+
+#[test]
+fn soft_object_property_resolves_list_index() {
+    let names = NameMap {
+        names: vec![
+            "Ref".to_string(),
+            "SoftObjectProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let table = vec![
+        serde_json::json!({ "asset_path": "/Game/A.A" }),
+        serde_json::json!({ "asset_path": "/Game/B.B" }),
+    ];
+    let mut value = Vec::new();
+    push_i32(&mut value, 1); // index into the soft object path list
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Ref
+    push_raw_name(&mut d, 1); // SoftObjectProperty
+    push_i32(&mut d, 0); // type name inner param count
+    push_i32(&mut d, value.len() as i32); // size = 4
+    d.push(0); // flags
+    d.extend_from_slice(&value);
+    push_raw_name(&mut d, 2); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &table,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["asset_path"].as_str(), Some("/Game/B.B"));
 }

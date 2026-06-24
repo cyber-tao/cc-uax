@@ -71,6 +71,7 @@ pub struct ParseCtx<'a> {
     pub names: &'a NameMap,
     pub resolve_object: &'a dyn Fn(i32) -> Value,
     pub pins: PinSerCtx,
+    pub soft_object_paths: &'a [Value],
 }
 
 #[derive(Debug, Clone)]
@@ -749,8 +750,22 @@ fn parse_movie_scene_channel(r: &mut Reader, is_double: bool, value_end: u64) ->
 }
 
 fn parse_soft_object(r: &mut Reader, ctx: &ParseCtx) -> Result<Value> {
-    let package_name = ctx.names.resolve_raw(r.read_raw_name()?);
-    let asset_name = ctx.names.resolve_raw(r.read_raw_name()?);
+    // When the package has a soft object path list, soft references serialize as
+    // an int32 index into that list; otherwise the path is serialized inline.
+    if !ctx.soft_object_paths.is_empty() {
+        let index = r.read_i32()?;
+        return Ok(usize::try_from(index)
+            .ok()
+            .and_then(|i| ctx.soft_object_paths.get(i))
+            .cloned()
+            .unwrap_or(Value::Null));
+    }
+    read_soft_object_path(r, ctx.names)
+}
+
+pub(crate) fn read_soft_object_path(r: &mut Reader, names: &NameMap) -> Result<Value> {
+    let package_name = names.resolve_raw(r.read_raw_name()?);
+    let asset_name = names.resolve_raw(r.read_raw_name()?);
     let sub_path = r.read_fstring()?;
     let asset_path = if asset_name.is_empty() || asset_name == "None" {
         package_name

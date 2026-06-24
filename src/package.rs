@@ -1,7 +1,9 @@
 use crate::name::NameMap;
 use crate::object::{ObjectExport, ObjectImport};
 use crate::pin::{Pin, PinRef, PinSerCtx, direction_label, parse_node_pins};
-use crate::property::{ParseCtx, PropertyEntry, entries_to_json, parse_object_properties};
+use crate::property::{
+    ParseCtx, PropertyEntry, entries_to_json, parse_object_properties, read_soft_object_path,
+};
 use crate::reader::{Guid, Reader};
 use crate::summary::PackageFileSummary;
 use crate::version::ue5;
@@ -132,6 +134,7 @@ pub struct Package {
     pub names: NameMap,
     pub imports: Vec<ObjectImport>,
     pub exports: Vec<ObjectExport>,
+    pub soft_object_paths: Vec<Value>,
 }
 
 impl Package {
@@ -160,11 +163,19 @@ impl Package {
             ue5,
         )?;
 
+        let soft_object_paths = parse_soft_object_path_table(
+            &mut r,
+            &names,
+            summary.soft_object_paths_offset,
+            summary.soft_object_paths_count,
+        );
+
         Ok(Package {
             summary,
             names,
             imports,
             exports,
+            soft_object_paths,
         })
     }
 
@@ -313,6 +324,7 @@ impl Package {
             names: &self.names,
             resolve_object: &resolve,
             pins: pin_ctx,
+            soft_object_paths: &self.soft_object_paths,
         };
         let mut reader = Reader::new(data);
         let file_len = reader.len();
@@ -583,6 +595,28 @@ impl Package {
         }
         Value::Object(o)
     }
+}
+
+fn parse_soft_object_path_table(
+    r: &mut Reader,
+    names: &NameMap,
+    offset: i32,
+    count: i32,
+) -> Vec<Value> {
+    let mut out = Vec::new();
+    if count <= 0 || offset <= 0 {
+        return out;
+    }
+    if r.seek(offset as u64).is_err() {
+        return out;
+    }
+    for _ in 0..count {
+        match read_soft_object_path(r, names) {
+            Ok(v) => out.push(v),
+            Err(_) => break,
+        }
+    }
+    out
 }
 
 fn name_or_null(s: String) -> Value {
