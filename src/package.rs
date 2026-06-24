@@ -134,7 +134,6 @@ impl Package {
 
         let ue4 = summary.file_version_ue4;
         let ue5 = summary.file_version_ue5;
-        let unversioned = summary.is_unversioned();
         let filter_editor = summary.filter_editor_only();
 
         let names = NameMap::parse(&mut r, summary.name_offset, summary.name_count, ue4)?;
@@ -152,7 +151,6 @@ impl Package {
             summary.export_count,
             ue4,
             ue5,
-            unversioned,
         )?;
 
         Ok(Package {
@@ -310,8 +308,7 @@ impl Package {
         let mut reader = Reader::new(data);
         let file_len = reader.len();
         let pin_ctx = PinSerCtx::from_summary(&self.summary);
-        let has_script = !self.summary.is_unversioned()
-            && self.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET;
+        let has_script = self.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET;
 
         let mut objs: Vec<serde_json::Map<String, Value>> = Vec::with_capacity(self.exports.len());
         let mut export_pins: Vec<Option<Vec<Pin>>> = Vec::with_capacity(self.exports.len());

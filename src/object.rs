@@ -117,7 +117,6 @@ impl ObjectExport {
         count: i32,
         ue4v: i32,
         ue5v: i32,
-        unversioned: bool,
     ) -> Result<Vec<ObjectExport>> {
         let mut out = Vec::with_capacity(count.max(0) as usize);
         if offset <= 0 || count <= 0 {
@@ -176,7 +175,7 @@ impl ObjectExport {
                 cbc = r.read_i32()?;
             }
             let (mut ss_start, mut ss_end) = (0i64, 0i64);
-            if !unversioned && ue5v >= ue5::SCRIPT_SERIALIZATION_OFFSET {
+            if ue5v >= ue5::SCRIPT_SERIALIZATION_OFFSET {
                 ss_start = r.read_i64()?;
                 ss_end = r.read_i64()?;
             }
