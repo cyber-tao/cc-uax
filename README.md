@@ -2,9 +2,9 @@
 
 # cc-uax
 
-**A from-scratch Rust reader for Unreal Engine 5 Blueprint (`.uasset`) files → JSON**
+**Parse Unreal Engine 5 `.uasset`/`.umap` packages to JSON — properties, Blueprint graph, and asset references.**
 
-Parses UE5 package binaries by mirroring `CoreUObject` serialization — no third-party uasset crate involved.
+A single CLI that dumps any UE5 editor asset to structured JSON, reconstructs Blueprint node-to-node wiring, and traces who-references-whom across a project.
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Release](https://img.shields.io/github/v/release/cyber-tao/cc-uax?logo=github)](https://github.com/cyber-tao/cc-uax/releases)
@@ -22,7 +22,7 @@ Parses UE5 package binaries by mirroring `CoreUObject` serialization — no thir
 
 ## 📖 About
 
-`cc-uax` is a command-line tool that reads Unreal Engine 5 `.uasset` (Blueprint) files and dumps their contents as structured **JSON**. The parser is hand-written in Rust, tracing UE5.7 source (`CoreUObject`) rather than wrapping an existing library — keeping the dependency surface tiny and the binary self-contained.
+`cc-uax` is a command-line tool that reads Unreal Engine 5 `.uasset`/`.umap` package files and dumps their contents as structured **JSON** — full header, tagged properties, the Blueprint node-and-pin graph, and both forward and reverse asset references. It ships as a single self-contained binary with no runtime dependencies.
 
 > Scope: **versioned, uncooked editor assets** on UE5 (`FileVersionUE5 >= 1000`). Cooked / unversioned packages and UE4 legacy formats are intentionally out of scope.
 
@@ -53,7 +53,7 @@ Parses UE5 package binaries by mirroring `CoreUObject` serialization — no thir
 
 **Language & runtime**
 
-`Rust (edition 2021)` · `byteorder` (LE byte stream) · `serde` + `serde_json` (output) · `clap` v4 (CLI, derive) · `anyhow` (errors) · `rusqlite` bundled SQLite (scan cache, **binary only**)
+`Rust (edition 2024)` · `byteorder` (LE byte stream) · `serde` + `serde_json` (output) · `clap` v4 (CLI, derive) · `anyhow` (errors) · `rusqlite` bundled SQLite (scan cache, **binary only**)
 
 | Layer | Responsibility | Deps |
 |---|---|---|
@@ -239,6 +239,8 @@ cc-uax/
 │   └── release.yml     # Multi-platform build + GitHub Release on tag
 ├── install.sh          # One-line installer (Linux / macOS)
 ├── install.ps1         # One-line installer (Windows)
+├── dev-install.sh      # Dev: rebuild from source + refresh skills (Linux / macOS)
+├── dev-install.ps1     # Dev: rebuild from source + refresh skills (Windows)
 ├── Cargo.toml          # lib + bin dual targets
 ├── CLAUDE.md           # Architecture guide for Claude Code
 └── README.md

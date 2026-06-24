@@ -2,9 +2,9 @@
 
 # cc-uax
 
-**从零用 Rust 实现的 Unreal Engine 5 Blueprint（`.uasset`）文件读取器 → JSON**
+**把 Unreal Engine 5 `.uasset`/`.umap` 资产包解析为 JSON —— 属性、蓝图节点图、资源引用关系。**
 
-镜像 `CoreUObject` 序列化逻辑手写解析，不依赖任何第三方 uasset crate。
+单一 CLI：把任意 UE5 编辑器资产导出为结构化 JSON，重建蓝图节点连线，并在整个项目中追踪谁引用了谁。
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Release](https://img.shields.io/github/v/release/cyber-tao/cc-uax?logo=github)](https://github.com/cyber-tao/cc-uax/releases)
@@ -22,7 +22,7 @@
 
 ## 📖 关于
 
-`cc-uax` 是一个命令行工具，读取虚幻引擎 5 的 `.uasset`（Blueprint）文件，并将内容导出为结构化的 **JSON**。解析器用 Rust 手写，追踪 UE5.7 源码（`CoreUObject`）而非包装现成库 —— 依赖面极小，二进制完全自包含。
+`cc-uax` 是一个命令行工具，读取虚幻引擎 5 的 `.uasset`/`.umap` 资产包文件，并将内容导出为结构化的 **JSON** —— 完整包头、tagged 属性、蓝图节点与 pin 连线图，以及前向与反向资源引用。以单一自包含二进制发布，无运行时依赖。
 
 > 目标范围：UE5（`FileVersionUE5 >= 1000`）的 **versioned、未 cooked 的编辑器资产**。Cooked / unversioned 包与 UE4 旧格式明确不在支持范围内。
 
@@ -53,7 +53,7 @@
 
 **语言与运行时**
 
-`Rust (edition 2021)` · `byteorder`（LE 字节流） · `serde` + `serde_json`（输出） · `clap` v4（CLI，derive） · `anyhow`（错误处理） · `rusqlite` 内置 SQLite（扫描缓存，**仅二进制侧**）
+`Rust (edition 2024)` · `byteorder`（LE 字节流） · `serde` + `serde_json`（输出） · `clap` v4（CLI，derive） · `anyhow`（错误处理） · `rusqlite` 内置 SQLite（扫描缓存，**仅二进制侧**）
 
 | 层 | 职责 | 依赖 |
 |---|---|---|
@@ -236,6 +236,8 @@ cc-uax/
 │   └── release.yml     # 多平台构建 + tag 触发 GitHub Release
 ├── install.sh          # 一键安装（Linux / macOS）
 ├── install.ps1         # 一键安装（Windows）
+├── dev-install.sh      # 开发：从源码重编译 + 刷新 skill（Linux / macOS）
+├── dev-install.ps1     # 开发：从源码重编译 + 刷新 skill（Windows）
 ├── Cargo.toml          # lib + bin 双 target
 ├── CLAUDE.md           # 给 Claude Code 的架构指引
 └── README.md

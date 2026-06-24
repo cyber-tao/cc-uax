@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`cc-uax` is a from-scratch Rust reader for Unreal Engine 5 Blueprint (`.uasset`) files. It parses the UE5 package binary format (no existing uasset crate) and emits JSON. The parsing logic mirrors UE5.7 `CoreUObject` source. Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`). Cooked/unversioned packages and UE4 legacy formats are explicitly out of scope.
+`cc-uax` is a Rust CLI that parses Unreal Engine 5 `.uasset`/`.umap` package files and emits structured JSON — package header, tagged properties, the Blueprint node-and-pin graph, and forward/reverse asset references. Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`). Cooked/unversioned packages and UE4 legacy formats are explicitly out of scope.
 
 ## Commands
 
@@ -15,6 +15,9 @@ cargo test                               # full test suite (tests/units.rs)
 cargo test --test units <test_name>      # single integration test (e.g. fstring_ansi)
 cargo fmt
 cargo clippy --all-targets
+# rebuild from source + refresh the Claude Code / Codex skill locally (dev only)
+./dev-install.sh          # Linux / macOS / Git Bash
+.\dev-install.ps1         # Windows PowerShell
 ```
 
 No benchmarks, no separate lint config. CI is whatever runs these locally.

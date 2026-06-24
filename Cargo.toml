@@ -2,7 +2,7 @@
 name = "cc-uax"
 version = "0.1.0"
 edition = "2024"
-description = "A from-scratch Rust reader that parses Unreal Engine 5 Blueprint (.uasset) packages into JSON by mirroring CoreUObject serialization — no third-party uasset crate."
+description = "Parse Unreal Engine 5 .uasset/.umap packages to JSON — header, tagged properties, Blueprint node graph, and forward/reverse asset references."
 license = "MIT"
 
 [[bin]]
