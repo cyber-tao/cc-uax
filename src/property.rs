@@ -441,7 +441,7 @@ pub(crate) fn parse_text(r: &mut Reader) -> Result<Value> {
                 "text": source, "namespace": namespace, "key": key, "flags": flags
             }))
         }
-        other => Ok(json!({ "history_type": other, "flags": flags })),
+        other => bail!("unsupported FText history type: {other}"),
     }
 }
 
