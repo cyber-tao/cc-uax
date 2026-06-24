@@ -434,6 +434,10 @@ impl Package {
             return Value::Array(objs.into_iter().map(Value::Object).collect());
         }
 
+        let export_full_names: Vec<String> = (0..self.exports.len())
+            .map(|i| self.resolve_full_name((i as i32) + 1, 0))
+            .collect();
+
         let mut pin_name_by_id: HashMap<(i32, Guid), String> = HashMap::new();
         for (i, pins) in export_pins.iter().enumerate() {
             if let Some(pins) = pins {
@@ -449,7 +453,10 @@ impl Package {
             .enumerate()
             .map(|(i, mut obj)| {
                 if let Some(pins) = &export_pins[i] {
-                    obj.insert("pins".into(), self.pins_to_json(pins, &pin_name_by_id));
+                    obj.insert(
+                        "pins".into(),
+                        self.pins_to_json(pins, &pin_name_by_id, &export_full_names),
+                    );
                 }
                 Value::Object(obj)
             })
@@ -480,7 +487,12 @@ impl Package {
         parse_node_pins(reader, pin_end as u64, ctx, pin_ctx)
     }
 
-    fn pins_to_json(&self, pins: &[Pin], names: &HashMap<(i32, Guid), String>) -> Value {
+    fn pins_to_json(
+        &self,
+        pins: &[Pin],
+        names: &HashMap<(i32, Guid), String>,
+        export_full_names: &[String],
+    ) -> Value {
         let arr: Vec<Value> = pins
             .iter()
             .map(|p| {
@@ -513,7 +525,7 @@ impl Package {
                     let links: Vec<Value> = p
                         .linked_to
                         .iter()
-                        .map(|r| self.link_to_json(r, names))
+                        .map(|r| self.link_to_json(r, names, export_full_names))
                         .collect();
                     o.insert("linked_to".into(), Value::Array(links));
                 }
@@ -521,12 +533,15 @@ impl Package {
                     let links: Vec<Value> = p
                         .sub_pins
                         .iter()
-                        .map(|r| self.link_to_json(r, names))
+                        .map(|r| self.link_to_json(r, names, export_full_names))
                         .collect();
                     o.insert("sub_pins".into(), Value::Array(links));
                 }
                 if let Some(parent) = &p.parent_pin {
-                    o.insert("parent_pin".into(), self.link_to_json(parent, names));
+                    o.insert(
+                        "parent_pin".into(),
+                        self.link_to_json(parent, names, export_full_names),
+                    );
                 }
                 Value::Object(o)
             })
@@ -534,12 +549,22 @@ impl Package {
         Value::Array(arr)
     }
 
-    fn link_to_json(&self, r: &PinRef, names: &HashMap<(i32, Guid), String>) -> Value {
+    fn link_to_json(
+        &self,
+        r: &PinRef,
+        names: &HashMap<(i32, Guid), String>,
+        export_full_names: &[String],
+    ) -> Value {
         let mut o = serde_json::Map::new();
-        o.insert(
-            "node".into(),
-            name_or_null(self.resolve_full_name(r.node_index, 0)),
-        );
+        let node = if r.node_index > 0 {
+            export_full_names
+                .get((r.node_index - 1) as usize)
+                .cloned()
+                .unwrap_or_else(|| self.resolve_full_name(r.node_index, 0))
+        } else {
+            self.resolve_full_name(r.node_index, 0)
+        };
+        o.insert("node".into(), name_or_null(node));
         o.insert("node_index".into(), json!(r.node_index));
         match names.get(&(r.node_index, r.pin_id)) {
             Some(name) => {
