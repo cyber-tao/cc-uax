@@ -5,6 +5,7 @@ use anyhow::{Result, bail};
 use serde_json::{Value, json};
 
 const PREVIEW_MAX: usize = 64;
+const MAX_DYNAMIC_COUNT: i32 = 1_000_000;
 
 #[derive(Debug, Clone)]
 pub struct TypeName {
@@ -31,26 +32,24 @@ impl TypeName {
             }
         }
         let mut pos = 0usize;
-        Ok(Self::build(&flat, &mut pos))
+        let ty = Self::build(&flat, &mut pos)?;
+        if pos != flat.len() {
+            bail!("type name tree did not consume all nodes");
+        }
+        Ok(ty)
     }
 
-    fn build(flat: &[(String, i32)], pos: &mut usize) -> TypeName {
+    fn build(flat: &[(String, i32)], pos: &mut usize) -> Result<TypeName> {
         if *pos >= flat.len() {
-            return TypeName {
-                name: String::new(),
-                params: Vec::new(),
-            };
+            bail!("type name tree is incomplete");
         }
         let (name, inner) = flat[*pos].clone();
         *pos += 1;
         let mut params = Vec::new();
         for _ in 0..inner {
-            if *pos >= flat.len() {
-                break;
-            }
-            params.push(Self::build(flat, pos));
+            params.push(Self::build(flat, pos)?);
         }
-        TypeName { name, params }
+        Ok(TypeName { name, params })
     }
 
     pub fn display(&self) -> String {
@@ -112,8 +111,9 @@ pub fn parse_object_properties(
     if ue5_version >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
         && let Ok(control) = r.read_u8()
         && control & 0x02 != 0
+        && r.read_u8().is_err()
     {
-        let _ = r.read_u8();
+        return Vec::new();
     }
     parse_properties(r, ctx, end_limit)
 }
@@ -150,12 +150,18 @@ pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<P
             Err(_) => break,
         };
         let array_index = if flags & 0x01 != 0 {
-            r.read_i32().unwrap_or(0)
+            match r.read_i32() {
+                Ok(i) => i,
+                Err(_) => break,
+            }
         } else {
             0
         };
         let guid = if flags & 0x02 != 0 {
-            r.read_guid().ok().map(|g| g.to_hex())
+            match r.read_guid() {
+                Ok(g) => Some(g.to_hex()),
+                Err(_) => break,
+            }
         } else {
             None
         };
@@ -261,9 +267,7 @@ fn parse_value(
         "MulticastInlineDelegateProperty" | "MulticastSparseDelegateProperty" => {
             let count = r.read_i32()?;
             let remaining = value_end.saturating_sub(r.pos());
-            if count < 0 || (count as u64).saturating_mul(12) > remaining {
-                bail!("delegate invocation count out of range: {count}");
-            }
+            validate_count(count, remaining, 12, "delegate invocation")?;
             let mut arr = Vec::with_capacity(count as usize);
             for _ in 0..count {
                 let object = r.read_i32()?;
@@ -333,12 +337,11 @@ fn parse_collection(
 ) -> Result<Value> {
     let count = r.read_i32()?;
     let remaining_in_value = value_end.saturating_sub(r.pos());
-    if count < 0 || count as u64 > remaining_in_value {
-        bail!("collection element count out of range: {count}");
-    }
+    validate_count(count, remaining_in_value, 1, "collection element")?;
     let mut arr = Vec::with_capacity(count as usize);
     for _ in 0..count {
         arr.push(parse_element(r, inner, ctx, prefer_native, value_end)?);
+        ensure_within_value(r, value_end, "collection element")?;
     }
     Ok(Value::Array(arr))
 }
@@ -354,13 +357,13 @@ fn parse_map(
     let _num_to_remove = r.read_i32()?;
     let count = r.read_i32()?;
     let remaining_in_value = value_end.saturating_sub(r.pos());
-    if count < 0 || count as u64 > remaining_in_value {
-        bail!("Map element count out of range: {count}");
-    }
+    validate_count(count, remaining_in_value, 2, "Map element")?;
     let mut arr = Vec::with_capacity(count as usize);
     for _ in 0..count {
         let key = parse_element(r, key_ty, ctx, prefer_native, value_end)?;
+        ensure_within_value(r, value_end, "Map key")?;
         let value = parse_element(r, val_ty, ctx, prefer_native, value_end)?;
+        ensure_within_value(r, value_end, "Map value")?;
         arr.push(json!({ "key": key, "value": value }));
     }
     Ok(Value::Array(arr))
@@ -626,13 +629,12 @@ fn parse_per_platform(
     if !cooked {
         let count = r.read_i32()?;
         let remaining = value_end.saturating_sub(r.pos());
-        if count < 0 || count as u64 > remaining {
-            bail!("PerPlatform map count out of range: {count}");
-        }
+        validate_count(count, remaining, 12, "PerPlatform map")?;
         for _ in 0..count {
             let key = names.resolve_raw(r.read_raw_name()?);
             let value = read_scalar(r, kind)?;
             per_platform.push(json!({ "platform": key, "value": value }));
+            ensure_within_value(r, value_end, "PerPlatform map entry")?;
         }
     }
     Ok(json!({ "default": default, "per_platform": per_platform }))
@@ -645,13 +647,12 @@ fn parse_per_quality_level(r: &mut Reader, kind: ScalarKind, value_end: u64) -> 
     if !cooked {
         let count = r.read_i32()?;
         let remaining = value_end.saturating_sub(r.pos());
-        if count < 0 || count as u64 > remaining {
-            bail!("PerQualityLevel map count out of range: {count}");
-        }
+        validate_count(count, remaining, 8, "PerQualityLevel map")?;
         for _ in 0..count {
             let quality_level = r.read_i32()?;
             let value = read_scalar(r, kind)?;
             per_quality.push(json!({ "quality_level": quality_level, "value": value }));
+            ensure_within_value(r, value_end, "PerQualityLevel map entry")?;
         }
     }
     Ok(json!({ "default": default, "per_quality": per_quality }))
@@ -821,9 +822,7 @@ pub(crate) fn parse_text(r: &mut Reader, names: &NameMap, depth: usize) -> Resul
             // NamedFormat: source format text + TMap<FString, FFormatArgumentValue>.
             let format = parse_text(r, names, depth + 1)?;
             let count = r.read_i32()?;
-            if count < 0 || count as u64 > r.remaining() {
-                bail!("FText named-format argument count out of range: {count}");
-            }
+            validate_count(count, r.remaining(), 5, "FText named-format argument")?;
             let mut arguments = Vec::with_capacity(count as usize);
             for _ in 0..count {
                 let name = r.read_fstring()?;
@@ -838,9 +837,7 @@ pub(crate) fn parse_text(r: &mut Reader, names: &NameMap, depth: usize) -> Resul
             // OrderedFormat: source format text + TArray<FFormatArgumentValue>.
             let format = parse_text(r, names, depth + 1)?;
             let count = r.read_i32()?;
-            if count < 0 || count as u64 > r.remaining() {
-                bail!("FText ordered-format argument count out of range: {count}");
-            }
+            validate_count(count, r.remaining(), 1, "FText ordered-format argument")?;
             let mut arguments = Vec::with_capacity(count as usize);
             for _ in 0..count {
                 arguments.push(parse_format_argument(r, names, depth + 1)?);
@@ -871,6 +868,23 @@ fn parse_format_argument(r: &mut Reader, names: &NameMap, depth: usize) -> Resul
         4 => parse_text(r, names, depth + 1)?, // Text
         other => bail!("unknown FText format argument type: {other}"),
     })
+}
+
+fn validate_count(count: i32, remaining: u64, min_bytes_per_item: u64, label: &str) -> Result<()> {
+    if !(0..=MAX_DYNAMIC_COUNT).contains(&count) {
+        bail!("{label} count out of range: {count}");
+    }
+    if (count as u64).saturating_mul(min_bytes_per_item) > remaining {
+        bail!("{label} count out of range: {count}");
+    }
+    Ok(())
+}
+
+fn ensure_within_value(r: &Reader, value_end: u64, label: &str) -> Result<()> {
+    if r.pos() > value_end {
+        bail!("{label} overran declared value window");
+    }
+    Ok(())
 }
 
 fn to_hex(bytes: &[u8]) -> String {

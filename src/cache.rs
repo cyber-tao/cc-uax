@@ -105,7 +105,9 @@ impl RefCache {
         current
             .iter()
             .any(|(rel, entry)| match self.loaded.get(rel) {
-                Some(old) => old.mtime != entry.mtime || old.size != entry.size,
+                Some(old) => {
+                    old.mtime != entry.mtime || old.size != entry.size || old.refs != entry.refs
+                }
                 None => true,
             })
     }
@@ -179,6 +181,44 @@ mod tests {
 
             assert!(cache.lookup("Foo/BP_A.uasset", 333, 222).is_none());
         }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn store_detects_ref_changes() {
+        let path = temp_db_path("refs-change");
+        let _ = std::fs::remove_file(&path);
+
+        let mut current = HashMap::new();
+        current.insert(
+            "Foo/BP_A.uasset".to_string(),
+            CacheEntry {
+                mtime: 111,
+                size: 222,
+                refs: vec!["/Game/Foo/Old".to_string()],
+            },
+        );
+
+        let mut cache = RefCache::open(&path).unwrap();
+        assert!(cache.store(&current).unwrap());
+
+        current.insert(
+            "Foo/BP_A.uasset".to_string(),
+            CacheEntry {
+                mtime: 111,
+                size: 222,
+                refs: vec!["/Game/Foo/New".to_string()],
+            },
+        );
+        assert!(cache.store(&current).unwrap());
+        drop(cache);
+
+        let cache = RefCache::open(&path).unwrap();
+        assert_eq!(
+            cache.lookup("Foo/BP_A.uasset", 111, 222),
+            Some(["/Game/Foo/New".to_string()].as_slice())
+        );
 
         let _ = std::fs::remove_file(&path);
     }

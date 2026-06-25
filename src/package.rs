@@ -6,7 +6,7 @@ use crate::property::{
 };
 use crate::reader::{Guid, Reader};
 use crate::summary::PackageFileSummary;
-use crate::version::ue5;
+use crate::version::{custom, ue5};
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
@@ -135,6 +135,7 @@ pub struct Package {
     pub imports: Vec<ObjectImport>,
     pub exports: Vec<ObjectExport>,
     pub soft_object_paths: Vec<Value>,
+    pub soft_object_path_error: Option<String>,
 }
 
 impl Package {
@@ -163,7 +164,7 @@ impl Package {
             ue5,
         )?;
 
-        let soft_object_paths = parse_soft_object_path_table(
+        let (soft_object_paths, soft_object_path_error) = parse_soft_object_path_table(
             &mut r,
             &names,
             summary.soft_object_paths_offset,
@@ -176,6 +177,7 @@ impl Package {
             imports,
             exports,
             soft_object_paths,
+            soft_object_path_error,
         })
     }
 
@@ -249,7 +251,7 @@ impl Package {
             .iter()
             .map(|c| json!({ "key": c.key.to_hex(), "version": c.version }))
             .collect();
-        json!({
+        let mut summary = json!({
             "package_name": s.package_name,
             "tag": format!("0x{:08X}", s.tag),
             "legacy_file_version": s.legacy_file_version,
@@ -265,7 +267,13 @@ impl Package {
             "export_count": s.export_count,
             "bulk_data_start_offset": s.bulk_data_start_offset,
             "custom_versions": custom,
-        })
+        });
+        if let Some(err) = &self.soft_object_path_error
+            && let Value::Object(ref mut m) = summary
+        {
+            m.insert("soft_object_paths_error".into(), json!(err));
+        }
+        summary
     }
 
     fn imports_json(&self) -> Value {
@@ -503,7 +511,80 @@ impl Package {
             return None;
         }
         reader.seek(pin_start).ok()?;
-        parse_node_pins(reader, pin_end, ctx, pin_ctx)
+        let candidates = self.pin_parse_contexts(*pin_ctx);
+        let mut best = None;
+        let mut best_pos = pin_start;
+        for candidate in candidates {
+            reader.seek(pin_start).ok()?;
+            if let Some(parsed) = parse_node_pins(reader, pin_end, ctx, &candidate) {
+                let consumed_pos = reader.pos();
+                if consumed_pos >= best_pos {
+                    best_pos = consumed_pos;
+                    best = Some(parsed);
+                }
+            }
+        }
+        if best.is_some() {
+            let _ = reader.seek(best_pos);
+        }
+        best
+    }
+
+    fn pin_parse_contexts(&self, primary: PinSerCtx) -> Vec<PinSerCtx> {
+        let source_known = self
+            .summary
+            .custom_version(custom::UE5_MAIN_STREAM_OBJECT_VERSION)
+            .is_some();
+        let wrapper_known = self
+            .summary
+            .custom_version(custom::RELEASE_OBJECT_VERSION)
+            .is_some();
+        let single_precision_known = self
+            .summary
+            .custom_version(custom::UE5_RELEASE_STREAM_OBJECT_VERSION)
+            .is_some();
+
+        let source_options = if source_known {
+            vec![primary.has_source_index]
+        } else {
+            vec![primary.has_source_index, !primary.has_source_index]
+        };
+        let wrapper_options = if wrapper_known {
+            vec![primary.has_uobject_wrapper]
+        } else {
+            vec![primary.has_uobject_wrapper, !primary.has_uobject_wrapper]
+        };
+        let single_precision_options = if single_precision_known {
+            vec![primary.has_single_precision_float]
+        } else {
+            vec![
+                primary.has_single_precision_float,
+                !primary.has_single_precision_float,
+            ]
+        };
+
+        let mut out: Vec<PinSerCtx> = Vec::new();
+        for has_source_index in source_options {
+            for &has_uobject_wrapper in &wrapper_options {
+                for &has_single_precision_float in &single_precision_options {
+                    let ctx = PinSerCtx {
+                        filter_editor_only: primary.filter_editor_only,
+                        has_source_index,
+                        has_uobject_wrapper,
+                        has_single_precision_float,
+                    };
+                    if !out.iter().any(|existing| {
+                        existing.filter_editor_only == ctx.filter_editor_only
+                            && existing.has_source_index == ctx.has_source_index
+                            && existing.has_uobject_wrapper == ctx.has_uobject_wrapper
+                            && existing.has_single_precision_float == ctx.has_single_precision_float
+                    }) {
+                        out.push(ctx);
+                    }
+                }
+            }
+        }
+        out
     }
 
     fn pins_to_json(
@@ -602,21 +683,48 @@ fn parse_soft_object_path_table(
     names: &NameMap,
     offset: i32,
     count: i32,
-) -> Vec<Value> {
+) -> (Vec<Value>, Option<String>) {
     let mut out = Vec::new();
-    if count <= 0 || offset <= 0 {
-        return out;
+    if count < 0 {
+        return (
+            out,
+            Some(format!("soft object path count out of range: {count}")),
+        );
     }
-    if r.seek(offset as u64).is_err() {
-        return out;
+    if count == 0 {
+        return (out, None);
     }
-    for _ in 0..count {
+    if offset <= 0 {
+        return (
+            out,
+            Some(format!(
+                "soft object path table offset must be positive when count is {count}"
+            )),
+        );
+    }
+    if let Err(err) = r.seek(offset as u64) {
+        return (
+            out,
+            Some(format!("soft object path table seek failed: {err:#}")),
+        );
+    }
+    for i in 0..count {
         match read_soft_object_path(r, names) {
             Ok(v) => out.push(v),
-            Err(_) => break,
+            Err(err) => {
+                return (
+                    out,
+                    Some(format!(
+                        "soft object path table entry {}/{} failed at offset {}: {err:#}",
+                        i + 1,
+                        count,
+                        r.pos()
+                    )),
+                );
+            }
         }
     }
-    out
+    (out, None)
 }
 
 fn name_or_null(s: String) -> Value {
@@ -659,6 +767,13 @@ fn export_serial_window(
 
     let script_start = exp.script_serialization_start_offset;
     let script_end = exp.script_serialization_end_offset;
+    if script_start == 0 && script_end == 0 {
+        return Ok(Some(ExportSerialWindow {
+            property_start: serial_start,
+            property_end: serial_end,
+            serial_end,
+        }));
+    }
     if script_start < 0 || script_end < script_start || script_end > exp.serial_size {
         return Err(format!(
             "script serialization range [{script_start}, {script_end}) is outside serial size {}",
@@ -747,9 +862,13 @@ pub fn package_path_from_relative(rel: &str, mount: &str) -> String {
     let mount = format!("/{}", mount.trim_matches('/'));
     let normalized = rel.replace('\\', "/");
     let trimmed = normalized.trim_start_matches('/');
-    let without_ext = trimmed
-        .strip_suffix(".uasset")
-        .or_else(|| trimmed.strip_suffix(".umap"))
-        .unwrap_or(trimmed);
+    let lower = trimmed.to_ascii_lowercase();
+    let without_ext = if lower.ends_with(".uasset") {
+        &trimmed[..trimmed.len() - 7]
+    } else if lower.ends_with(".umap") {
+        &trimmed[..trimmed.len() - 5]
+    } else {
+        trimmed
+    };
     format!("{mount}/{without_ext}")
 }

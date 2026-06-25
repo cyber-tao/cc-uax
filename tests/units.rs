@@ -1,5 +1,5 @@
 use cc_uax::name::NameMap;
-use cc_uax::object::PackageIndex;
+use cc_uax::object::{ObjectExport, PackageIndex};
 use cc_uax::package::{collect_package_references, package_path_from_relative};
 use cc_uax::pin::PinSerCtx;
 use cc_uax::property::{ParseCtx, TypeName, parse_properties};
@@ -44,6 +44,14 @@ fn read_raw_name() {
     let n = r.read_raw_name().unwrap();
     assert_eq!(n.index, 5);
     assert_eq!(n.number, 2);
+}
+
+#[test]
+fn read_io_hash_rejects_short_input() {
+    let data = [0u8; 19];
+    let mut r = Reader::new(&data);
+    let err = r.read_io_hash().err().unwrap().to_string();
+    assert!(err.contains("read 20 bytes out of range"));
 }
 
 #[test]
@@ -124,6 +132,35 @@ fn package_path_mapping() {
         package_path_from_relative("/Widgets/W_HUD.uasset", "/MyPlugin"),
         "/MyPlugin/Widgets/W_HUD"
     );
+    assert_eq!(
+        package_path_from_relative("Foo/BP_Upper.UASSET", "/Game"),
+        "/Game/Foo/BP_Upper"
+    );
+    assert_eq!(
+        package_path_from_relative("Maps/Main.UMAP", "/Game"),
+        "/Game/Maps/Main"
+    );
+}
+
+#[test]
+fn output_sections_parse_presets_and_aliases() {
+    let logic = OutputSections::parse("logic,refs").unwrap();
+    assert!(logic.summary);
+    assert!(logic.exports);
+    assert!(logic.pins);
+    assert!(logic.references);
+    assert!(!logic.properties);
+
+    let debug = OutputSections::parse("debug").unwrap();
+    assert!(debug.summary);
+    assert!(debug.imports);
+    assert!(debug.exports);
+    assert!(debug.properties);
+    assert!(debug.layout);
+    assert!(!debug.pins);
+
+    assert!(OutputSections::parse(" ").is_err());
+    assert!(OutputSections::parse("summary,unknown").is_err());
 }
 
 fn push_u16(v: &mut Vec<u8>, x: u16) {
@@ -137,6 +174,9 @@ fn push_i32(v: &mut Vec<u8>, x: i32) {
 }
 fn push_i64(v: &mut Vec<u8>, x: i64) {
     v.extend_from_slice(&x.to_le_bytes());
+}
+fn put_i32(v: &mut [u8], offset: usize, x: i32) {
+    v[offset..offset + 4].copy_from_slice(&x.to_le_bytes());
 }
 fn push_raw_name(v: &mut Vec<u8>, index: i32) {
     push_i32(v, index);
@@ -216,6 +256,42 @@ fn build_minimal_package() -> Vec<u8> {
     d
 }
 
+fn test_export(
+    object_name: i32,
+    serial_size: i64,
+    script_start: i64,
+    script_end: i64,
+) -> ObjectExport {
+    ObjectExport {
+        class_index: PackageIndex(0),
+        super_index: PackageIndex(0),
+        template_index: PackageIndex(0),
+        outer_index: PackageIndex(0),
+        object_name: RawName {
+            index: object_name,
+            number: 0,
+        },
+        object_flags: 0,
+        serial_size,
+        serial_offset: 0,
+        forced_export: false,
+        not_for_client: false,
+        not_for_server: false,
+        is_inherited_instance: false,
+        package_flags: 0,
+        not_always_loaded_for_editor_game: false,
+        is_asset: false,
+        generate_public_hash: false,
+        first_export_dependency: -1,
+        serialization_before_serialization_deps: -1,
+        create_before_serialization_deps: -1,
+        serialization_before_create_deps: -1,
+        create_before_create_deps: -1,
+        script_serialization_start_offset: script_start,
+        script_serialization_end_offset: script_end,
+    }
+}
+
 #[test]
 fn package_rejects_pre_ue5_version() {
     let mut d = Vec::new();
@@ -259,6 +335,25 @@ fn package_parse_minimal_header() {
     assert_eq!(json["summary"]["file_version_ue5"], 1018);
     assert!(json["imports"].as_array().unwrap().is_empty());
     assert!(json["exports"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn soft_object_path_table_error_is_reported() {
+    let mut data = build_minimal_package();
+    put_i32(&mut data, 76, 1); // soft_object_paths_count
+    put_i32(&mut data, 80, 999_999); // soft_object_paths_offset
+
+    let pkg = Package::parse(&data).unwrap();
+    let err = pkg.soft_object_path_error.as_deref().unwrap();
+    assert!(err.contains("soft object path table seek failed"));
+
+    let json = pkg.to_json(&data, &OutputSections::full());
+    assert!(
+        json["summary"]["soft_object_paths_error"]
+            .as_str()
+            .unwrap()
+            .contains("soft object path table seek failed")
+    );
 }
 
 #[test]
@@ -321,6 +416,70 @@ fn nested_struct_respects_declared_value_end() {
 }
 
 #[test]
+fn truncated_property_array_index_stops_parse() {
+    let names = NameMap {
+        names: vec![
+            "Broken".to_string(),
+            "IntProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Broken
+    push_raw_name(&mut d, 1); // IntProperty
+    push_i32(&mut d, 0); // type name inner param count
+    push_i32(&mut d, 0); // declared value size
+    d.push(0x01); // flags say array_index follows, but it is truncated
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+    assert!(entries.is_empty());
+}
+
+#[test]
+fn excessive_array_count_falls_back_to_hex() {
+    let names = NameMap {
+        names: vec![
+            "Nums".to_string(),
+            "ArrayProperty".to_string(),
+            "IntProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Nums
+    push_raw_name(&mut d, 1); // ArrayProperty
+    push_i32(&mut d, 1); // one type parameter
+    push_raw_name(&mut d, 2); // IntProperty
+    push_i32(&mut d, 0);
+    push_i32(&mut d, 4); // value is only the count
+    d.push(0);
+    push_i32(&mut d, 1_000_001);
+    push_raw_name(&mut d, 3); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].value.get("@unparsed").and_then(|v| v.as_str()),
+        Some("41420f00")
+    );
+}
+
+#[test]
 fn native_struct_array_falls_back_to_hex() {
     let names = NameMap {
         names: vec![
@@ -369,35 +528,9 @@ fn invalid_script_window_is_reported_in_layout() {
             names: vec!["Obj".to_string()],
         },
         imports: Vec::new(),
-        exports: vec![cc_uax::object::ObjectExport {
-            class_index: PackageIndex(0),
-            super_index: PackageIndex(0),
-            template_index: PackageIndex(0),
-            outer_index: PackageIndex(0),
-            object_name: RawName {
-                index: 0,
-                number: 0,
-            },
-            object_flags: 0,
-            serial_size: 4,
-            serial_offset: 0,
-            forced_export: false,
-            not_for_client: false,
-            not_for_server: false,
-            is_inherited_instance: false,
-            package_flags: 0,
-            not_always_loaded_for_editor_game: false,
-            is_asset: false,
-            generate_public_hash: false,
-            first_export_dependency: -1,
-            serialization_before_serialization_deps: -1,
-            create_before_serialization_deps: -1,
-            serialization_before_create_deps: -1,
-            create_before_create_deps: -1,
-            script_serialization_start_offset: 0,
-            script_serialization_end_offset: 8,
-        }],
+        exports: vec![test_export(0, 4, 0, 8)],
         soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
     };
     let mut sections = OutputSections::none();
     sections.exports = true;
@@ -408,6 +541,46 @@ fn invalid_script_window_is_reported_in_layout() {
     let err = json["exports"][0]["serial_window_error"].as_str().unwrap();
     assert!(err.contains("outside serial size"));
     assert!(json["exports"][0].get("properties").is_none());
+}
+
+#[test]
+fn zero_script_window_uses_serial_range() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut data = Vec::new();
+    data.push(0); // property tag extension control byte
+    push_raw_name(&mut data, 1); // Value
+    push_raw_name(&mut data, 2); // IntProperty
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 4);
+    data.push(0);
+    push_i32(&mut data, 42);
+    push_raw_name(&mut data, 3); // None
+
+    let pkg = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "Obj".to_string(),
+                "Value".to_string(),
+                "IntProperty".to_string(),
+                "None".to_string(),
+            ],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+    };
+    let mut sections = OutputSections::none();
+    sections.exports = true;
+    sections.layout = true;
+    sections.properties = true;
+
+    let json = pkg.to_json(&data, &sections);
+    let props = json["exports"][0]["properties"].as_array().unwrap();
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0]["name"].as_str(), Some("Value"));
+    assert_eq!(props[0]["value"].as_i64(), Some(42));
 }
 
 #[test]

@@ -141,8 +141,9 @@ impl<'a> Reader<'a> {
     }
 
     pub fn read_io_hash(&mut self) -> Result<[u8; 20]> {
+        let bytes = self.read_bytes(20)?;
         let mut b = [0u8; 20];
-        self.cur.read_exact(&mut b)?;
+        b.copy_from_slice(&bytes);
         Ok(b)
     }
 
