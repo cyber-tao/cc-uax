@@ -1,6 +1,6 @@
 [package]
 name = "cc-uax"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Parse Unreal Engine 5 .uasset/.umap packages to JSON — header, tagged properties, Blueprint node graph, and forward/reverse asset references."
