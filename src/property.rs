@@ -412,6 +412,12 @@ fn is_tagged_fallback_struct(name: &str) -> bool {
             | "AnimNotifyEvent"
             | "PostProcessSettings"
             | "HierarchicalSimplification"
+            // FAlphaBlend / FAnimCurveBase-derived curves declare WithSerializer but
+            // their Serialize returns false, so the payload is tagged properties.
+            | "AlphaBlend"
+            | "FloatCurve"
+            | "TransformCurve"
+            | "VectorCurve"
     )
 }
 
@@ -604,6 +610,16 @@ fn parse_native_struct(
                 "script_struct": (ctx.resolve_object)(script_struct),
                 "properties": entries_to_json(&nested)
             })
+        }
+        "Spline" => {
+            // FSpline::SerializeLoad writes an int8 implementation tag, followed by
+            // variant data only when it is non-zero (legacy/new spline payloads,
+            // not yet structured here).
+            let impl_id = r.read_i8()?;
+            match impl_id {
+                0 => json!({ "implementation": "empty" }),
+                _ => bail!("FSpline implementation {impl_id} not yet structured"),
+            }
         }
         "GameplayTagContainer" => {
             // FGameplayTagContainer::Serialize writes the TArray<FGameplayTag>;

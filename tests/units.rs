@@ -841,6 +841,74 @@ fn native_struct_niagara_variable_decodes() {
 }
 
 #[test]
+fn native_struct_spline_empty_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Spl".to_string(),
+            "StructProperty".to_string(),
+            "Spline".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let value = vec![0u8]; // int8 implementation tag = 0 (empty spline)
+    let d = build_struct_property(2, 3, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["implementation"].as_str(), Some("empty"));
+}
+
+#[test]
+fn float_curve_parses_as_tagged_fallback() {
+    let names = NameMap {
+        names: vec![
+            "Curve".to_string(),
+            "StructProperty".to_string(),
+            "FloatCurve".to_string(),
+            "CurveTypeFlags".to_string(),
+            "IntProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    // FFloatCurve defers to tagged properties: IntProperty CurveTypeFlags = 3.
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 3); // CurveTypeFlags
+    push_raw_name(&mut value, 4); // IntProperty
+    push_i32(&mut value, 0); // type name inner param count
+    push_i32(&mut value, 4); // size
+    value.push(0); // flags
+    push_i32(&mut value, 3); // value
+    push_raw_name(&mut value, 5); // None
+    let d = build_struct_property(2, 5, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["@struct"].as_str(), Some("FloatCurve"));
+    let props = entries[0].value["properties"].as_array().unwrap();
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0]["name"].as_str(), Some("CurveTypeFlags"));
+    assert_eq!(props[0]["value"].as_i64(), Some(3));
+}
+
+#[test]
 fn native_struct_rich_curve_key_array_keeps_stride() {
     let names = NameMap {
         names: vec![
