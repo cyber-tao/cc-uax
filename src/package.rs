@@ -798,6 +798,11 @@ fn export_serial_window(
 
 fn is_graph_node_class(class_full: &str) -> bool {
     let simple = class_full.rsplit(['.', '/']).next().unwrap_or(class_full);
+    // Binding helper objects (e.g. AnimGraphNodeBinding_Base) contain "GraphNode"
+    // but are not UEdGraphNode pin-bearing nodes.
+    if simple.contains("Binding") {
+        return false;
+    }
     simple.starts_with("K2Node")
         || simple.starts_with("EdGraphNode")
         || simple.contains("GraphNode")
