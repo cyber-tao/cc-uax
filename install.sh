@@ -4,6 +4,10 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.sh | bash
 #
+# Uninstall (remove the binary and skills):
+#   bash install.sh uninstall
+#   curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.sh | bash -s -- uninstall
+#
 # What it does:
 #   1. Detects OS + arch and maps to a release target
 #   2. Fetches the latest release version from GitHub
@@ -15,12 +19,17 @@
 #   INSTALL_DIR   binary install location        (default: ~/.local/bin)
 #   VERSION       specific release tag           (default: latest)
 #   NO_SKILL=1    skip skill configuration
+#   UNINSTALL=1   remove cc-uax instead of installing
 #
 set -euo pipefail
 
 REPO="cyber-tao/cc-uax"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 NO_SKILL="${NO_SKILL:-0}"
+UNINSTALL="${UNINSTALL:-0}"
+case "${1:-}" in
+    uninstall|--uninstall|-u) UNINSTALL=1 ;;
+esac
 
 # ── output helpers ──────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -37,6 +46,41 @@ err()     { printf "${C_RED}✗${C_NC} %s\n" "$*" >&2; }
 die()     { err "$*"; exit 1; }
 step()    { printf "\n${C_BLUE}[%s/%s]${C_NC} %s\n" "$1" "$TOTAL_STEPS" "$2"; }
 TOTAL_STEPS=5
+
+# ── uninstall ───────────────────────────────────────────────────────────────
+if [ "$UNINSTALL" = "1" ]; then
+    printf "\n${C_BLUE}cc-uax uninstall${C_NC}\n"
+    removed=0
+    BIN="${INSTALL_DIR}/cc-uax"
+    if [ -e "$BIN" ]; then
+        rm -f "$BIN"
+        ok "removed ${BIN}"
+        removed=1
+        # Drop the install dir only if it is now empty (never touch a shared bin dir).
+        rmdir "$INSTALL_DIR" 2>/dev/null && ok "removed empty ${INSTALL_DIR}" || true
+    else
+        warn "binary not found: ${BIN}"
+    fi
+
+    if [ "$NO_SKILL" = "1" ]; then
+        warn "NO_SKILL=1 — leaving skills in place"
+    else
+        for dir in "${HOME}/.claude/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
+            if [ -d "$dir" ]; then
+                rm -rf "$dir"
+                ok "removed ${dir}"
+                removed=1
+            fi
+        done
+    fi
+
+    if [ "$removed" = "1" ]; then
+        printf "\n${C_GREEN}cc-uax uninstalled.${C_NC}\n\n"
+    else
+        printf "\n${C_YELLOW}nothing to uninstall.${C_NC}\n\n"
+    fi
+    exit 0
+fi
 
 # ── prerequisites ───────────────────────────────────────────────────────────
 need_cmd() {

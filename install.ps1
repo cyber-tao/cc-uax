@@ -3,6 +3,10 @@
 #
 #   irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
 #
+# Uninstall (remove the binary, PATH entry, and skills):
+#   .\install.ps1 -Uninstall
+#   $env:UNINSTALL='1'; irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
+#
 # What it does:
 #   1. Resolves the latest release from GitHub
 #   2. Downloads the x86_64 Windows archive (also runs on Windows 11 ARM via x64 emulation)
@@ -14,7 +18,9 @@
 #   $env:INSTALL_DIR   binary install location   (default: ~\AppData\Local\Programs\cc-uax)
 #   $env:VERSION       specific release tag      (default: latest)
 #   $env:NO_SKILL='1'  skip skill configuration
+#   $env:UNINSTALL='1' remove cc-uax instead of installing
 #
+param([switch]$Uninstall)
 $ErrorActionPreference = 'Stop'
 # Invoke-WebRequest's progress bar drastically throttles downloads on Windows PowerShell 5.1.
 $ProgressPreference = 'SilentlyContinue'
@@ -22,12 +28,65 @@ $ProgressPreference = 'SilentlyContinue'
 $Repo = 'cyber-tao/cc-uax'
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\cc-uax' }
 $NoSkill = ($env:NO_SKILL -eq '1')
+# $Uninstall binds for `.\install.ps1 -Uninstall`; the env var covers the piped `irm | iex` path.
+$DoUninstall = $Uninstall -or ($env:UNINSTALL -eq '1')
 
 function Write-Step($n, $msg) { Write-Host "`n[$n/5] $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)      { Write-Host "[OK] $msg" -ForegroundColor Green }
 function Write-Info($msg)    { Write-Host ">> $msg" -ForegroundColor DarkGray }
 function Write-WarnMsg($msg) { Write-Host "!! $msg" -ForegroundColor Yellow }
 function Die($msg)           { Write-Host "[X] $msg" -ForegroundColor Red; exit 1 }
+
+# ── uninstall ───────────────────────────────────────────────────────────────
+if ($DoUninstall) {
+    Write-Host "`ncc-uax uninstall" -ForegroundColor Cyan
+    $removed = $false
+
+    $bin = Join-Path $InstallDir 'cc-uax.exe'
+    if (Test-Path $bin) {
+        Remove-Item $bin -Force
+        Write-Ok "removed $bin"
+        $removed = $true
+        # Drop the install dir only if it is now empty.
+        if ((Test-Path $InstallDir) -and -not (Get-ChildItem -Force $InstallDir)) {
+            Remove-Item $InstallDir -Force
+            Write-Ok "removed empty dir $InstallDir"
+        }
+    } else {
+        Write-WarnMsg "binary not found: $bin"
+    }
+
+    # Reverse the install-time user PATH edit, but only when our dir is actually
+    # present — and keep unrelated (including empty) segments untouched.
+    $userPath = [System.Environment]::GetEnvironmentVariable('PATH', 'User')
+    if ($userPath -and ($userPath.Split(';') -contains $InstallDir)) {
+        $kept = $userPath.Split(';') | Where-Object { $_ -ne $InstallDir }
+        [System.Environment]::SetEnvironmentVariable('PATH', ($kept -join ';'), 'User')
+        Write-Ok "removed $InstallDir from user PATH"
+        $removed = $true
+    }
+
+    if ($NoSkill) {
+        Write-WarnMsg 'NO_SKILL=1 — leaving skills in place'
+    } else {
+        foreach ($dir in @(
+                (Join-Path $env:USERPROFILE '.claude\skills\cc-uax'),
+                (Join-Path $env:USERPROFILE '.agents\skills\cc-uax')
+            )) {
+            if (Test-Path $dir) {
+                Remove-Item -Recurse -Force $dir
+                Write-Ok "removed $dir"
+                $removed = $true
+            }
+        }
+    }
+
+    Write-Host ''
+    if ($removed) { Write-Host 'cc-uax uninstalled.' -ForegroundColor Green }
+    else { Write-Host 'nothing to uninstall.' -ForegroundColor Yellow }
+    Write-Host ''
+    exit 0
+}
 
 # ── [1/5] detect platform ───────────────────────────────────────────────────
 Write-Step 1 'Detecting platform'
