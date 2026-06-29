@@ -868,6 +868,56 @@ fn native_struct_spline_empty_decodes() {
 }
 
 #[test]
+fn optional_property_decodes_set_and_unset() {
+    let names = NameMap {
+        names: vec![
+            "OptSet".to_string(),         // 0
+            "OptionalProperty".to_string(), // 1
+            "BoolProperty".to_string(),   // 2
+            "OptUnset".to_string(),       // 3
+            "None".to_string(),           // 4
+        ],
+    };
+    let mut d = Vec::new();
+    // Set optional bool = true: presence(bool32)=1 + inner bool byte=1.
+    push_raw_name(&mut d, 0); // OptSet
+    push_raw_name(&mut d, 1); // OptionalProperty
+    push_i32(&mut d, 1); // one inner type param
+    push_raw_name(&mut d, 2); // BoolProperty
+    push_i32(&mut d, 0); // inner param count
+    push_i32(&mut d, 5); // size
+    d.push(0); // flags
+    push_i32(&mut d, 1); // presence = set
+    d.push(1); // inner bool value
+    // Unset optional bool: presence(bool32)=0 only.
+    push_raw_name(&mut d, 3); // OptUnset
+    push_raw_name(&mut d, 1); // OptionalProperty
+    push_i32(&mut d, 1);
+    push_raw_name(&mut d, 2); // BoolProperty
+    push_i32(&mut d, 0);
+    push_i32(&mut d, 4); // size
+    d.push(0); // flags
+    push_i32(&mut d, 0); // presence = unset
+    push_raw_name(&mut d, 4); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].name, "OptSet");
+    assert_eq!(entries[0].value.as_bool(), Some(true));
+    assert_eq!(entries[1].name, "OptUnset");
+    assert!(entries[1].value.is_null());
+}
+
+#[test]
 fn native_struct_gameplay_effect_version_decodes() {
     let names = NameMap {
         names: vec![

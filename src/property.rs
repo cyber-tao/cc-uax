@@ -291,6 +291,19 @@ fn parse_value(
             let owner = r.read_i32()?;
             json!({ "path": path, "owner": (ctx.resolve_object)(owner) })
         }
+        "OptionalProperty" => {
+            // FOptionalProperty::SerializeItem encodes presence via the binary
+            // structured-archive optional field (a 4-byte UBOOL), then the inner
+            // value when set (UE5.7 serializes the value directly).
+            let inner = ty
+                .param(0)
+                .ok_or_else(|| anyhow::anyhow!("OptionalProperty missing inner type"))?;
+            if r.read_bool32()? {
+                parse_value(r, inner, ctx, prefer_native, value_end)?
+            } else {
+                Value::Null
+            }
+        }
         "StructProperty" => {
             let struct_name = ty.param(0).map(|p| p.name.as_str()).unwrap_or("");
             parse_struct(r, struct_name, ctx, prefer_native, value_end)?
