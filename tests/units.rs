@@ -791,13 +791,13 @@ fn native_struct_vector4f_decodes() {
 fn native_struct_niagara_variable_decodes() {
     let names = NameMap {
         names: vec![
-            "Var".to_string(),            // 0 property name
-            "StructProperty".to_string(), // 1
-            "NiagaraVariable".to_string(),// 2 struct name
-            "Particles.Color".to_string(),// 3 FName Name
-            "None".to_string(),           // 4 terminator
-            "Flags".to_string(),          // 5 typedef property
-            "IntProperty".to_string(),    // 6
+            "Var".to_string(),             // 0 property name
+            "StructProperty".to_string(),  // 1
+            "NiagaraVariable".to_string(), // 2 struct name
+            "Particles.Color".to_string(), // 3 FName Name
+            "None".to_string(),            // 4 terminator
+            "Flags".to_string(),           // 5 typedef property
+            "IntProperty".to_string(),     // 6
         ],
     };
     let mut value = Vec::new();
@@ -871,11 +871,11 @@ fn native_struct_spline_empty_decodes() {
 fn optional_property_decodes_set_and_unset() {
     let names = NameMap {
         names: vec![
-            "OptSet".to_string(),         // 0
+            "OptSet".to_string(),           // 0
             "OptionalProperty".to_string(), // 1
-            "BoolProperty".to_string(),   // 2
-            "OptUnset".to_string(),       // 3
-            "None".to_string(),           // 4
+            "BoolProperty".to_string(),     // 2
+            "OptUnset".to_string(),         // 3
+            "None".to_string(),             // 4
         ],
     };
     let mut d = Vec::new();
@@ -942,7 +942,10 @@ fn native_struct_gameplay_effect_version_decodes() {
 
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].value["current_version"].as_u64(), Some(2));
-    assert_eq!(entries[0].value["name"].as_str(), Some("AbilitiesComponent53"));
+    assert_eq!(
+        entries[0].value["name"].as_str(),
+        Some("AbilitiesComponent53")
+    );
 }
 
 #[test]
