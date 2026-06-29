@@ -46,14 +46,16 @@ The per-export `serial_offset`/`serial_size` windowing is what guarantees byte a
 
 ## Version gating
 
-[src/version.rs](src/version.rs) holds the UE5 `CORE_UOBJECT` file-version constants (e.g. `INITIAL_VERSION = 1000`, `SCRIPT_SERIALIZATION_OFFSET = 1010`, `PROPERTY_TAG_COMPLETE_TYPE_NAME = 1012`) and the UE4 legacy ladder. Behavior branches on `FileVersionUE5` against these constants. When adding support keyed to a UE version, add the constant here and gate on it — do not hardcode magic version numbers at call sites.
+[src/version.rs](src/version.rs) holds the UE5 `CORE_UOBJECT` file-version constants (e.g. `INITIAL_VERSION = 1000`, `SCRIPT_SERIALIZATION_OFFSET = 1010`, `PROPERTY_TAG_COMPLETE_TYPE_NAME = 1012`) and the UE4 legacy ladder. Behavior branches on `FileVersionUE5` against these constants. When adding support keyed to a UE version, add the constant here and gate on it — do not hardcode magic version numbers at call sites. Plugin/module custom-version GUIDs and their thresholds also live in `version.rs::custom` (e.g. `NIAGARA_OBJECT_VERSION` + `NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY`).
 
 ## Property decoding ([src/property.rs](src/property.rs))
 
 - `TypeName` — UE5.7 `FPropertyTypeName` (nested type name with parameters).
-- `ParseCtx` — carries a `&Package` reference so object-property values can be resolved to full names + package indices.
-- `parse_value` dispatches into `parse_collection` / `parse_map` / `parse_element` / `parse_struct` / `parse_native_struct` / `parse_soft_object` / `parse_text`.
-- **Hex fallback**: types with custom binary serialization that are not yet structured (e.g. Niagara nodes) are emitted as a hex preview capped by `PREVIEW_MAX`, preserving `type` and `size`. The hex path exists specifically to keep byte alignment intact — any new unknown struct should go through `to_hex` rather than guessing fields.
+- `ParseCtx` — carries name/object resolution + the soft-object path list, plus the package's `FNiagaraCustomVersion` (`niagara_version`) that gates the Niagara decoders.
+- `parse_value` dispatches into `parse_collection` / `parse_map` / `parse_element` / `parse_struct` / `parse_native_struct` / `parse_soft_object` / `parse_text`, plus `OptionalProperty` (a 4-byte presence flag followed by the inner value when set).
+- `parse_native_struct` decodes the common math / curve / material / Sequencer structs plus `GameplayTagContainer`, `Spline` (the `FSpline` int8 impl tag; non-empty payloads still hex), `GameplayEffectVersion`, and the Niagara core variable types (`NiagaraVariable` / `…Base` / `…WithOffset`; the nested `FNiagaraTypeDefinition` is itself tagged properties). Niagara decoders gate on `version::custom::NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY` and fall back to hex below it.
+- `is_tagged_fallback_struct` lists structs that declare `WithSerializer` but whose `Serialize` returns `false` (payload is still tagged properties) — e.g. `AlphaBlend`, `FloatCurve` / `TransformCurve` / `VectorCurve`, `GameplayEffectModifierMagnitude`, `LandscapeLayerComponentData`.
+- **Hex fallback**: types with custom binary serialization that are not yet structured (a few specialized non-core Niagara VM/GPU and mesh/cloth structs) are emitted as a hex preview capped by `PREVIEW_MAX`, preserving `type` and `size`. The hex path exists specifically to keep byte alignment intact — any new unknown struct should go through `to_hex` rather than guessing fields.
 
 ## Blueprint pin decoding ([src/pin.rs](src/pin.rs))
 
@@ -63,7 +65,7 @@ The per-export `serial_offset`/`serial_size` windowing is what guarantees byte a
 - Each owned pin: id, name, optional `FText` friendly name, `SourceIndex`, tooltip, direction, `FEdGraphPinType`, default value/object/text, then `LinkedTo` / `SubPins` (pin references = node `PackageIndex` + pin `Guid`) and `ParentPin`.
 - `EditablePinBase`-derived nodes (`K2Node_Event`, `K2Node_FunctionEntry`) append a `UserDefinedPins` array after the pins; the parser accepts trailing bytes once the count-prefixed pin array parses cleanly (`pos <= end`).
 - Field presence is gated on custom versions read from the summary (`EdGraphPinSourceIndex`, `PinTypeIncludesUObjectWrapperFlag`, `SerializeFloatPinDefaultValuesAsSinglePrecision`) — GUIDs + thresholds live in `version.rs::custom`. **UE bools serialize as 4 bytes**, so use `read_bool32`.
-- `package.rs` only attempts pin parsing for graph-node classes (`is_graph_node_class`: `K2Node*` / `EdGraphNode*` / `*GraphNode*`), then resolves each `LinkedTo` reference to a readable `{ node, pin }` via a cross-node `(node_index, pin_guid) → name` map.
+- `package.rs` only attempts pin parsing for graph-node classes (`is_graph_node_class`: `K2Node*` / `EdGraphNode*` / `*GraphNode*`, but excluding `*Binding*` helpers such as `AnimGraphNodeBinding_Base` that are not `UEdGraphNode`s), then resolves each `LinkedTo` reference to a readable `{ node, pin }` via a cross-node `(node_index, pin_guid) → name` map.
 
 ## Reference analysis
 

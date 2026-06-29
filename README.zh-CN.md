@@ -41,16 +41,17 @@
   |---|---|
   | 基础类型 | 数值、`bool`、枚举、字符串、`FName`、`FText` |
   | 引用 | `ObjectProperty` → 全名 + 包索引、`SoftObjectPath`、`FieldPath` |
-  | 容器 | `ArrayProperty`、`SetProperty`、`MapProperty` |
+  | 容器 | `ArrayProperty`、`SetProperty`、`MapProperty`、`OptionalProperty` |
   | 嵌套 | 递归 tagged 结构体 |
-  | 原生结构体 | `Vector` / `Vector3f` / `Rotator` / `Quat` / `Color` / `LinearColor` / `Transform` / `Transform3f` / `Box` / `Box2D` / `Guid` / `DateTime` / `FrameNumber` / `FrameRate` / `IntVector2` / `IntVector4` / `RichCurveKey` … |
+  | 原生结构体 | `Vector` / `Vector3f` / `Vector4` / `Vector4f` / `Rotator` / `Quat` / `Color` / `LinearColor` / `Transform` / `Transform3f` / `Box` / `Box2D` / `Box2f` / `Guid` / `DateTime` / `FrameNumber` / `FrameRate` / `IntVector2` / `IntVector4` / `RichCurveKey` … |
   | 材质输入 | `ExpressionInput` + Scalar / Vector / Vector2 / Color / ShadingModel / Substrate / MaterialAttributes |
-  | 序列器与曲线 | `FrameRange`、`FloatChannel`、`DoubleChannel`、per-platform Float / Int / Bool / FrameRate |
+  | 序列器与曲线 | `FrameRange`、`FloatChannel`、`DoubleChannel`、per-platform Float / Int / Bool / FrameRate、动画曲线（`FloatCurve` / `TransformCurve`） |
   | 运行时结构体 | `InstancedStruct`、`PerQualityLevelInt` / `Float`、委托（`Delegate` / `MulticastInline` / `MulticastSparse`）、`EdGraphPinType` |
+  | Gameplay 与特效 | `GameplayTagContainer`、`GameplayEffectVersion`、`Spline`、`AlphaBlend`、Niagara 核心（`NiagaraVariable` / `NiagaraVariableBase` / `NiagaraVariableWithOffset` / `NiagaraTypeDefinition`） |
 
 - **蓝图图逻辑** —— 紧随 tagged property 区间之后解码 `UEdGraphNode` 的 pin：每个节点的 pins、pin 类型、默认值/默认对象，以及 `LinkedTo` 连线，从而可重建完整的节点间执行与数据流图。图节点还会蒸馏出 `member`（其引用的函数 / 事件 / 变量）与 `member_from`（所属 C++ 类），便于与源码交叉对照。
 - **可选输出区块** —— `--sections`（别名 `-S`）按需组合要输出的区块，或直接选预设（`logic`、`debug`、`full`）—— 让逻辑分析精简、查 BUG 全面。
-- **优雅的十六进制回退** —— 暂未结构化、带自定义二进制序列化的类型（如 Niagara 节点）输出带 `type` + `size` 标注的十六进制预览，**保证字节对齐不被破坏**。
+- **优雅的十六进制回退** —— 暂未结构化、带自定义二进制序列化的类型（少数特化的 Niagara VM / 网格 / 布料结构体）输出带 `type` + `size` 标注的十六进制预览，**保证字节对齐不被破坏**。
 - **引用图谱**
   - `-S refs` —— 从 import 表提取前向引用，拆分为 `assets` 与 `scripts`，去重排序。
   - `--scan-dir` —— 反向引用：哪些资产引用了*当前文件*（`referenced_by`），通过 `--mount` 路径映射。
@@ -96,6 +97,24 @@ irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
 | macOS x86_64 / Apple Silicon | `x86_64-apple-darwin`、`aarch64-apple-darwin` |
 
 安装脚本支持的环境变量（执行前设置）：`INSTALL_DIR`（二进制位置）、`VERSION`（指定 tag）、`NO_SKILL=1`（跳过 skill 配置）。
+
+### 卸载
+
+移除二进制、Windows 用户 `PATH` 条目，以及 Claude Code / Codex 的 skill。`NO_SKILL=1` 时保留 skill。
+
+**Linux / macOS**
+
+```bash
+bash install.sh uninstall
+# 管道方式：curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.sh | bash -s -- uninstall
+```
+
+**Windows（PowerShell）**
+
+```powershell
+.\install.ps1 -Uninstall
+# 管道方式：$env:UNINSTALL='1'; irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
+```
 
 ### 从源码构建
 
@@ -266,7 +285,7 @@ cc-uax/
 
 - ✅ **已验证** 某 UE5.7 项目的 **1,423 个 `.uasset`** 文件 —— 全部成功解析，每个对象的属性区间字节完全对齐。
 - ❌ Cooked 包（unversioned / 包级压缩）与 UE4 旧格式**不支持**。
-- 🔧 多数原生二进制结构体已结构化解码；少数（如 Niagara）仍以十六进制预览呈现，待补解码器。
+- 🔧 多数原生二进制结构体（含 Niagara 核心变量类型）已结构化解码；少数特化结构体（非核心 Niagara 的 VM / GPU 绑定信息、骨骼网格采样与布料 LOD 构建数据）仍以十六进制预览呈现，待补解码器。
 - 🔧 `referenced_by` 从磁盘推导包路径 —— 输入文件必须位于映射到 `--mount` 的 `--scan-dir` 内。仅统计硬引用（import），不含软引用。
 - 🔧 缓存按修改时间 + 大小失效，内置 schema 版本变化时自动重建。
 
