@@ -402,6 +402,7 @@ fn nested_struct_respects_declared_value_end() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -436,6 +437,7 @@ fn truncated_property_array_index_stops_parse() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -468,6 +470,7 @@ fn excessive_array_count_falls_back_to_hex() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -510,6 +513,7 @@ fn native_struct_array_falls_back_to_hex() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -612,6 +616,7 @@ fn text_property_unknown_history_falls_back_to_hex() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, end);
@@ -669,6 +674,7 @@ fn native_struct_box_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -702,6 +708,7 @@ fn native_struct_box2f_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -736,6 +743,7 @@ fn native_struct_gameplay_tag_container_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -769,6 +777,7 @@ fn native_struct_vector4f_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -776,6 +785,59 @@ fn native_struct_vector4f_decodes() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].value["x"].as_f64(), Some(1.0));
     assert_eq!(entries[0].value["w"].as_f64(), Some(4.0));
+}
+
+#[test]
+fn native_struct_niagara_variable_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Var".to_string(),            // 0 property name
+            "StructProperty".to_string(), // 1
+            "NiagaraVariable".to_string(),// 2 struct name
+            "Particles.Color".to_string(),// 3 FName Name
+            "None".to_string(),           // 4 terminator
+            "Flags".to_string(),          // 5 typedef property
+            "IntProperty".to_string(),    // 6
+        ],
+    };
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 3); // Name = Particles.Color
+    // FNiagaraTypeDefinition tagged properties: IntProperty Flags = 1, then None.
+    push_raw_name(&mut value, 5); // Flags
+    push_raw_name(&mut value, 6); // IntProperty
+    push_i32(&mut value, 0); // type name inner param count
+    push_i32(&mut value, 4); // size
+    value.push(0); // flags
+    push_i32(&mut value, 1); // value
+    push_raw_name(&mut value, 4); // None (ends type definition)
+    push_i32(&mut value, 0); // VarData count = 0
+    let d = build_struct_property(2, 4, &value);
+
+    // Niagara version below the gate must fall back to hex.
+    let mut ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: 0,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+    assert!(entries[0].value.get("@unparsed").is_some());
+
+    // Modern Niagara version decodes Name + type definition + empty VarData.
+    ctx.niagara_version = 64;
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["name"].as_str(), Some("Particles.Color"));
+    assert_eq!(v["type"]["@struct"].as_str(), Some("NiagaraTypeDefinition"));
+    let tprops = v["type"]["properties"].as_array().unwrap();
+    assert_eq!(tprops.len(), 1);
+    assert_eq!(tprops[0]["name"].as_str(), Some("Flags"));
+    assert_eq!(tprops[0]["value"].as_i64(), Some(1));
+    assert_eq!(v["data_size"].as_i64(), Some(0));
 }
 
 #[test]
@@ -824,6 +886,7 @@ fn native_struct_rich_curve_key_array_keeps_stride() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -866,6 +929,7 @@ fn material_scalar_input_resolves_expression() {
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -904,6 +968,7 @@ fn native_struct_per_platform_float_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -940,6 +1005,7 @@ fn native_struct_movie_scene_frame_range_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -995,6 +1061,7 @@ fn native_struct_movie_scene_float_channel_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1047,6 +1114,7 @@ fn text_ordered_format_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1090,6 +1158,7 @@ fn text_string_table_entry_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1131,6 +1200,7 @@ fn multicast_inline_delegate_decodes() {
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1175,6 +1245,7 @@ fn native_struct_instanced_struct_decodes() {
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1225,6 +1296,7 @@ fn native_struct_edgraph_pin_type_decodes() {
             has_single_precision_float: true,
         },
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1265,6 +1337,7 @@ fn soft_object_property_resolves_list_index() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &table,
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1305,6 +1378,7 @@ fn tagged_fallback_struct_parses_as_properties() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        niagara_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);

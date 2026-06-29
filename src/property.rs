@@ -71,6 +71,8 @@ pub struct ParseCtx<'a> {
     pub resolve_object: &'a dyn Fn(i32) -> Value,
     pub pins: PinSerCtx,
     pub soft_object_paths: &'a [Value],
+    /// FNiagaraCustomVersion of the package (-1 when absent), gating Niagara decoders.
+    pub niagara_version: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -615,9 +617,60 @@ fn parse_native_struct(
             }
             json!({ "tags": tags })
         }
+        // Niagara core variable types (modern format only). FNiagaraTypeDefinition
+        // serializes via SerializeTaggedProperties, so it reuses parse_properties.
+        "NiagaraTypeDefinition" if niagara_modern(ctx) => {
+            let nested = parse_properties(r, ctx, value_end);
+            json!({ "@struct": "NiagaraTypeDefinition", "properties": entries_to_json(&nested) })
+        }
+        "NiagaraVariableBase" if niagara_modern(ctx) => {
+            Value::Object(parse_niagara_variable_base(r, ctx, value_end)?)
+        }
+        "NiagaraVariable" if niagara_modern(ctx) => {
+            let mut o = parse_niagara_variable_base(r, ctx, value_end)?;
+            // VarData: TArray<uint8> (the variable's default-value blob).
+            let count = r.read_i32()?;
+            let remaining = value_end.saturating_sub(r.pos());
+            validate_count(count, remaining, 1, "NiagaraVariable data")?;
+            let bytes = r.read_bytes(count as usize)?;
+            o.insert("data_size".into(), json!(count));
+            if !bytes.is_empty() {
+                let n = bytes.len().min(PREVIEW_MAX);
+                o.insert("data".into(), json!(to_hex(&bytes[..n])));
+            }
+            Value::Object(o)
+        }
+        "NiagaraVariableWithOffset" if niagara_modern(ctx) => {
+            let mut o = parse_niagara_variable_base(r, ctx, value_end)?;
+            o.insert("offset".into(), json!(r.read_i32()?));
+            Value::Object(o)
+        }
         _ => return Ok(None),
     };
     Ok(Some(v))
+}
+
+fn niagara_modern(ctx: &ParseCtx) -> bool {
+    ctx.niagara_version >= crate::version::custom::NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY
+}
+
+/// FNiagaraVariableBase::Serialize (modern): `Ar << Name; Ar << TypeDefHandle;`
+/// where TypeDefHandle serializes a full FNiagaraTypeDefinition via tagged
+/// properties. Leaves the reader positioned right after the type definition.
+fn parse_niagara_variable_base(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    value_end: u64,
+) -> Result<serde_json::Map<String, Value>> {
+    let name = ctx.names.resolve_raw(r.read_raw_name()?);
+    let type_def = parse_properties(r, ctx, value_end);
+    let mut o = serde_json::Map::new();
+    o.insert("name".into(), json!(name));
+    o.insert(
+        "type".into(),
+        json!({ "@struct": "NiagaraTypeDefinition", "properties": entries_to_json(&type_def) }),
+    );
+    Ok(o)
 }
 
 #[derive(Clone, Copy)]

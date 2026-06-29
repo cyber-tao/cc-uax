@@ -333,6 +333,10 @@ impl Package {
             resolve_object: &resolve,
             pins: pin_ctx,
             soft_object_paths: &self.soft_object_paths,
+            niagara_version: self
+                .summary
+                .custom_version(custom::NIAGARA_OBJECT_VERSION)
+                .unwrap_or(-1),
         };
         let mut reader = Reader::new(data);
         let file_len = reader.len();

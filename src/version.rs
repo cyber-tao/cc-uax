@@ -59,8 +59,13 @@ pub mod custom {
         Guid([0x697D_D581, 0xE64F_41AB, 0xAA4A_51EC, 0xBEB7_B628]);
     pub const UE5_RELEASE_STREAM_OBJECT_VERSION: Guid =
         Guid([0xD89B_5E42, 0x24BD_4D46, 0x8412_ACA8, 0xDF64_1779]);
+    pub const NIAGARA_OBJECT_VERSION: Guid =
+        Guid([0xFCF5_7AFA, 0x5076_4283, 0xB9A9_E658, 0xFFA0_2D32]);
 
     pub const EDGRAPH_PIN_SOURCE_INDEX: i32 = 50;
+    /// FNiagaraCustomVersion::VariablesUseTypeDefRegistry — from this version on,
+    /// FNiagaraVariableBase serializes Name + a tagged-property FNiagaraTypeDefinition.
+    pub const NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY: i32 = 64;
     pub const PIN_TYPE_INCLUDES_UOBJECT_WRAPPER_FLAG: i32 = 32;
     pub const SERIALIZE_FLOAT_PIN_SINGLE_PRECISION: i32 = 36;
 }
