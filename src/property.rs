@@ -603,6 +603,18 @@ fn parse_native_struct(
                 "properties": entries_to_json(&nested)
             })
         }
+        "GameplayTagContainer" => {
+            // FGameplayTagContainer::Serialize writes the TArray<FGameplayTag>;
+            // each FGameplayTag serializes as its single TagName (FName).
+            let count = r.read_i32()?;
+            let remaining = value_end.saturating_sub(r.pos());
+            validate_count(count, remaining, 8, "GameplayTagContainer tag")?;
+            let mut tags = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                tags.push(json!(ctx.names.resolve_raw(r.read_raw_name()?)));
+            }
+            json!({ "tags": tags })
+        }
         _ => return Ok(None),
     };
     Ok(Some(v))

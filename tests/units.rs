@@ -713,6 +713,41 @@ fn native_struct_box2f_decodes() {
 }
 
 #[test]
+fn native_struct_gameplay_tag_container_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Tags".to_string(),
+            "StructProperty".to_string(),
+            "GameplayTagContainer".to_string(),
+            "Ability.Attack".to_string(),
+            "Ability.Dash".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, 2); // tag count
+    push_raw_name(&mut value, 3); // Ability.Attack
+    push_raw_name(&mut value, 4); // Ability.Dash
+    assert_eq!(value.len(), 4 + 2 * 8);
+    let d = build_struct_property(2, 5, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let tags = entries[0].value["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 2);
+    assert_eq!(tags[0].as_str(), Some("Ability.Attack"));
+    assert_eq!(tags[1].as_str(), Some("Ability.Dash"));
+}
+
+#[test]
 fn native_struct_vector4f_decodes() {
     let names = NameMap {
         names: vec![
