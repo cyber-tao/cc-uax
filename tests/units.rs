@@ -868,6 +868,34 @@ fn native_struct_spline_empty_decodes() {
 }
 
 #[test]
+fn native_struct_gameplay_effect_version_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Ver".to_string(),
+            "StructProperty".to_string(),
+            "GameplayEffectVersion".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let value = vec![2u8]; // EGameplayEffectVersion::AbilitiesComponent53
+    let d = build_struct_property(2, 3, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["current_version"].as_u64(), Some(2));
+    assert_eq!(entries[0].value["name"].as_str(), Some("AbilitiesComponent53"));
+}
+
+#[test]
 fn float_curve_parses_as_tagged_fallback() {
     let names = NameMap {
         names: vec![

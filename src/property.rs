@@ -418,6 +418,11 @@ fn is_tagged_fallback_struct(name: &str) -> bool {
             | "FloatCurve"
             | "TransformCurve"
             | "VectorCurve"
+            // FGameplayEffectModifierMagnitude::Serialize also returns false; the
+            // landscape per-layer struct has no custom serializer (the enclosing map
+            // carries the native flag), so both are tagged-property payloads.
+            | "GameplayEffectModifierMagnitude"
+            | "LandscapeLayerComponentData"
     )
 }
 
@@ -610,6 +615,17 @@ fn parse_native_struct(
                 "script_struct": (ctx.resolve_object)(script_struct),
                 "properties": entries_to_json(&nested)
             })
+        }
+        "GameplayEffectVersion" => {
+            // FGameplayEffectVersion::Serialize writes the EGameplayEffectVersion byte.
+            let v = r.read_u8()?;
+            let name = match v {
+                0 => "Monolithic",
+                1 => "Modular53",
+                2 => "AbilitiesComponent53",
+                _ => "Unknown",
+            };
+            json!({ "current_version": v, "name": name })
         }
         "Spline" => {
             // FSpline::SerializeLoad writes an int8 implementation tag, followed by
