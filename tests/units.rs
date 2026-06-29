@@ -680,6 +680,70 @@ fn native_struct_box_decodes() {
 }
 
 #[test]
+fn native_struct_box2f_decodes() {
+    let names = NameMap {
+        names: vec![
+            "MyBox".to_string(),
+            "StructProperty".to_string(),
+            "Box2f".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    for x in [1.0f32, 2.0, 3.0, 4.0] {
+        push_f32(&mut value, x);
+    }
+    value.push(1); // bIsValid (single uint8)
+    assert_eq!(value.len(), 17);
+    let d = build_struct_property(2, 3, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["min"]["x"].as_f64(), Some(1.0));
+    assert_eq!(entries[0].value["max"]["y"].as_f64(), Some(4.0));
+    assert_eq!(entries[0].value["is_valid"].as_bool(), Some(true));
+}
+
+#[test]
+fn native_struct_vector4f_decodes() {
+    let names = NameMap {
+        names: vec![
+            "V".to_string(),
+            "StructProperty".to_string(),
+            "Vector4f".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    for x in [1.0f32, 2.0, 3.0, 4.0] {
+        push_f32(&mut value, x);
+    }
+    assert_eq!(value.len(), 16);
+    let d = build_struct_property(2, 3, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["x"].as_f64(), Some(1.0));
+    assert_eq!(entries[0].value["w"].as_f64(), Some(4.0));
+}
+
+#[test]
 fn native_struct_rich_curve_key_array_keeps_stride() {
     let names = NameMap {
         names: vec![

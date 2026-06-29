@@ -433,6 +433,9 @@ fn parse_native_struct(
         "Vector4" => json!({
             "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()?, "w": r.read_f64()?
         }),
+        "Vector4f" => json!({
+            "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()?, "w": r.read_f32()?
+        }),
         "Rotator" => json!({
             "pitch": r.read_f64()?, "yaw": r.read_f64()?, "roll": r.read_f64()?
         }),
@@ -474,7 +477,14 @@ fn parse_native_struct(
         "Box2D" => {
             let min = json!({ "x": r.read_f64()?, "y": r.read_f64()? });
             let max = json!({ "x": r.read_f64()?, "y": r.read_f64()? });
-            let is_valid = r.read_bool32()?;
+            // TBox2::Serialize writes bIsValid as a single uint8 (not a 4-byte UBOOL).
+            let is_valid = r.read_u8()? != 0;
+            json!({ "min": min, "max": max, "is_valid": is_valid })
+        }
+        "Box2f" => {
+            let min = json!({ "x": r.read_f32()?, "y": r.read_f32()? });
+            let max = json!({ "x": r.read_f32()?, "y": r.read_f32()? });
+            let is_valid = r.read_u8()? != 0;
             json!({ "min": min, "max": max, "is_valid": is_valid })
         }
         "FrameNumber" => json!({ "value": r.read_i32()? }),
