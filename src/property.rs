@@ -110,12 +110,17 @@ pub fn parse_object_properties(
     end_limit: u64,
     ue5_version: i32,
 ) -> Vec<PropertyEntry> {
-    if ue5_version >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
-        && let Ok(control) = r.read_u8()
-        && control & 0x02 != 0
-        && r.read_u8().is_err()
-    {
-        return Vec::new();
+    // A UClass tagged-property block opens with a serialization-control byte
+    // (EClassSerializationControlExtension, uint8). When OverridableSerialization-
+    // Information (0x02) is set, an EOverriddenPropertyOperation byte (uint8) follows.
+    if ue5_version >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION {
+        let control = match r.read_u8() {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        if control & 0x02 != 0 && r.read_u8().is_err() {
+            return Vec::new();
+        }
     }
     parse_properties(r, ctx, end_limit)
 }
@@ -172,6 +177,9 @@ pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<P
         }
         let is_binary_native = flags & 0x08 != 0;
         let bool_val = flags & 0x10 != 0;
+        // SkippedSerialize (0x20): the value was intentionally not written (Size == 0),
+        // so there is nothing to decode for this property.
+        let is_skipped = flags & 0x20 != 0;
 
         if size < 0 {
             break;
@@ -182,7 +190,9 @@ pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<P
             break;
         }
 
-        let value = if type_name.name == "BoolProperty" {
+        let value = if is_skipped {
+            json!({ "@skipped": true })
+        } else if type_name.name == "BoolProperty" {
             json!(bool_val)
         } else {
             match parse_value(r, &type_name, ctx, is_binary_native, aligned) {
@@ -219,10 +229,17 @@ pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<P
 }
 
 fn parse_extensions(r: &mut Reader) -> Result<()> {
-    let ext = r.read_u8()?;
-    if ext & 0x02 != 0 {
-        let _override_operation = r.read_u8()?;
-        let _experimental = r.read_u8()?;
+    // FPropertyTag::SerializePropertyExtensions in a binary archive: a 4-byte presence
+    // bool (SA_OPTIONAL_ATTRIBUTE via TryEnterAttribute), then the uint8 extension flags
+    // when present. If OverridableInformation (0x02) is set, an EOverriddenPropertyOperation
+    // byte (uint8) and a 4-byte bExperimentalOverridableLogic bool follow. UE serializes
+    // `bool` as a 4-byte int32, hence read_bool32 rather than a single byte.
+    if r.read_bool32()? {
+        let ext = r.read_u8()?;
+        if ext & 0x02 != 0 {
+            let _override_operation = r.read_u8()?;
+            let _experimental = r.read_bool32()?;
+        }
     }
     Ok(())
 }
