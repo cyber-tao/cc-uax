@@ -719,6 +719,118 @@ fn native_struct_box2f_decodes() {
     assert_eq!(entries[0].value["is_valid"].as_bool(), Some(true));
 }
 
+// Wrap raw FText `value` bytes as a single TextProperty, parse it, return the value.
+fn parse_text_property_value(value: &[u8]) -> serde_json::Value {
+    let names = NameMap {
+        names: vec![
+            "MyText".to_string(),
+            "TextProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // property name
+    push_raw_name(&mut d, 1); // TextProperty
+    push_i32(&mut d, 0); // type name inner param count
+    push_i32(&mut d, value.len() as i32); // size
+    d.push(0); // flags
+    d.extend_from_slice(value);
+    push_raw_name(&mut d, 2); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+    assert_eq!(entries.len(), 1, "expected one property: {entries:?}");
+    assert_eq!(entries[0].type_str, "TextProperty");
+    entries[0].value.clone()
+}
+
+#[test]
+fn text_history_as_number_decodes() {
+    // FTextHistory_AsNumber: SourceValue(Double) + bHasFormatOptions + options + culture.
+    let mut v = Vec::new();
+    push_u32(&mut v, 0); // FText flags
+    v.push(4u8); // history = AsNumber
+    v.push(3u8); // FFormatArgumentValue type = Double
+    push_f64(&mut v, 555.0); // SourceValue
+    push_i32(&mut v, 1); // bHasFormatOptions = true
+    push_i32(&mut v, 0); // always_sign
+    push_i32(&mut v, 1); // use_grouping
+    v.push(0u8); // rounding_mode
+    push_i32(&mut v, 1); // minimum_integral_digits
+    push_i32(&mut v, 324); // maximum_integral_digits
+    push_i32(&mut v, 0); // minimum_fractional_digits
+    push_i32(&mut v, 3); // maximum_fractional_digits
+    push_fstring(&mut v, ""); // culture name
+    assert_eq!(v.len(), 47);
+
+    let value = parse_text_property_value(&v);
+    assert_eq!(value["history"], "AsNumber");
+    assert_eq!(value["source_value"].as_f64(), Some(555.0));
+    assert_eq!(value["format_options"]["use_grouping"], true);
+    assert_eq!(value["format_options"]["maximum_integral_digits"], 324);
+    assert_eq!(value["culture"], "");
+    assert!(value.get("@unparsed").is_none());
+}
+
+#[test]
+fn text_history_as_number_without_options() {
+    let mut v = Vec::new();
+    push_u32(&mut v, 0); // FText flags
+    v.push(5u8); // history = AsPercent
+    v.push(0u8); // FFormatArgumentValue type = Int
+    push_i64(&mut v, 42); // SourceValue
+    push_i32(&mut v, 0); // bHasFormatOptions = false
+    push_fstring(&mut v, "en"); // culture name
+
+    let value = parse_text_property_value(&v);
+    assert_eq!(value["history"], "AsPercent");
+    assert_eq!(value["source_value"].as_i64(), Some(42));
+    assert!(value.get("format_options").is_none());
+    assert_eq!(value["culture"], "en");
+}
+
+#[test]
+fn text_history_as_date_decodes() {
+    let mut v = Vec::new();
+    push_u32(&mut v, 0); // FText flags
+    v.push(7u8); // history = AsDate
+    push_i64(&mut v, 123_456_789); // SourceDateTime
+    v.push(2u8); // DateStyle (int8)
+    push_fstring(&mut v, "UTC"); // TimeZone
+    push_fstring(&mut v, "en-US"); // Culture
+
+    let value = parse_text_property_value(&v);
+    assert_eq!(value["history"], "AsDate");
+    assert_eq!(value["datetime"].as_i64(), Some(123_456_789));
+    assert_eq!(value["date_style"], 2);
+    assert_eq!(value["time_zone"], "UTC");
+    assert_eq!(value["culture"], "en-US");
+}
+
+#[test]
+fn text_history_transform_decodes_nested_text() {
+    let mut v = Vec::new();
+    push_u32(&mut v, 0); // FText flags
+    v.push(10u8); // history = Transform
+    // Nested source text: history -1, no culture-invariant string.
+    push_u32(&mut v, 0); // nested flags
+    v.push(0xFFu8); // nested history = -1 (None)
+    push_i32(&mut v, 0); // has_culture_invariant = false
+    v.push(1u8); // TransformType = ToUpper
+
+    let value = parse_text_property_value(&v);
+    assert_eq!(value["history"], "Transform");
+    assert_eq!(value["transform_type"], 1);
+    assert!(value["source"]["text"].is_null());
+}
+
 #[test]
 fn native_struct_gameplay_tag_container_decodes() {
     let names = NameMap {
