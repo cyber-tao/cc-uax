@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`cc-uax` is a Rust CLI that parses Unreal Engine 5 `.uasset`/`.umap` package files and emits structured JSON — package header, tagged properties, the Blueprint node-and-pin graph, and forward/reverse asset references. Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`). Cooked/unversioned packages and UE4 legacy formats are explicitly out of scope.
+`cc-uax` is a Rust CLI that parses Unreal Engine 5 `.uasset`/`.umap` package files and emits structured JSON — package header, tagged properties, the Blueprint node-and-pin graph, and forward/reverse asset references. Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`). The header, tables and reference graph parse from `>= 1000`; full tagged-property decoding requires the UE5.7 complete-type-name tag layout (`FileVersionUE5 >= 1012`), and older packages emit a `properties_unsupported_version` diagnostic instead of decoded properties. Cooked/unversioned packages and UE4 legacy formats are explicitly out of scope.
 
 ## Commands
 

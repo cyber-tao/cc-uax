@@ -7,6 +7,17 @@ use serde_json::{Value, json};
 const PREVIEW_MAX: usize = 64;
 const MAX_DYNAMIC_COUNT: i32 = 1_000_000;
 
+// FPropertyTag flag bits (EPropertyTagFlags).
+const TAG_FLAG_HAS_ARRAY_INDEX: u8 = 0x01;
+const TAG_FLAG_HAS_PROPERTY_GUID: u8 = 0x02;
+const TAG_FLAG_HAS_PROPERTY_EXTENSIONS: u8 = 0x04;
+const TAG_FLAG_HAS_BINARY_OR_NATIVE_SERIALIZE: u8 = 0x08;
+const TAG_FLAG_BOOL_TRUE: u8 = 0x10;
+const TAG_FLAG_SKIPPED_SERIALIZE: u8 = 0x20;
+// The "overridable serialization" bit, shared by EClassSerializationControlExtension
+// (object control byte) and EPropertyTagExtension (per-tag extension flags).
+const OVERRIDABLE_SERIALIZATION_BIT: u8 = 0x02;
+
 #[derive(Debug, Clone)]
 pub struct TypeName {
     pub name: String,
@@ -118,7 +129,7 @@ pub fn parse_object_properties(
             Ok(c) => c,
             Err(_) => return Vec::new(),
         };
-        if control & 0x02 != 0 && r.read_u8().is_err() {
+        if control & OVERRIDABLE_SERIALIZATION_BIT != 0 && r.read_u8().is_err() {
             return Vec::new();
         }
     }
@@ -156,7 +167,7 @@ pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<P
             Ok(f) => f,
             Err(_) => break,
         };
-        let array_index = if flags & 0x01 != 0 {
+        let array_index = if flags & TAG_FLAG_HAS_ARRAY_INDEX != 0 {
             match r.read_i32() {
                 Ok(i) => i,
                 Err(_) => break,
@@ -164,7 +175,7 @@ pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<P
         } else {
             0
         };
-        let guid = if flags & 0x02 != 0 {
+        let guid = if flags & TAG_FLAG_HAS_PROPERTY_GUID != 0 {
             match r.read_guid() {
                 Ok(g) => Some(g.to_hex()),
                 Err(_) => break,
@@ -172,14 +183,14 @@ pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<P
         } else {
             None
         };
-        if flags & 0x04 != 0 && parse_extensions(r).is_err() {
+        if flags & TAG_FLAG_HAS_PROPERTY_EXTENSIONS != 0 && parse_extensions(r).is_err() {
             break;
         }
-        let is_binary_native = flags & 0x08 != 0;
-        let bool_val = flags & 0x10 != 0;
+        let is_binary_native = flags & TAG_FLAG_HAS_BINARY_OR_NATIVE_SERIALIZE != 0;
+        let bool_val = flags & TAG_FLAG_BOOL_TRUE != 0;
         // SkippedSerialize (0x20): the value was intentionally not written (Size == 0),
         // so there is nothing to decode for this property.
-        let is_skipped = flags & 0x20 != 0;
+        let is_skipped = flags & TAG_FLAG_SKIPPED_SERIALIZE != 0;
 
         if size < 0 {
             break;
@@ -236,7 +247,7 @@ fn parse_extensions(r: &mut Reader) -> Result<()> {
     // `bool` as a 4-byte int32, hence read_bool32 rather than a single byte.
     if r.read_bool32()? {
         let ext = r.read_u8()?;
-        if ext & 0x02 != 0 {
+        if ext & OVERRIDABLE_SERIALIZATION_BIT != 0 {
             let _override_operation = r.read_u8()?;
             let _experimental = r.read_bool32()?;
         }

@@ -28,7 +28,7 @@ A real UE5 project lives inside opaque `.uasset`/`.umap` binaries — every Blue
 
 The name says it plainly: **cc** = Claude Code, **uax** = uasset. The tool also doubles as an [agent skill](#-use-as-an-agent-skill) — once wired up, Claude Code (or OpenAI Codex) calls `cc-uax` automatically the moment you ask it to inspect a `.uasset`/`.umap`, so you never hand-read the binary.
 
-> Scope: **versioned, uncooked editor assets** on UE5 (`FileVersionUE5 >= 1000`). Cooked / unversioned packages and UE4 legacy formats are intentionally out of scope.
+> Scope: **versioned, uncooked editor assets** on UE5 (`FileVersionUE5 >= 1000`). Header, tables and the reference graph parse from `>= 1000`; full tagged-property decoding needs the UE5.7 complete-type-name tag layout (`FileVersionUE5 >= 1012`) and older packages report `properties_unsupported_version` instead. Cooked / unversioned packages and UE4 legacy formats are intentionally out of scope.
 
 ## ✨ Features
 

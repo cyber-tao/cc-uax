@@ -297,23 +297,22 @@ impl Package {
         Value::Array(arr)
     }
 
-    fn references_json(&self) -> Value {
-        let (assets, scripts) = collect_package_references(self.imports.iter().map(|imp| {
+    fn import_class_object_names(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        self.imports.iter().map(|imp| {
             (
                 self.names.resolve_raw(imp.class_name),
                 self.names.resolve_raw(imp.object_name),
             )
-        }));
+        })
+    }
+
+    fn references_json(&self) -> Value {
+        let (assets, scripts) = collect_package_references(self.import_class_object_names());
         json!({ "assets": assets, "scripts": scripts })
     }
 
     pub fn referenced_packages(&self) -> Vec<String> {
-        sorted_referenced_packages(self.imports.iter().map(|imp| {
-            (
-                self.names.resolve_raw(imp.class_name),
-                self.names.resolve_raw(imp.object_name),
-            )
-        }))
+        sorted_referenced_packages(self.import_class_object_names())
     }
 
     pub fn references_package(&self, package_path: &str) -> bool {
@@ -323,7 +322,19 @@ impl Package {
     }
 
     fn exports_json(&self, data: &[u8], opts: &OutputSections) -> Value {
-        let resolve = |idx: i32| self.resolve_object_ref(idx);
+        // resolve_object_ref walks the outer chain and allocates; the same index recurs
+        // often across a large property/pin tree, so memoize the resolved JSON by index.
+        let object_ref_memo = std::cell::RefCell::new(HashMap::<i32, Value>::new());
+        let resolve = |idx: i32| {
+            if idx == 0 {
+                return Value::Null;
+            }
+            object_ref_memo
+                .borrow_mut()
+                .entry(idx)
+                .or_insert_with(|| self.resolve_object_ref(idx))
+                .clone()
+        };
         let pin_ctx = PinSerCtx::from_summary(&self.summary);
         let ctx = ParseCtx {
             names: &self.names,

@@ -28,7 +28,7 @@
 
 名字说得很直白：**cc** = Claude Code，**uax** = uasset。它同时还附带一个 [agent skill](#-作为-agent-skill-使用)——配置好后，Claude Code（或 OpenAI Codex）会在你要求检查 `.uasset`/`.umap` 时自动调用 `cc-uax`，无需手读二进制。
 
-> 目标范围：UE5（`FileVersionUE5 >= 1000`）的 **versioned、未 cooked 的编辑器资产**。Cooked / unversioned 包与 UE4 旧格式明确不在支持范围内。
+> 目标范围：UE5（`FileVersionUE5 >= 1000`）的 **versioned、未 cooked 的编辑器资产**。包头、各表与引用图从 `>= 1000` 起即可解析；完整的标签化属性解码需要 UE5.7 的完整类型名标签布局（`FileVersionUE5 >= 1012`），更旧的包会输出 `properties_unsupported_version` 提示而非解码后的属性。Cooked / unversioned 包与 UE4 旧格式明确不在支持范围内。
 
 ## ✨ 功能
 

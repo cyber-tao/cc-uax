@@ -7,7 +7,7 @@ description: Parse and inspect Unreal Engine 5 .uasset/.umap package files, and 
 
 It is a **system-installed CLI tool** — `cc-uax` lives on `PATH` and behaves identically on Windows, Linux, and macOS. All commands below are plain `cc-uax` invocations.
 
-Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`, little-endian). Cooked / unversioned / big-endian / UE4-legacy packages are rejected — see Gotchas.
+Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`, little-endian); full tagged-property decoding requires `FileVersionUE5 >= 1012` (older packages report `properties_unsupported_version`). Cooked / unversioned / big-endian / UE4-legacy packages are rejected — see Gotchas.
 
 ## Prerequisites
 
