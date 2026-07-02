@@ -341,6 +341,11 @@ impl Package {
         let mut reader = Reader::new(data);
         let file_len = reader.len();
         let has_script = self.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET;
+        // Tagged-property decoding assumes the UE5.7 FPropertyTag layout (complete type
+        // names). Older packages (e.g. migrated UE5.0 assets) use a different tag format;
+        // parsing them with this layout yields garbage, so we skip and flag them instead.
+        let modern_property_tags =
+            self.summary.file_version_ue5 >= ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME;
 
         let mut objs: Vec<serde_json::Map<String, Value>> = Vec::with_capacity(self.exports.len());
         let mut export_pins: Vec<Option<Vec<Pin>>> = Vec::with_capacity(self.exports.len());
@@ -409,7 +414,20 @@ impl Package {
                 let start = window.property_start;
                 let end = window.property_end;
 
-                if end > start && reader.seek(start).is_ok() {
+                if !modern_property_tags {
+                    if opts.properties && end > start {
+                        obj.insert(
+                            "properties_unsupported_version".into(),
+                            json!(format!(
+                                "tagged-property decoding requires FileVersionUE5 >= {} (complete type names); this package is {}",
+                                ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+                                self.summary.file_version_ue5
+                            )),
+                        );
+                    } else if opts.properties && end == start {
+                        obj.insert("properties".into(), Value::Array(Vec::new()));
+                    }
+                } else if end > start && reader.seek(start).is_ok() {
                     let props = parse_object_properties(
                         &mut reader,
                         &ctx,

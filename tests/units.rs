@@ -832,6 +832,39 @@ fn text_history_transform_decodes_nested_text() {
 }
 
 #[test]
+fn pre_complete_typename_version_reports_unsupported_properties() {
+    // Packages older than PROPERTY_TAG_COMPLETE_TYPE_NAME (1012) use a different tag
+    // layout; decoding must be skipped with a clear diagnostic, not a silent empty list.
+    let mut base = Package::parse(&build_minimal_package()).unwrap();
+    base.summary.file_version_ue5 = 1011;
+    let pkg = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec!["Obj".to_string()],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, 8, 0, 0)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+    };
+    let mut sections = OutputSections::none();
+    sections.exports = true;
+    sections.properties = true;
+
+    let json = pkg.to_json(&[0u8; 8], &sections);
+    let diag = json["exports"][0]["properties_unsupported_version"]
+        .as_str()
+        .unwrap();
+    assert!(diag.contains("1011"));
+    assert!(json["exports"][0].get("properties").is_none());
+    assert!(
+        json["exports"][0]
+            .get("properties_unconsumed_bytes")
+            .is_none()
+    );
+}
+
+#[test]
 fn native_struct_gameplay_tag_container_decodes() {
     let names = NameMap {
         names: vec![
