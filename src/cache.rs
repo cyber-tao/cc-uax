@@ -12,6 +12,13 @@ pub struct CacheEntry {
     pub refs: Vec<String>,
 }
 
+impl CacheEntry {
+    /// Whether this entry is still valid for a file with the given mtime and size.
+    pub fn is_fresh(&self, mtime: i64, size: i64) -> bool {
+        self.mtime == mtime && self.size == size
+    }
+}
+
 pub struct RefCache {
     conn: Connection,
     loaded: HashMap<String, CacheEntry>,
@@ -64,13 +71,10 @@ impl RefCache {
         Ok(RefCache { conn, loaded })
     }
 
-    pub fn lookup(&self, rel: &str, mtime: i64, size: i64) -> Option<&[String]> {
-        let entry = self.loaded.get(rel)?;
-        if entry.mtime == mtime && entry.size == size {
-            Some(&entry.refs)
-        } else {
-            None
-        }
+    /// The immutable in-memory snapshot loaded from disk, shareable read-only across
+    /// worker threads during a scan (the SQLite connection itself is not `Sync`).
+    pub fn loaded_map(&self) -> &HashMap<String, CacheEntry> {
+        &self.loaded
     }
 
     pub fn store(&mut self, current: &HashMap<String, CacheEntry>) -> Result<bool> {
@@ -122,6 +126,16 @@ fn split_refs(s: &str) -> Vec<String> {
         Vec::new()
     } else {
         s.split('\n').map(str::to_owned).collect()
+    }
+}
+
+#[cfg(test)]
+impl RefCache {
+    fn lookup(&self, rel: &str, mtime: i64, size: i64) -> Option<&[String]> {
+        self.loaded
+            .get(rel)
+            .filter(|e| e.is_fresh(mtime, size))
+            .map(|e| e.refs.as_slice())
     }
 }
 

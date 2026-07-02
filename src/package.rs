@@ -308,15 +308,12 @@ impl Package {
     }
 
     pub fn referenced_packages(&self) -> Vec<String> {
-        let (mut refs, scripts) = collect_package_references(self.imports.iter().map(|imp| {
+        sorted_referenced_packages(self.imports.iter().map(|imp| {
             (
                 self.names.resolve_raw(imp.class_name),
                 self.names.resolve_raw(imp.object_name),
             )
-        }));
-        refs.extend(scripts);
-        refs.sort();
-        refs
+        }))
     }
 
     pub fn references_package(&self, package_path: &str) -> bool {
@@ -898,4 +895,41 @@ pub fn package_path_from_relative(rel: &str, mount: &str) -> String {
         trimmed
     };
     format!("{mount}/{without_ext}")
+}
+
+fn sorted_referenced_packages<I, S>(imports: I) -> Vec<String>
+where
+    I: IntoIterator<Item = (S, S)>,
+    S: AsRef<str>,
+{
+    let (mut refs, scripts) = collect_package_references(imports);
+    refs.extend(scripts);
+    refs.sort();
+    refs
+}
+
+/// Extract a package's forward references by parsing only the header, name table and
+/// import table — skipping the export and soft-object-path tables. This is the hot path
+/// for `--scan-dir` reverse scans, where only import-derived references are needed.
+pub fn referenced_packages_from_bytes(data: &[u8]) -> Result<Vec<String>> {
+    let mut r = Reader::new(data);
+    let summary = PackageFileSummary::parse(&mut r)?;
+    let ue4 = summary.file_version_ue4;
+    let ue5 = summary.file_version_ue5;
+    let filter_editor = summary.filter_editor_only();
+    let names = NameMap::parse(&mut r, summary.name_offset, summary.name_count, ue4)?;
+    let imports = ObjectImport::parse_table(
+        &mut r,
+        summary.import_offset,
+        summary.import_count,
+        ue4,
+        ue5,
+        filter_editor,
+    )?;
+    Ok(sorted_referenced_packages(imports.iter().map(|imp| {
+        (
+            names.resolve_raw(imp.class_name),
+            names.resolve_raw(imp.object_name),
+        )
+    })))
 }

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow};
-use cc_uax::package::package_path_from_relative;
+use cc_uax::package::{package_path_from_relative, referenced_packages_from_bytes};
 use cc_uax::{OutputSections, Package};
 use clap::Parser;
 use serde_json::{Value, json};
@@ -180,71 +180,117 @@ fn compute_referenced_by(
         None
     };
 
-    let mut current: HashMap<String, CacheEntry> = HashMap::new();
+    let cache_enabled = cache.is_some();
+    let loaded = cache.as_ref().map(|c| c.loaded_map());
 
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    let worker_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(total.max(1));
+    let chunk_size = total.div_ceil(worker_count).max(1);
+
+    let self_pkg_ref = self_pkg.as_str();
+    let self_rel_key_ref = self_rel_key.as_str();
+    let scan_abs_ref = scan_abs.as_path();
+    let done_ref = &done;
+
+    struct Partial {
+        entries: Vec<(String, CacheEntry)>,
+        referencers: Vec<String>,
+        cached: usize,
+        parsed: usize,
+        skipped: usize,
+    }
+
+    // The parse of each asset is independent, so fan the work out across the available
+    // cores. Workers only read the immutable cache snapshot; the DB write happens after.
+    let partials: Vec<Partial> = std::thread::scope(|scope| {
+        let handles: Vec<_> = files
+            .chunks(chunk_size)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    let mut p = Partial {
+                        entries: Vec::new(),
+                        referencers: Vec::new(),
+                        cached: 0,
+                        parsed: 0,
+                        skipped: 0,
+                    };
+                    for path in chunk {
+                        let n = done_ref.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if show_progress && n.is_multiple_of(step) {
+                            print_scan_progress(n, total);
+                        }
+                        let rel = match path.strip_prefix(scan_abs_ref) {
+                            Ok(r) => r,
+                            Err(_) => continue,
+                        };
+                        let rel_key = rel.to_string_lossy().replace('\\', "/");
+                        let meta = match fs::metadata(path) {
+                            Ok(m) => m,
+                            Err(_) => {
+                                p.skipped += 1;
+                                continue;
+                            }
+                        };
+                        let size = meta.len() as i64;
+                        let mtime = meta
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_nanos() as i64)
+                            .unwrap_or(0);
+                        let cached_refs = loaded
+                            .and_then(|m| m.get(&rel_key))
+                            .filter(|e| e.is_fresh(mtime, size))
+                            .map(|e| e.refs.clone());
+                        let refs = match cached_refs {
+                            Some(refs) => {
+                                p.cached += 1;
+                                refs
+                            }
+                            None => match parse_referenced_packages(path) {
+                                Some(refs) => {
+                                    p.parsed += 1;
+                                    refs
+                                }
+                                None => {
+                                    p.skipped += 1;
+                                    continue;
+                                }
+                            },
+                        };
+                        if !rel_key.eq_ignore_ascii_case(self_rel_key_ref)
+                            && refs.iter().any(|r| r.eq_ignore_ascii_case(self_pkg_ref))
+                        {
+                            p.referencers
+                                .push(package_path_from_relative(&rel_key, mount));
+                        }
+                        if cache_enabled {
+                            p.entries
+                                .push((rel_key, CacheEntry { mtime, size, refs }));
+                        }
+                    }
+                    p
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+
+    let mut current: HashMap<String, CacheEntry> = HashMap::new();
     let mut referenced_by = BTreeSet::new();
     let (mut cached, mut parsed, mut skipped) = (0usize, 0usize, 0usize);
-    for (idx, path) in files.iter().enumerate() {
-        if show_progress && idx % step == 0 {
-            print_scan_progress(idx, total);
+    for p in partials {
+        cached += p.cached;
+        parsed += p.parsed;
+        skipped += p.skipped;
+        for r in p.referencers {
+            referenced_by.insert(r);
         }
-        let rel = match path.strip_prefix(&scan_abs) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        let rel_key = rel.to_string_lossy().replace('\\', "/");
-
-        let meta = match fs::metadata(path) {
-            Ok(m) => m,
-            Err(_) => {
-                skipped += 1;
-                continue;
-            }
-        };
-        let size = meta.len() as i64;
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_nanos() as i64)
-            .unwrap_or(0);
-
-        let cached_refs = cache
-            .as_ref()
-            .and_then(|c| c.lookup(&rel_key, mtime, size))
-            .map(|refs| refs.to_vec());
-        let refs = match cached_refs {
-            Some(refs) => {
-                cached += 1;
-                refs
-            }
-            None => match parse_referenced_packages(path) {
-                Some(refs) => {
-                    parsed += 1;
-                    refs
-                }
-                None => {
-                    skipped += 1;
-                    continue;
-                }
-            },
-        };
-
-        if cache.is_some() {
-            current.insert(
-                rel_key.clone(),
-                CacheEntry {
-                    mtime,
-                    size,
-                    refs: refs.clone(),
-                },
-            );
-        }
-
-        if !rel_key.eq_ignore_ascii_case(&self_rel_key)
-            && refs.iter().any(|r| r.eq_ignore_ascii_case(&self_pkg))
-        {
-            referenced_by.insert(package_path_from_relative(&rel_key, mount));
+        for (k, e) in p.entries {
+            current.insert(k, e);
         }
     }
     if show_progress && total > 0 {
@@ -269,8 +315,7 @@ fn compute_referenced_by(
 
 fn parse_referenced_packages(path: &Path) -> Option<Vec<String>> {
     let data = fs::read(path).ok()?;
-    let pkg = Package::parse(&data).ok()?;
-    Some(pkg.referenced_packages())
+    referenced_packages_from_bytes(&data).ok()
 }
 
 fn print_scan_progress(done: usize, total: usize) {
