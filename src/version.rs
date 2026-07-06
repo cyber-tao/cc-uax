@@ -61,8 +61,13 @@ pub mod custom {
         Guid([0xD89B_5E42, 0x24BD_4D46, 0x8412_ACA8, 0xDF64_1779]);
     pub const NIAGARA_OBJECT_VERSION: Guid =
         Guid([0xFCF5_7AFA, 0x5076_4283, 0xB9A9_E658, 0xFFA0_2D32]);
+    pub const FORTNITE_MAIN_OBJECT_VERSION: Guid =
+        Guid([0x601D_1886, 0xAC64_4F84, 0xAA16_D3DE, 0x0DEA_C7D6]);
 
     pub const EDGRAPH_PIN_SOURCE_INDEX: i32 = 50;
+    /// FFortniteMainBranchObjectVersion::SerializeFloatChannelShowCurve — from this
+    /// version on, MovieScene float/double channels serialize a trailing bShowCurve.
+    pub const SERIALIZE_FLOAT_CHANNEL_SHOW_CURVE: i32 = 53;
     /// FNiagaraCustomVersion::VariablesUseTypeDefRegistry — from this version on,
     /// FNiagaraVariableBase serializes Name + a tagged-property FNiagaraTypeDefinition.
     pub const NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY: i32 = 64;

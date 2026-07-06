@@ -84,6 +84,9 @@ pub struct ParseCtx<'a> {
     pub soft_object_paths: &'a [Value],
     /// FNiagaraCustomVersion of the package (-1 when absent), gating Niagara decoders.
     pub niagara_version: i32,
+    /// FFortniteMainBranchObjectVersion of the package (-1 when absent), gating the
+    /// MovieScene channel bShowCurve field.
+    pub fortnite_main_version: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -240,17 +243,16 @@ pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<P
 }
 
 fn parse_extensions(r: &mut Reader) -> Result<()> {
-    // FPropertyTag::SerializePropertyExtensions in a binary archive: a 4-byte presence
-    // bool (SA_OPTIONAL_ATTRIBUTE via TryEnterAttribute), then the uint8 extension flags
-    // when present. If OverridableInformation (0x02) is set, an EOverriddenPropertyOperation
-    // byte (uint8) and a 4-byte bExperimentalOverridableLogic bool follow. UE serializes
+    // FPropertyTag::SerializePropertyExtensions in a binary archive writes the uint8
+    // extension flags directly (SA_ATTRIBUTE has no presence prefix; the 4-byte
+    // presence bool exists only for text archives via SA_OPTIONAL_ATTRIBUTE). If
+    // OverridableInformation (0x02) is set, an EOverriddenPropertyOperation byte
+    // (uint8) and a 4-byte bExperimentalOverridableLogic bool follow — UE serializes
     // `bool` as a 4-byte int32, hence read_bool32 rather than a single byte.
-    if r.read_bool32()? {
-        let ext = r.read_u8()?;
-        if ext & OVERRIDABLE_SERIALIZATION_BIT != 0 {
-            let _override_operation = r.read_u8()?;
-            let _experimental = r.read_bool32()?;
-        }
+    let ext = r.read_u8()?;
+    if ext & OVERRIDABLE_SERIALIZATION_BIT != 0 {
+        let _override_operation = r.read_u8()?;
+        let _experimental = r.read_bool32()?;
     }
     Ok(())
 }
@@ -284,10 +286,15 @@ fn parse_value(
         "NameProperty" => json!(ctx.names.resolve_raw(r.read_raw_name()?)),
         "StrProperty" => json!(r.read_fstring()?),
         "TextProperty" => parse_text(r, ctx.names, 0)?,
-        "ObjectProperty" | "ClassProperty" | "WeakObjectProperty" | "LazyObjectProperty"
-        | "ObjectPtrProperty" | "ClassPtrProperty" | "InterfaceProperty" => {
+        "ObjectProperty" | "ClassProperty" | "WeakObjectProperty" | "ObjectPtrProperty"
+        | "ClassPtrProperty" | "InterfaceProperty" => {
             let idx = r.read_i32()?;
             (ctx.resolve_object)(idx)
+        }
+        "LazyObjectProperty" => {
+            // FLinkerSave::operator<<(FLazyObjectPtr&) writes the 16-byte
+            // FUniqueObjectGuid, not a package index.
+            json!({ "lazy_object_guid": r.read_guid()?.to_hex() })
         }
         "DelegateProperty" => {
             let object = r.read_i32()?;
@@ -346,7 +353,14 @@ fn parse_value(
             let inner = ty
                 .param(0)
                 .ok_or_else(|| anyhow::anyhow!("SetProperty missing element type"))?;
-            let _num_to_remove = r.read_i32()?;
+            discard_removed_elements(
+                r,
+                inner,
+                ctx,
+                prefer_native,
+                value_end,
+                "Set removed element",
+            )?;
             parse_collection(r, inner, ctx, true, prefer_native, value_end)?
         }
         "MapProperty" => {
@@ -389,6 +403,27 @@ fn parse_collection(
     Ok(Value::Array(arr))
 }
 
+/// TSet/TMap delta saves serialize NumToRemove followed by that many key payloads
+/// (keys removed relative to the archetype); the loader reads and discards them
+/// before the element/pair entries (FSetProperty/FMapProperty::SerializeItem).
+fn discard_removed_elements(
+    r: &mut Reader,
+    key_ty: &TypeName,
+    ctx: &ParseCtx,
+    prefer_native: bool,
+    value_end: u64,
+    label: &str,
+) -> Result<()> {
+    let num_to_remove = r.read_i32()?;
+    let remaining = value_end.saturating_sub(r.pos());
+    validate_count(num_to_remove, remaining, 1, label)?;
+    for _ in 0..num_to_remove {
+        let _ = parse_element(r, key_ty, ctx, prefer_native, value_end)?;
+        ensure_within_value(r, value_end, label)?;
+    }
+    Ok(())
+}
+
 fn parse_map(
     r: &mut Reader,
     key_ty: &TypeName,
@@ -397,7 +432,7 @@ fn parse_map(
     prefer_native: bool,
     value_end: u64,
 ) -> Result<Value> {
-    let _num_to_remove = r.read_i32()?;
+    discard_removed_elements(r, key_ty, ctx, prefer_native, value_end, "Map removed key")?;
     let count = r.read_i32()?;
     let remaining_in_value = value_end.saturating_sub(r.pos());
     validate_count(count, remaining_in_value, 2, "Map element")?;
@@ -474,11 +509,9 @@ fn parse_native_struct(
     value_end: u64,
 ) -> Result<Option<Value>> {
     let v = match name {
-        "Vector"
-        | "Vector_NetQuantize"
-        | "Vector_NetQuantize10"
-        | "Vector_NetQuantize100"
-        | "Vector_NetQuantizeNormal" => {
+        // Note: FVector_NetQuantize* subclasses only declare WithNetSerializer, so
+        // their package payload is tagged properties — do not decode them natively.
+        "Vector" => {
             json!({ "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()? })
         }
         "Vector3f" => json!({ "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()? }),
@@ -542,7 +575,11 @@ fn parse_native_struct(
             json!({ "min": min, "max": max, "is_valid": is_valid })
         }
         "FrameNumber" => json!({ "value": r.read_i32()? }),
-        "FrameRate" => json!({ "numerator": r.read_i32()?, "denominator": r.read_i32()? }),
+        // FrameRate deliberately has no arm: TStructOpsTypeTraits<FFrameRate> keeps
+        // WithSerializer disabled (UE keeps the generic UPROPERTY layout for existing
+        // assets), so a StructProperty(FrameRate) payload is tagged properties.
+        // ScalarKind::FrameRate below still covers the genuinely native contexts
+        // (PerPlatformFrameRate, MovieScene channel tick resolution).
         "IntVector2" => json!({ "x": r.read_i32()?, "y": r.read_i32()? }),
         "IntVector4" => json!({
             "x": r.read_i32()?, "y": r.read_i32()?, "z": r.read_i32()?, "w": r.read_i32()?
@@ -626,8 +663,8 @@ fn parse_native_struct(
                 "upper_bound": upper,
             })
         }
-        "MovieSceneFloatChannel" => parse_movie_scene_channel(r, false, value_end)?,
-        "MovieSceneDoubleChannel" => parse_movie_scene_channel(r, true, value_end)?,
+        "MovieSceneFloatChannel" => parse_movie_scene_channel(r, ctx, false, value_end)?,
+        "MovieSceneDoubleChannel" => parse_movie_scene_channel(r, ctx, true, value_end)?,
         "PerQualityLevelInt" => parse_per_quality_level(r, ScalarKind::I32, value_end)?,
         "PerQualityLevelFloat" => parse_per_quality_level(r, ScalarKind::F32, value_end)?,
         "EdGraphPinType" => {
@@ -826,7 +863,12 @@ fn parse_expression_input(
     Ok(o)
 }
 
-fn parse_movie_scene_channel(r: &mut Reader, is_double: bool, value_end: u64) -> Result<Value> {
+fn parse_movie_scene_channel(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    is_double: bool,
+    value_end: u64,
+) -> Result<Value> {
     let pre_infinity = r.read_u8()?;
     let post_infinity = r.read_u8()?;
 
@@ -905,8 +947,10 @@ fn parse_movie_scene_channel(r: &mut Reader, is_double: bool, value_end: u64) ->
         "tick_resolution".into(),
         json!({ "numerator": tick_numerator, "denominator": tick_denominator }),
     );
-    // bShowCurve is serialized for current engine versions; consume only if present.
-    if r.pos() + 4 <= value_end {
+    // bShowCurve is gated on FFortniteMainBranchObjectVersion; a position-based
+    // heuristic would misread when the channel sits inside an array (value_end then
+    // spans the remaining elements, not just this channel).
+    if ctx.fortnite_main_version >= crate::version::custom::SERIALIZE_FLOAT_CHANNEL_SHOW_CURVE {
         out.insert("show_curve".into(), json!(r.read_bool32()?));
     }
     Ok(Value::Object(out))

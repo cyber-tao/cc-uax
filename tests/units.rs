@@ -1,7 +1,9 @@
 use cc_uax::name::NameMap;
 use cc_uax::object::{ObjectExport, PackageIndex};
-use cc_uax::package::{collect_package_references, package_path_from_relative};
-use cc_uax::pin::PinSerCtx;
+use cc_uax::package::{
+    collect_package_references, package_path_from_relative, referenced_packages_from_bytes,
+};
+use cc_uax::pin::{PinSerCtx, direction_label, parse_node_pins};
 use cc_uax::property::{ParseCtx, TypeName, parse_properties};
 use cc_uax::reader::{RawName, Reader};
 use cc_uax::{OutputSections, Package};
@@ -403,6 +405,7 @@ fn nested_struct_respects_declared_value_end() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -438,6 +441,7 @@ fn truncated_property_array_index_stops_parse() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -471,6 +475,7 @@ fn excessive_array_count_falls_back_to_hex() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -514,6 +519,7 @@ fn native_struct_array_falls_back_to_hex() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -535,6 +541,8 @@ fn invalid_script_window_is_reported_in_layout() {
         exports: vec![test_export(0, 4, 0, 8)],
         soft_object_paths: Vec::new(),
         soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
     };
     let mut sections = OutputSections::none();
     sections.exports = true;
@@ -574,6 +582,8 @@ fn zero_script_window_uses_serial_range() {
         exports: vec![test_export(0, data.len() as i64, 0, 0)],
         soft_object_paths: Vec::new(),
         soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
     };
     let mut sections = OutputSections::none();
     sections.exports = true;
@@ -617,6 +627,7 @@ fn text_property_unknown_history_falls_back_to_hex() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, end);
@@ -675,6 +686,7 @@ fn native_struct_box_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -709,6 +721,7 @@ fn native_struct_box2f_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -743,6 +756,7 @@ fn parse_text_property_value(value: &[u8]) -> serde_json::Value {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -846,6 +860,8 @@ fn pre_complete_typename_version_reports_unsupported_properties() {
         exports: vec![test_export(0, 8, 0, 0)],
         soft_object_paths: Vec::new(),
         soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
     };
     let mut sections = OutputSections::none();
     sections.exports = true;
@@ -866,10 +882,10 @@ fn pre_complete_typename_version_reports_unsupported_properties() {
 
 #[test]
 fn property_tag_extensions_are_byte_aligned() {
-    // A tag with HasPropertyExtensions (0x04) carries a 10-byte extension block:
-    // 4-byte presence bool, uint8 flags, uint8 override op, 4-byte experimental bool.
-    // If the block is mis-sized the following value/property desyncs, so decoding the
-    // int value proves alignment.
+    // A tag with HasPropertyExtensions (0x04) carries a 6-byte extension block in a
+    // binary archive: uint8 flags (no presence prefix — SA_ATTRIBUTE), uint8 override
+    // op, 4-byte experimental bool. If the block is mis-sized the following
+    // value/property desyncs, so decoding the int value proves alignment.
     let names = NameMap {
         names: vec![
             "MyInt".to_string(),
@@ -883,7 +899,6 @@ fn property_tag_extensions_are_byte_aligned() {
     push_i32(&mut d, 0); // type name inner param count
     push_i32(&mut d, 4); // value size
     d.push(0x04); // flags = HasPropertyExtensions
-    push_i32(&mut d, 1); // extensions presence bool = true
     d.push(0x02); // extension flags = OverridableInformation
     d.push(0x00); // override operation
     push_i32(&mut d, 0); // bExperimentalOverridableLogic bool
@@ -896,6 +911,7 @@ fn property_tag_extensions_are_byte_aligned() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -935,6 +951,7 @@ fn skipped_serialize_property_is_marked_and_parsing_continues() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -971,6 +988,7 @@ fn native_struct_gameplay_tag_container_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1005,6 +1023,7 @@ fn native_struct_vector4f_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1047,6 +1066,7 @@ fn native_struct_niagara_variable_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: 0,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1086,6 +1106,7 @@ fn native_struct_spline_empty_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1133,6 +1154,7 @@ fn optional_property_decodes_set_and_unset() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1163,6 +1185,7 @@ fn native_struct_gameplay_effect_version_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1204,6 +1227,7 @@ fn float_curve_parses_as_tagged_fallback() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1263,6 +1287,7 @@ fn native_struct_rich_curve_key_array_keeps_stride() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1306,6 +1331,7 @@ fn material_scalar_input_resolves_expression() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1345,6 +1371,7 @@ fn native_struct_per_platform_float_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1382,6 +1409,7 @@ fn native_struct_movie_scene_frame_range_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1432,12 +1460,14 @@ fn native_struct_movie_scene_float_channel_decodes() {
     assert_eq!(value.len(), 70);
     let d = build_struct_property(2, 3, &value);
 
+    // bShowCurve is gated on FFortniteMainBranchObjectVersion >= 53.
     let ctx = ParseCtx {
         names: &names,
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: 53,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1491,6 +1521,7 @@ fn text_ordered_format_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1535,6 +1566,7 @@ fn text_string_table_entry_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1577,6 +1609,7 @@ fn multicast_inline_delegate_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1622,6 +1655,7 @@ fn native_struct_instanced_struct_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1673,6 +1707,7 @@ fn native_struct_edgraph_pin_type_decodes() {
         },
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1714,12 +1749,387 @@ fn soft_object_property_resolves_list_index() {
         pins: PinSerCtx::default(),
         soft_object_paths: &table,
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
 
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].value["asset_path"].as_str(), Some("/Game/B.B"));
+}
+
+#[test]
+fn lazy_object_property_decodes_guid() {
+    // FLinkerSave writes a LazyObjectProperty value as the 16-byte FUniqueObjectGuid,
+    // not a package index.
+    let names = NameMap {
+        names: vec![
+            "Lazy".to_string(),
+            "LazyObjectProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Lazy
+    push_raw_name(&mut d, 1); // LazyObjectProperty
+    push_i32(&mut d, 0); // type name inner param count
+    push_i32(&mut d, 16); // size
+    d.push(0); // flags
+    for x in [0x1122_3344u32, 0x5566_7788, 0x99AA_BBCC, 0xDDEE_FF00] {
+        push_u32(&mut d, x);
+    }
+    push_raw_name(&mut d, 2); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].value["lazy_object_guid"].as_str(),
+        Some("112233445566778899AABBCCDDEEFF00")
+    );
+}
+
+#[test]
+fn frame_rate_struct_parses_as_tagged_properties() {
+    // TStructOpsTypeTraits<FFrameRate> keeps WithSerializer disabled (UE retains the
+    // generic UPROPERTY layout for existing assets), so a StructProperty(FrameRate)
+    // payload is tagged Numerator/Denominator properties, not 2 raw int32s.
+    let names = NameMap {
+        names: vec![
+            "TickResolution".to_string(), // 0
+            "StructProperty".to_string(), // 1
+            "FrameRate".to_string(),      // 2
+            "Numerator".to_string(),      // 3
+            "IntProperty".to_string(),    // 4
+            "Denominator".to_string(),    // 5
+            "None".to_string(),           // 6
+        ],
+    };
+    let mut value = Vec::new();
+    for (name_idx, num) in [(3, 24000), (5, 1001)] {
+        push_raw_name(&mut value, name_idx);
+        push_raw_name(&mut value, 4); // IntProperty
+        push_i32(&mut value, 0); // type name inner param count
+        push_i32(&mut value, 4); // size
+        value.push(0); // flags
+        push_i32(&mut value, num);
+    }
+    push_raw_name(&mut value, 6); // None
+
+    // The engine does not set HasBinaryOrNativeSerialize for FrameRate, so build the
+    // tag with flags = 0 (unlike build_struct_property's 0x08).
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // TickResolution
+    push_raw_name(&mut d, 1); // StructProperty
+    push_i32(&mut d, 1); // one type parameter
+    push_raw_name(&mut d, 2); // FrameRate
+    push_i32(&mut d, 0);
+    push_i32(&mut d, value.len() as i32);
+    d.push(0); // flags
+    d.extend_from_slice(&value);
+    push_raw_name(&mut d, 6); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["@struct"].as_str(), Some("FrameRate"));
+    let props = v["properties"].as_array().unwrap();
+    assert_eq!(props.len(), 2);
+    assert_eq!(props[0]["name"].as_str(), Some("Numerator"));
+    assert_eq!(props[0]["value"].as_i64(), Some(24000));
+    assert_eq!(props[1]["name"].as_str(), Some("Denominator"));
+    assert_eq!(props[1]["value"].as_i64(), Some(1001));
+}
+
+#[test]
+fn map_removed_keys_are_discarded() {
+    // A delta-saved TMap serializes NumKeysToRemove key payloads before the live
+    // pairs; the parser must consume them to stay aligned.
+    let names = NameMap {
+        names: vec![
+            "Weights".to_string(),
+            "MapProperty".to_string(),
+            "IntProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, 1); // NumKeysToRemove
+    push_i32(&mut value, 777); // removed key payload
+    push_i32(&mut value, 1); // pair count
+    push_i32(&mut value, 5); // key
+    push_i32(&mut value, 50); // value
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Weights
+    push_raw_name(&mut d, 1); // MapProperty
+    push_i32(&mut d, 2); // two type parameters
+    push_raw_name(&mut d, 2); // IntProperty (key)
+    push_i32(&mut d, 0);
+    push_raw_name(&mut d, 2); // IntProperty (value)
+    push_i32(&mut d, 0);
+    push_i32(&mut d, value.len() as i32);
+    d.push(0); // flags
+    d.extend_from_slice(&value);
+    push_raw_name(&mut d, 3); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let pairs = entries[0].value.as_array().unwrap();
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0]["key"].as_i64(), Some(5));
+    assert_eq!(pairs[0]["value"].as_i64(), Some(50));
+}
+
+#[test]
+fn set_removed_elements_are_discarded() {
+    let names = NameMap {
+        names: vec![
+            "Ids".to_string(),
+            "SetProperty".to_string(),
+            "IntProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, 1); // NumElementsToRemove
+    push_i32(&mut value, 999); // removed element payload
+    push_i32(&mut value, 2); // element count
+    push_i32(&mut value, 7);
+    push_i32(&mut value, 8);
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Ids
+    push_raw_name(&mut d, 1); // SetProperty
+    push_i32(&mut d, 1); // one type parameter
+    push_raw_name(&mut d, 2); // IntProperty
+    push_i32(&mut d, 0);
+    push_i32(&mut d, value.len() as i32);
+    d.push(0); // flags
+    d.extend_from_slice(&value);
+    push_raw_name(&mut d, 3); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let elems = entries[0].value.as_array().unwrap();
+    assert_eq!(elems.len(), 2);
+    assert_eq!(elems[0].as_i64(), Some(7));
+    assert_eq!(elems[1].as_i64(), Some(8));
+}
+
+#[test]
+fn soft_package_references_parse_and_merge() {
+    // Append a name table and a SoftPackageReferences table to the minimal package,
+    // then patch the summary offsets (name_count@68/name_offset@72,
+    // soft_package_references count@132/offset@136).
+    let mut data = build_minimal_package();
+    let name_offset = data.len() as i32;
+    push_fstring(&mut data, "/Game/Foo/SoftDep");
+    push_u32(&mut data, 0); // name hashes (ue4 >= 504)
+    push_fstring(&mut data, "None");
+    push_u32(&mut data, 0);
+    let soft_offset = data.len() as i32;
+    push_raw_name(&mut data, 0); // /Game/Foo/SoftDep
+    push_raw_name(&mut data, 1); // None (filtered out of references)
+    put_i32(&mut data, 68, 2); // name_count
+    put_i32(&mut data, 72, name_offset);
+    put_i32(&mut data, 132, 2); // soft_package_references_count
+    put_i32(&mut data, 136, soft_offset);
+
+    let pkg = Package::parse(&data).expect("package with soft refs should parse");
+    assert!(pkg.soft_package_reference_error.is_none());
+    assert_eq!(
+        pkg.soft_package_references,
+        vec!["/Game/Foo/SoftDep", "None"]
+    );
+    assert_eq!(pkg.referenced_packages(), vec!["/Game/Foo/SoftDep"]);
+    assert!(pkg.references_package("/game/foo/softdep"));
+
+    let json = pkg.to_json(&data, &OutputSections::parse("refs").unwrap());
+    let soft = json["references"]["soft"].as_array().unwrap();
+    assert_eq!(soft.len(), 1);
+    assert_eq!(soft[0].as_str(), Some("/Game/Foo/SoftDep"));
+
+    let refs = referenced_packages_from_bytes(&data).unwrap();
+    assert_eq!(refs, vec!["/Game/Foo/SoftDep"]);
+}
+
+fn push_guid(v: &mut Vec<u8>, a: u32, b: u32, c: u32, d: u32) {
+    push_u32(v, a);
+    push_u32(v, b);
+    push_u32(v, c);
+    push_u32(v, d);
+}
+
+// Empty FText: flags + history type -1 (None) + no culture-invariant string.
+fn push_empty_ftext(v: &mut Vec<u8>) {
+    push_u32(v, 0);
+    v.push(0xFF);
+    push_i32(v, 0);
+}
+
+#[test]
+fn node_pin_array_decodes() {
+    let names = NameMap {
+        names: vec!["MyPin".to_string(), "exec".to_string(), "None".to_string()],
+    };
+    let mut d = Vec::new();
+    push_i32(&mut d, 0); // PossiblySerializeObjectGuid presence = false
+    push_i32(&mut d, 1); // pin count
+    // Owning-pin element prelude: null flag + wrapper node index + wrapper pin guid.
+    push_i32(&mut d, 0);
+    push_i32(&mut d, 3);
+    push_guid(&mut d, 1, 2, 3, 4);
+    // Pin body (filter_editor_only = false, no source index, no wrapper flags).
+    push_i32(&mut d, 3); // owning node
+    push_guid(&mut d, 1, 2, 3, 4); // pin id
+    push_raw_name(&mut d, 0); // MyPin
+    push_empty_ftext(&mut d); // friendly name
+    push_fstring(&mut d, ""); // tooltip
+    d.push(1); // direction = output
+    push_raw_name(&mut d, 1); // pin type category "exec"
+    push_raw_name(&mut d, 2); // pin type sub_category
+    push_i32(&mut d, 0); // sub_category_object
+    d.push(0); // container type = none
+    push_i32(&mut d, 0); // bIsReference
+    push_i32(&mut d, 0); // bIsWeakPointer
+    push_i32(&mut d, 0); // member reference parent
+    push_raw_name(&mut d, 2); // member reference name
+    d.extend_from_slice(&[0u8; 16]); // member reference guid
+    push_i32(&mut d, 0); // bIsConst
+    push_fstring(&mut d, ""); // default value
+    push_fstring(&mut d, ""); // autogenerated default
+    push_i32(&mut d, 0); // default object
+    push_empty_ftext(&mut d); // default text
+    push_i32(&mut d, 1); // LinkedTo count
+    push_i32(&mut d, 0); // reference: not null
+    push_i32(&mut d, 2); // referenced node index
+    push_guid(&mut d, 9, 9, 9, 9); // referenced pin guid
+    push_i32(&mut d, 0); // SubPins count
+    push_i32(&mut d, 1); // parent pin = null
+    push_i32(&mut d, 1); // reference passthrough = null
+    d.extend_from_slice(&[0u8; 16]); // persistent guid (editor-only block)
+    push_u32(&mut d, 0); // editor bitfield
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+    };
+    let vc = PinSerCtx::default();
+    let mut r = Reader::new(&d);
+    let pins = parse_node_pins(&mut r, d.len() as u64, &ctx, &vc).expect("pins should parse");
+
+    assert_eq!(r.pos(), d.len() as u64, "pin array must consume all bytes");
+    assert_eq!(pins.len(), 1);
+    let p = &pins[0];
+    assert_eq!(p.name, "MyPin");
+    assert_eq!(direction_label(p.direction), "output");
+    assert_eq!(p.category, "exec");
+    assert_eq!(p.pin_id.to_hex(), "00000001000000020000000300000004");
+    assert_eq!(p.linked_to.len(), 1);
+    assert_eq!(p.linked_to[0].node_index, 2);
+    assert!(p.sub_pins.is_empty());
+    assert!(p.parent_pin.is_none());
+}
+
+#[test]
+fn edgraph_pin_type_map_container_decodes() {
+    // Map-container pin types carry an FEdGraphTerminalType (map value type) between
+    // ContainerType and bIsReference.
+    let names = NameMap {
+        names: vec![
+            "PinType".to_string(),        // 0
+            "StructProperty".to_string(), // 1
+            "EdGraphPinType".to_string(), // 2
+            "int".to_string(),            // 3
+            "string".to_string(),         // 4
+            "None".to_string(),           // 5
+        ],
+    };
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 3); // category = "int"
+    push_raw_name(&mut value, 5); // sub_category
+    push_i32(&mut value, -4); // sub_category_object
+    value.push(3); // container_type = Map
+    push_raw_name(&mut value, 4); // terminal category = "string"
+    push_raw_name(&mut value, 5); // terminal sub_category
+    push_i32(&mut value, 0); // terminal sub_category_object
+    push_i32(&mut value, 0); // terminal bIsConst
+    push_i32(&mut value, 0); // terminal bIsWeakPointer
+    push_i32(&mut value, 0); // terminal bIsUObjectWrapper (wrapper flag enabled)
+    push_i32(&mut value, 0); // bIsReference
+    push_i32(&mut value, 0); // bIsWeakPointer
+    push_i32(&mut value, 0); // member reference parent
+    push_raw_name(&mut value, 5); // member reference name
+    value.extend_from_slice(&[0u8; 16]); // member reference guid
+    push_i32(&mut value, 0); // bIsConst
+    push_i32(&mut value, 0); // bIsUObjectWrapper
+    push_i32(&mut value, 0); // bSerializeAsSinglePrecisionFloat
+    let d = build_struct_property(2, 5, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+        pins: PinSerCtx {
+            filter_editor_only: false,
+            has_source_index: false,
+            has_uobject_wrapper: true,
+            has_single_precision_float: true,
+        },
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["category"].as_str(), Some("int"));
+    assert_eq!(v["sub_category_object"]["index"].as_i64(), Some(-4));
 }
 
 #[test]
@@ -1755,6 +2165,7 @@ fn tagged_fallback_struct_parses_as_properties() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         niagara_version: -1,
+        fortnite_main_version: -1,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);

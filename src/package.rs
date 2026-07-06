@@ -136,6 +136,8 @@ pub struct Package {
     pub exports: Vec<ObjectExport>,
     pub soft_object_paths: Vec<Value>,
     pub soft_object_path_error: Option<String>,
+    pub soft_package_references: Vec<String>,
+    pub soft_package_reference_error: Option<String>,
 }
 
 impl Package {
@@ -171,6 +173,13 @@ impl Package {
             summary.soft_object_paths_count,
         );
 
+        let (soft_package_references, soft_package_reference_error) = parse_soft_package_references(
+            &mut r,
+            &names,
+            summary.soft_package_references_offset,
+            summary.soft_package_references_count,
+        );
+
         Ok(Package {
             summary,
             names,
@@ -178,6 +187,8 @@ impl Package {
             exports,
             soft_object_paths,
             soft_object_path_error,
+            soft_package_references,
+            soft_package_reference_error,
         })
     }
 
@@ -273,6 +284,11 @@ impl Package {
         {
             m.insert("soft_object_paths_error".into(), json!(err));
         }
+        if let Some(err) = &self.soft_package_reference_error
+            && let Value::Object(ref mut m) = summary
+        {
+            m.insert("soft_package_references_error".into(), json!(err));
+        }
         summary
     }
 
@@ -308,11 +324,22 @@ impl Package {
 
     fn references_json(&self) -> Value {
         let (assets, scripts) = collect_package_references(self.import_class_object_names());
-        json!({ "assets": assets, "scripts": scripts })
+        let soft: Vec<String> = self
+            .soft_package_references
+            .iter()
+            .filter(|s| is_valid_package_name(s))
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        json!({ "assets": assets, "scripts": scripts, "soft": soft })
     }
 
     pub fn referenced_packages(&self) -> Vec<String> {
-        sorted_referenced_packages(self.import_class_object_names())
+        sorted_referenced_packages(
+            self.import_class_object_names(),
+            &self.soft_package_references,
+        )
     }
 
     pub fn references_package(&self, package_path: &str) -> bool {
@@ -344,6 +371,10 @@ impl Package {
             niagara_version: self
                 .summary
                 .custom_version(custom::NIAGARA_OBJECT_VERSION)
+                .unwrap_or(-1),
+            fortnite_main_version: self
+                .summary
+                .custom_version(custom::FORTNITE_MAIN_OBJECT_VERSION)
                 .unwrap_or(-1),
         };
         let mut reader = Reader::new(data);
@@ -757,6 +788,71 @@ fn parse_soft_object_path_table(
     (out, None)
 }
 
+/// The SoftPackageReferences header table: one FName package name per entry
+/// (written by SavePackage from FLinkerSave::SoftPackageReferenceList).
+fn parse_soft_package_references(
+    r: &mut Reader,
+    names: &NameMap,
+    offset: i32,
+    count: i32,
+) -> (Vec<String>, Option<String>) {
+    let mut out = Vec::new();
+    if count < 0 {
+        return (
+            out,
+            Some(format!(
+                "soft package reference count out of range: {count}"
+            )),
+        );
+    }
+    if count == 0 {
+        return (out, None);
+    }
+    if offset <= 0 {
+        return (
+            out,
+            Some(format!(
+                "soft package reference table offset must be positive when count is {count}"
+            )),
+        );
+    }
+    if let Err(err) = r.seek(offset as u64) {
+        return (
+            out,
+            Some(format!("soft package reference table seek failed: {err:#}")),
+        );
+    }
+    if (count as u64).saturating_mul(8) > r.remaining() {
+        return (
+            out,
+            Some(format!(
+                "soft package reference count out of range: {count}"
+            )),
+        );
+    }
+    for i in 0..count {
+        match r.read_raw_name() {
+            Ok(raw) => out.push(names.resolve_raw(raw)),
+            Err(err) => {
+                return (
+                    out,
+                    Some(format!(
+                        "soft package reference entry {}/{} failed at offset {}: {err:#}",
+                        i + 1,
+                        count,
+                        r.pos()
+                    )),
+                );
+            }
+        }
+    }
+    (out, None)
+}
+
+fn is_valid_package_name(name: &str) -> bool {
+    !name.is_empty() && name != "None"
+}
+
 fn name_or_null(s: String) -> Value {
     if s.is_empty() { Value::Null } else { json!(s) }
 }
@@ -824,14 +920,21 @@ fn export_serial_window(
 
 fn is_graph_node_class(class_full: &str) -> bool {
     let simple = class_full.rsplit(['.', '/']).next().unwrap_or(class_full);
+    if simple.starts_with("K2Node") || simple.starts_with("EdGraphNode") {
+        return true;
+    }
+    // UNiagaraNode* and UNiagaraOverviewNode are UEdGraphNode subclasses whose
+    // class names do not contain "GraphNode".
+    if simple.starts_with("NiagaraNode") || simple == "NiagaraOverviewNode" {
+        return true;
+    }
     // Binding helper objects (e.g. AnimGraphNodeBinding_Base) contain "GraphNode"
-    // but are not UEdGraphNode pin-bearing nodes.
+    // but are not UEdGraphNode pin-bearing nodes; the exclusion only applies to the
+    // fuzzy contains() match, not the exact prefixes above.
     if simple.contains("Binding") {
         return false;
     }
-    simple.starts_with("K2Node")
-        || simple.starts_with("EdGraphNode")
-        || simple.contains("GraphNode")
+    simple.contains("GraphNode")
 }
 
 fn distill_member(props: &[PropertyEntry]) -> Option<(String, Option<Value>)> {
@@ -908,20 +1011,21 @@ pub fn package_path_from_relative(rel: &str, mount: &str) -> String {
     format!("{mount}/{without_ext}")
 }
 
-fn sorted_referenced_packages<I, S>(imports: I) -> Vec<String>
+fn sorted_referenced_packages<I, S>(imports: I, soft: &[String]) -> Vec<String>
 where
     I: IntoIterator<Item = (S, S)>,
     S: AsRef<str>,
 {
-    let (mut refs, scripts) = collect_package_references(imports);
+    let (assets, scripts) = collect_package_references(imports);
+    let mut refs: BTreeSet<String> = assets.into_iter().collect();
     refs.extend(scripts);
-    refs.sort();
-    refs
+    refs.extend(soft.iter().filter(|s| is_valid_package_name(s)).cloned());
+    refs.into_iter().collect()
 }
 
-/// Extract a package's forward references by parsing only the header, name table and
-/// import table — skipping the export and soft-object-path tables. This is the hot path
-/// for `--scan-dir` reverse scans, where only import-derived references are needed.
+/// Extract a package's forward references by parsing only the header, name table,
+/// import table and soft-package-reference table — skipping the export and
+/// soft-object-path tables. This is the hot path for `--scan-dir` reverse scans.
 pub fn referenced_packages_from_bytes(data: &[u8]) -> Result<Vec<String>> {
     let mut r = Reader::new(data);
     let summary = PackageFileSummary::parse(&mut r)?;
@@ -937,10 +1041,19 @@ pub fn referenced_packages_from_bytes(data: &[u8]) -> Result<Vec<String>> {
         ue5,
         filter_editor,
     )?;
-    Ok(sorted_referenced_packages(imports.iter().map(|imp| {
-        (
-            names.resolve_raw(imp.class_name),
-            names.resolve_raw(imp.object_name),
-        )
-    })))
+    let (soft, _soft_err) = parse_soft_package_references(
+        &mut r,
+        &names,
+        summary.soft_package_references_offset,
+        summary.soft_package_references_count,
+    );
+    Ok(sorted_referenced_packages(
+        imports.iter().map(|imp| {
+            (
+                names.resolve_raw(imp.class_name),
+                names.resolve_raw(imp.object_name),
+            )
+        }),
+        &soft,
+    ))
 }
