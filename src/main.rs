@@ -47,7 +47,7 @@ struct Args {
         short = 'S',
         long,
         value_name = "LIST",
-        help = "Output sections to emit (comma-separated), or a preset. Sections: summary, imports, exports, pins, properties, layout, names, references. Presets: logic, debug, full (default)"
+        help = "Output sections to emit (comma-separated), or a preset. Sections: summary, imports, exports (alias: identity), pins, properties (props), layout, names, references (refs). Presets: logic (graph), debug, full (all; default)"
     )]
     sections: Option<String>,
 
@@ -241,35 +241,51 @@ fn compute_referenced_by(
                             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                             .map(|d| d.as_nanos() as i64)
                             .unwrap_or(0);
-                        let cached_refs = loaded
+                        let cached_entry = loaded
                             .and_then(|m| m.get(&rel_key))
-                            .filter(|e| e.is_fresh(mtime, size))
-                            .map(|e| e.refs.clone());
-                        let refs = match cached_refs {
-                            Some(refs) => {
-                                p.cached += 1;
-                                refs
+                            .filter(|e| e.is_fresh(mtime, size));
+                        let entry = match cached_entry {
+                            Some(e) => {
+                                if e.parse_ok {
+                                    p.cached += 1;
+                                } else {
+                                    p.skipped += 1;
+                                }
+                                e.clone()
                             }
                             None => match parse_referenced_packages(path) {
                                 Some(refs) => {
                                     p.parsed += 1;
-                                    refs
+                                    CacheEntry {
+                                        mtime,
+                                        size,
+                                        parse_ok: true,
+                                        refs,
+                                    }
                                 }
                                 None => {
                                     p.skipped += 1;
-                                    continue;
+                                    CacheEntry {
+                                        mtime,
+                                        size,
+                                        parse_ok: false,
+                                        refs: Vec::new(),
+                                    }
                                 }
                             },
                         };
-                        if !rel_key.eq_ignore_ascii_case(self_rel_key_ref)
-                            && refs.iter().any(|r| r.eq_ignore_ascii_case(self_pkg_ref))
+                        if entry.parse_ok
+                            && !rel_key.eq_ignore_ascii_case(self_rel_key_ref)
+                            && entry
+                                .refs
+                                .iter()
+                                .any(|r| r.eq_ignore_ascii_case(self_pkg_ref))
                         {
                             p.referencers
                                 .push(package_path_from_relative(&rel_key, mount));
                         }
                         if cache_enabled {
-                            p.entries
-                                .push((rel_key, CacheEntry { mtime, size, refs }));
+                            p.entries.push((rel_key, entry));
                         }
                     }
                     p

@@ -3,12 +3,17 @@ use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::path::Path;
 
-const CACHE_SCHEMA_VERSION: i64 = 1;
+// v2: soft package references included in extraction; parse_ok column caches
+// unparseable files (negative results).
+const CACHE_SCHEMA_VERSION: i64 = 2;
 
 #[derive(Clone)]
 pub struct CacheEntry {
     pub mtime: i64,
     pub size: i64,
+    /// Whether the file parsed successfully; false caches the negative result so
+    /// unparseable files (cooked/unversioned packages) are not re-read every scan.
+    pub parse_ok: bool,
     pub refs: Vec<String>,
 }
 
@@ -39,6 +44,7 @@ impl RefCache {
                 rel_path TEXT PRIMARY KEY,
                 mtime    INTEGER NOT NULL,
                 size     INTEGER NOT NULL,
+                parse_ok INTEGER NOT NULL,
                 refs     TEXT NOT NULL
             )",
             [],
@@ -46,22 +52,25 @@ impl RefCache {
 
         let mut loaded = HashMap::new();
         {
-            let mut stmt = conn.prepare("SELECT rel_path, mtime, size, refs FROM file_refs")?;
+            let mut stmt =
+                conn.prepare("SELECT rel_path, mtime, size, parse_ok, refs FROM file_refs")?;
             let rows = stmt.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,
                     row.get::<_, i64>(2)?,
-                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             })?;
             for row in rows {
-                let (rel, mtime, size, refs) = row?;
+                let (rel, mtime, size, parse_ok, refs) = row?;
                 loaded.insert(
                     rel,
                     CacheEntry {
                         mtime,
                         size,
+                        parse_ok: parse_ok != 0,
                         refs: split_refs(&refs),
                     },
                 );
@@ -85,13 +94,15 @@ impl RefCache {
         tx.execute("DELETE FROM file_refs", [])?;
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO file_refs (rel_path, mtime, size, refs) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO file_refs (rel_path, mtime, size, parse_ok, refs) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
             for (rel, entry) in current {
                 stmt.execute(params![
                     rel,
                     entry.mtime,
                     entry.size,
+                    entry.parse_ok as i64,
                     join_refs(&entry.refs)
                 ])?;
             }
@@ -110,7 +121,10 @@ impl RefCache {
             .iter()
             .any(|(rel, entry)| match self.loaded.get(rel) {
                 Some(old) => {
-                    old.mtime != entry.mtime || old.size != entry.size || old.refs != entry.refs
+                    old.mtime != entry.mtime
+                        || old.size != entry.size
+                        || old.parse_ok != entry.parse_ok
+                        || old.refs != entry.refs
                 }
                 None => true,
             })
@@ -173,6 +187,7 @@ mod tests {
             CacheEntry {
                 mtime: 111,
                 size: 222,
+                parse_ok: true,
                 refs: vec!["/Game/Foo/Dep".to_string()],
             },
         );
@@ -210,6 +225,7 @@ mod tests {
             CacheEntry {
                 mtime: 111,
                 size: 222,
+                parse_ok: true,
                 refs: vec!["/Game/Foo/Old".to_string()],
             },
         );
@@ -222,6 +238,7 @@ mod tests {
             CacheEntry {
                 mtime: 111,
                 size: 222,
+                parse_ok: true,
                 refs: vec!["/Game/Foo/New".to_string()],
             },
         );
@@ -233,6 +250,38 @@ mod tests {
             cache.lookup("Foo/BP_A.uasset", 111, 222),
             Some(["/Game/Foo/New".to_string()].as_slice())
         );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn negative_results_roundtrip() {
+        let path = temp_db_path("negative");
+        let _ = std::fs::remove_file(&path);
+
+        let mut current = HashMap::new();
+        current.insert(
+            "Foo/Broken.uasset".to_string(),
+            CacheEntry {
+                mtime: 42,
+                size: 7,
+                parse_ok: false,
+                refs: Vec::new(),
+            },
+        );
+
+        {
+            let mut cache = RefCache::open(&path).unwrap();
+            assert!(cache.store(&current).unwrap());
+            assert!(!cache.store(&current).unwrap());
+        }
+        {
+            let cache = RefCache::open(&path).unwrap();
+            let entry = cache.loaded_map().get("Foo/Broken.uasset").unwrap();
+            assert!(entry.is_fresh(42, 7));
+            assert!(!entry.parse_ok);
+            assert!(entry.refs.is_empty());
+        }
 
         let _ = std::fs::remove_file(&path);
     }
