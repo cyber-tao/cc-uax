@@ -43,18 +43,18 @@ The name says it plainly: **cc** = Claude Code, **uax** = uasset. The tool also 
   | References | `ObjectProperty` → full name + package index, `SoftObjectPath`, `FieldPath` |
   | Containers | `ArrayProperty`, `SetProperty`, `MapProperty`, `OptionalProperty` |
   | Nested | recursive tagged structs |
-  | Native structs | `Vector` / `Vector3f` / `Vector4` / `Vector4f` / `Rotator` / `Quat` / `Color` / `LinearColor` / `Transform` / `Transform3f` / `Box` / `Box2D` / `Box2f` / `Guid` / `DateTime` / `FrameNumber` / `FrameRate` / `IntVector2` / `IntVector4` / `RichCurveKey` … |
+  | Native structs | `Vector` / `Vector3f` / `Vector4` / `Vector4f` / `Rotator` / `Quat` / `Color` / `LinearColor` / `Transform` / `Transform3f` / `Box` / `Box2D` / `Box2f` / `Guid` / `DateTime` / `FrameNumber` / `IntVector2` / `IntVector4` / `RichCurveKey` … |
   | Material inputs | `ExpressionInput` + Scalar / Vector / Vector2 / Color / ShadingModel / Substrate / MaterialAttributes |
   | Sequencer & curves | `FrameRange`, `FloatChannel`, `DoubleChannel`, per-platform Float / Int / Bool / FrameRate, anim curves (`FloatCurve` / `TransformCurve`) |
   | Runtime structs | `InstancedStruct`, `PerQualityLevelInt` / `Float`, delegates (`Delegate` / `MulticastInline` / `MulticastSparse`), `EdGraphPinType` |
   | Gameplay & FX | `GameplayTagContainer`, `GameplayEffectVersion`, `Spline`, `AlphaBlend`, Niagara core (`NiagaraVariable` / `NiagaraVariableBase` / `NiagaraVariableWithOffset` / `NiagaraTypeDefinition`) |
 
-- **Blueprint graph logic** — `UEdGraphNode` pins are decoded right after the tagged-property region: every node's pins, pin types, default values/objects, and `LinkedTo` edges, so the full node-to-node execution & data graph is reconstructable. Graph nodes also expose a distilled `member` (the function / event / variable they reference) plus `member_from` (its owning C++ class) for quick cross-referencing with source.
+- **Blueprint graph logic** — `UEdGraphNode` pins are decoded right after the tagged-property region: every node's pins, pin types, default values/objects, and `LinkedTo` edges, so the full node-to-node execution & data graph is reconstructable — covering both Blueprint (`K2Node_*`) and Niagara (`NiagaraNode*`) graphs. Graph nodes also expose a distilled `member` (the function / event / variable they reference) plus `member_from` (its owning C++ class) for quick cross-referencing with source.
 - **Selectable output sections** — `--sections` (alias `-S`) composes exactly the blocks you want, or picks a preset (`logic`, `debug`, `full`) — keeping logic analysis lean and bug-hunting thorough.
 - **Graceful hex fallback** — types with custom binary serialization not yet structured (a few specialized Niagara VM / mesh / cloth structs) emit a `type`+`size`-tagged hex preview that **preserves byte alignment**.
 - **Reference graph**
-  - `-S refs` — forward refs from the import table, split into `assets` vs `scripts`, de-duplicated & sorted.
-  - `--scan-dir` — reverse refs: which assets reference *this* file (`referenced_by`), via `--mount` path mapping.
+  - `-S refs` — forward refs from the import table (`assets` / `scripts`) plus the header's soft-package-reference table (`soft`, e.g. `TSoftObjectPtr`/`TSoftClassPtr`), de-duplicated & sorted.
+  - `--scan-dir` — reverse refs: which assets reference *this* file (`referenced_by`, hard **or** soft), via `--mount` path mapping.
 - **Incremental scan cache** — SQLite-backed (`.cc-uax-cache.sqlite`), keyed by mtime + size, with a live stderr progress bar. `--no-cache` opts out.
 
 ## 🛠️ Tech Stack
@@ -215,6 +215,7 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
   "references": {
     "assets":        [ "/Game/...", "/Engine/..." ],
     "scripts":       [ "/Script/CoreUObject", "/Script/Engine" ],
+    "soft":          [ "/Game/.../SoftReferencedAsset" ],
     "self":          "/Game/Foo/BP_MyActor",
     "referenced_by": [ "/Game/Foo/BP_Other" ]
   },
@@ -286,7 +287,7 @@ cc-uax/
 - ✅ **Validated** on **1,423 `.uasset`** files from a UE5.7 project — all parsed, every object's property region fully byte-aligned.
 - ❌ Cooked packages (unversioned / package compression) and UE4 legacy formats are **not** supported.
 - 🔧 Most native-binary structs — including Niagara core variable types — are decoded structurally; a few specialized ones (non-core Niagara VM / GPU binding info, skeletal-mesh sampling & cloth LOD build data) still render as hex preview pending decoders.
-- 🔧 `referenced_by` derives package paths from disk — the input file must live under `--scan-dir` mapped to `--mount`. Only hard references (imports) are counted, not soft ones.
+- 🔧 `referenced_by` derives package paths from disk — the input file must live under `--scan-dir` mapped to `--mount`. Both hard references (imports) and soft references (`TSoftObjectPtr`/`TSoftClassPtr`) are counted.
 - 🔧 Cache invalidates on mtime + size and auto-rebuilds when the built-in schema version changes.
 
 ## 🤝 Contributing
