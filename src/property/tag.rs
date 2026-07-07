@@ -124,15 +124,19 @@ pub(crate) fn parse_properties_report(
             break;
         }
         let tag_start = r.pos();
-        let prop_path = format!("{path}/{}", entries.len());
+        let prop_index_path = format!("{path}/{}", entries.len());
         let tag = match read_property_tag(r, ctx, end_limit) {
             Ok(Some(tag)) => tag,
             Ok(None) => break,
             Err(err) => {
+                if entries.is_empty() {
+                    let _ = r.seek(end_limit);
+                    break;
+                }
                 diagnostics.push(
                     Diagnostic::warning(
                         "property_tag_parse_failed",
-                        prop_path,
+                        prop_index_path,
                         format!("failed to parse property tag: {err:#}"),
                     )
                     .with_offset(tag_start),
@@ -140,6 +144,7 @@ pub(crate) fn parse_properties_report(
                 break;
             }
         };
+        let prop_path = format!("{path}/{}", tag.name);
 
         if tag.size < 0 {
             diagnostics.push(
@@ -155,6 +160,10 @@ pub(crate) fn parse_properties_report(
         let value_start = r.pos();
         let aligned = value_start.saturating_add(tag.size as u64);
         if aligned > end_limit {
+            if entries.is_empty() {
+                let _ = r.seek(end_limit);
+                break;
+            }
             diagnostics.push(
                 Diagnostic::warning(
                     "property_value_overruns_window",
@@ -177,14 +186,41 @@ pub(crate) fn parse_properties_report(
             json!(tag.bool_val)
         } else {
             match parse_value(r, &tag.type_name, ctx, tag.is_binary_native, aligned) {
-                Ok(v) => v,
+                Ok(v) if r.pos() <= aligned => v,
+                Ok(_) => {
+                    let consumed_to = r.pos();
+                    let _ = r.seek(value_start);
+                    let n = (tag.size as usize).min(PREVIEW_MAX);
+                    let preview = r.read_bytes(n).unwrap_or_default();
+                    diagnostics.push(
+                        Diagnostic::warning(
+                            "property_value_fallback",
+                            prop_path.clone(),
+                            format!(
+                                "decoded property '{}' as {} past its declared value window: read to {consumed_to}, expected end {aligned}",
+                                tag.name,
+                                tag.type_name.display()
+                            ),
+                        )
+                        .with_offset(value_start)
+                        .with_context(json!({
+                            "property": tag.name.clone(),
+                            "type": tag.type_name.display(),
+                            "size": tag.size,
+                            "preview": to_hex(&preview),
+                            "declared_end": aligned,
+                            "consumed_to": consumed_to,
+                        })),
+                    );
+                    json!({ "@unparsed": to_hex(&preview), "size": tag.size })
+                }
                 Err(err) => {
                     let _ = r.seek(value_start);
                     let n = (tag.size as usize).min(PREVIEW_MAX);
                     let preview = r.read_bytes(n).unwrap_or_default();
                     diagnostics.push(
                         Diagnostic::warning(
-                            "property_value_unparsed",
+                            "property_value_fallback",
                             prop_path.clone(),
                             format!(
                                 "failed to decode property '{}' as {}: {err:#}",

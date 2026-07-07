@@ -2,7 +2,9 @@ mod common;
 
 use cc_uax::name::NameMap;
 use cc_uax::pin::PinSerCtx;
-use cc_uax::property::{ParseCtx, parse_object_properties, parse_properties};
+use cc_uax::property::{
+    ParseCtx, parse_object_properties, parse_properties, parse_properties_report,
+};
 use cc_uax::reader::Reader;
 use common::*;
 
@@ -139,6 +141,57 @@ fn excessive_array_count_falls_back_to_hex() {
         entries[0].value.get("@unparsed").and_then(|v| v.as_str()),
         Some("41420f00")
     );
+}
+
+#[test]
+fn property_value_fallback_reports_diagnostic_context() {
+    let names = NameMap {
+        names: vec![
+            "Nums".to_string(),
+            "ArrayProperty".to_string(),
+            "IntProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Nums
+    push_raw_name(&mut d, 1); // ArrayProperty
+    push_i32(&mut d, 1); // one type param
+    push_raw_name(&mut d, 2); // IntProperty
+    push_i32(&mut d, 0);
+    push_i32(&mut d, 4); // value is only the array count
+    d.push(0);
+    let value_start = d.len() as u64;
+    push_i32(&mut d, 1_000_001);
+    push_raw_name(&mut d, 3); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/exports/0/properties");
+
+    assert_eq!(report.entries.len(), 1);
+    assert_eq!(report.entries[0].value["@unparsed"], "41420f00");
+    let diag = report
+        .diagnostics
+        .iter()
+        .find(|diag| diag.code == "property_value_fallback")
+        .expect("fallback diagnostic should be emitted");
+    assert_eq!(diag.path, "/exports/0/properties/Nums");
+    assert_eq!(diag.offset, Some(value_start));
+    let context = diag.context.as_ref().unwrap();
+    assert_eq!(context["property"], "Nums");
+    assert_eq!(context["type"], "ArrayProperty(IntProperty)");
+    assert_eq!(context["size"], 4);
+    assert_eq!(context["preview"], "41420f00");
 }
 
 #[test]

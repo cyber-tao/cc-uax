@@ -17,7 +17,7 @@ pub struct OutputSections {
 
 impl Default for OutputSections {
     fn default() -> Self {
-        Self::full()
+        Self::dump()
     }
 }
 
@@ -35,7 +35,7 @@ impl OutputSections {
         }
     }
 
-    pub fn full() -> Self {
+    pub fn dump() -> Self {
         Self {
             summary: true,
             imports: true,
@@ -48,6 +48,13 @@ impl OutputSections {
         }
     }
 
+    pub fn all() -> Self {
+        let mut sections = Self::dump();
+        sections.names = true;
+        sections.references = true;
+        sections
+    }
+
     pub fn parse(spec: &str) -> Result<Self> {
         let mut s = Self::none();
         let mut seen = false;
@@ -58,7 +65,8 @@ impl OutputSections {
             }
             seen = true;
             match tok.to_ascii_lowercase().as_str() {
-                "full" | "all" => s.merge(&Self::full()),
+                "dump" => s.merge(&Self::dump()),
+                "all" => s.merge(&Self::all()),
                 "logic" | "graph" => {
                     s.summary = true;
                     s.exports = true;
@@ -89,7 +97,7 @@ impl OutputSections {
                     s.layout = true;
                 }
                 other => bail!(
-                    "unknown section '{other}'; valid: summary, imports, exports, pins, properties, layout, names, references; presets: logic, debug, full"
+                    "unknown section '{other}'; valid: summary, imports, exports, pins, properties, layout, names, references; presets: logic, debug, dump, all"
                 ),
             }
         }

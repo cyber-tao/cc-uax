@@ -1,8 +1,11 @@
-use cc_uax::OutputSections;
+use cc_uax::collect_package_references;
 use cc_uax::name::NameMap;
 use cc_uax::object::PackageIndex;
 use cc_uax::property::TypeName;
-use cc_uax::references::{collect_package_references, package_path_from_relative};
+use cc_uax::{
+    ByteRangePreview, Diagnostic, MountMap, OutputSections, Severity, package_path_from_relative,
+    package_path_from_relative_with_mounts,
+};
 
 #[test]
 fn package_index_semantics() {
@@ -63,6 +66,37 @@ fn typename_display_nested() {
 }
 
 #[test]
+fn diagnostic_json_shape_is_stable() {
+    let diagnostic = Diagnostic::warning(
+        "property_value_fallback",
+        "/exports/2/properties/Health",
+        "decoded property value using fallback bytes",
+    )
+    .with_offset(128)
+    .with_context(serde_json::json!({
+        "preview": ByteRangePreview {
+            start: 128,
+            end: 132,
+            size: 4,
+            preview: "01020304".to_string(),
+        }
+    }));
+
+    let json = serde_json::to_value(&diagnostic).unwrap();
+    assert_eq!(json["severity"], "warning");
+    assert_eq!(json["code"], "property_value_fallback");
+    assert_eq!(json["path"], "/exports/2/properties/Health");
+    assert_eq!(json["offset"], 128);
+    assert_eq!(json["context"]["preview"]["size"], 4);
+
+    let info = Diagnostic::new(Severity::Info, "note", "/", "message");
+    let info_json = serde_json::to_value(&info).unwrap();
+    assert_eq!(info_json["severity"], "info");
+    assert!(info_json.get("offset").is_none());
+    assert!(info_json.get("context").is_none());
+}
+
+#[test]
 fn package_references_partition() {
     let imports = vec![
         ("Package", "/Game/Foo/BP_Bar"),
@@ -115,6 +149,34 @@ fn package_path_mapping() {
 }
 
 #[test]
+fn mount_map_maps_game_plugin_and_engine_roots() {
+    let mounts =
+        MountMap::parse("/Game=Content,/MyPlugin=Plugins/MyPlugin/Content,/Engine=Engine/Content")
+            .unwrap();
+
+    assert_eq!(
+        package_path_from_relative_with_mounts("Content/COP/Maps/Lobby.umap", &mounts),
+        "/Game/COP/Maps/Lobby"
+    );
+
+    assert_eq!(
+        package_path_from_relative_with_mounts(
+            "Plugins/MyPlugin/Content/Widgets/W_HUD.uasset",
+            &mounts
+        ),
+        "/MyPlugin/Widgets/W_HUD"
+    );
+
+    assert_eq!(
+        package_path_from_relative_with_mounts(
+            "Engine/Content/EngineMaterials/M_Default.uasset",
+            &mounts
+        ),
+        "/Engine/EngineMaterials/M_Default"
+    );
+}
+
+#[test]
 fn output_sections_parse_presets_and_aliases() {
     let logic = OutputSections::parse("logic,refs").unwrap();
 
@@ -161,11 +223,21 @@ fn output_sections_edge_cases() {
     let aliased = OutputSections::parse("refs,props,identity").unwrap();
     assert!(aliased.references && aliased.properties && aliased.exports);
 
+    let dump = OutputSections::parse("dump").unwrap();
+    assert!(
+        dump.summary && dump.imports && dump.exports && dump.pins && dump.properties && dump.layout
+    );
+    assert!(!dump.names && !dump.references);
+
+    let all = OutputSections::parse("all").unwrap();
+    assert!(all.names && all.references);
+
     // Parsing is case-insensitive and tolerates duplicate tokens and whitespace.
-    let dup = OutputSections::parse("SUMMARY, summary , Full").unwrap();
+    let dup = OutputSections::parse("SUMMARY, summary , Dump").unwrap();
     assert!(dup.summary && dup.imports && dup.exports && dup.pins && dup.properties && dup.layout);
 
     // A single unknown token anywhere is rejected; so is an empty spec.
     assert!(OutputSections::parse("summary,bogus").is_err());
+    assert!(OutputSections::parse("full").is_err());
     assert!(OutputSections::parse("").is_err());
 }

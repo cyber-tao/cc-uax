@@ -64,7 +64,7 @@ fn cli_scan_dir_without_refs_errors() {
     let out = bin()
         .args([
             "-S",
-            "full",
+            "dump",
             "-d",
             dir.to_str().unwrap(),
             path.to_str().unwrap(),

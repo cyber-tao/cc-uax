@@ -1,6 +1,6 @@
 use crate::cli::cache::{CacheEntry, RefCache};
 use anyhow::{Context, Result, anyhow};
-use cc_uax::references::{package_path_from_relative, referenced_packages_from_bytes};
+use cc_uax::{MountMap, package_path_from_relative_with_mounts, referenced_packages_from_bytes};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{IsTerminal, Write};
@@ -29,7 +29,8 @@ pub fn compute_referenced_by(
     })?;
 
     let self_rel_key = self_rel.to_string_lossy().replace('\\', "/");
-    let self_pkg = package_path_from_relative(&self_rel_key, mount);
+    let mount_map = MountMap::parse(mount).map_err(anyhow::Error::msg)?;
+    let self_pkg = package_path_from_relative_with_mounts(&self_rel_key, &mount_map);
 
     let mut files = Vec::new();
     collect_asset_files(&scan_abs, &mut files)
@@ -67,6 +68,7 @@ pub fn compute_referenced_by(
     let self_pkg_ref = self_pkg.as_str();
     let self_rel_key_ref = self_rel_key.as_str();
     let scan_abs_ref = scan_abs.as_path();
+    let mount_map_ref = &mount_map;
     let done_ref = &done;
 
     struct Partial {
@@ -153,8 +155,10 @@ pub fn compute_referenced_by(
                                 .iter()
                                 .any(|r| r.eq_ignore_ascii_case(self_pkg_ref))
                         {
-                            p.referencers
-                                .push(package_path_from_relative(&rel_key, mount));
+                            p.referencers.push(package_path_from_relative_with_mounts(
+                                &rel_key,
+                                mount_map_ref,
+                            ));
                         }
                         if cache_enabled {
                             p.entries.push((rel_key, entry));

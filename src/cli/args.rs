@@ -1,3 +1,4 @@
+use cc_uax::MountMap;
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -8,9 +9,10 @@ use std::path::PathBuf;
     about = "Parse UE5 Blueprint (.uasset) files into JSON",
     arg_required_else_help = true,
     after_help = r#"EXAMPLES:
-  cc-uax asset.uasset                     Full JSON (summary + imports + exports)
+  cc-uax asset.uasset                     Dump JSON (summary + imports + exports)
   cc-uax asset.uasset -S logic            Graph nodes + pin connectivity only
-  cc-uax asset.uasset -S debug            Summary + imports + full properties + layout
+  cc-uax asset.uasset -S debug            Summary + imports + properties + layout
+  cc-uax asset.uasset -S all              Dump plus names and references
   cc-uax asset.uasset -S exports,pins     Pick sections explicitly
   cc-uax asset.uasset -c -o out.json      Write compact JSON to a file"#
 )]
@@ -36,7 +38,7 @@ pub struct Args {
         short = 'S',
         long,
         value_name = "LIST",
-        help = "Output sections to emit (comma-separated), or a preset. Sections: summary, imports, exports (alias: identity), pins, properties (props), layout, names, references (refs). Presets: logic (graph), debug, full (all; default)"
+        help = "Output sections to emit (comma-separated), or a preset. Sections: summary, imports, exports (alias: identity), pins, properties (props), layout, names, references (refs). Presets: logic (graph), debug, dump (default), all"
     )]
     pub sections: Option<String>,
 
@@ -54,7 +56,7 @@ pub struct Args {
         value_name = "PREFIX",
         default_value = "/Game",
         value_parser = parse_mount,
-        help = "Mount prefix mapping <DIR> to package paths (default: /Game)"
+        help = "Mount mapping for --scan-dir package paths, e.g. /Game or /Game=Content,/MyPlugin=Plugins/MyPlugin/Content"
     )]
     pub mount: String,
 
@@ -70,14 +72,8 @@ pub struct Args {
 /// `/Game` into `C:/.../Game`), which would otherwise silently produce wrong
 /// package paths.
 fn parse_mount(value: &str) -> Result<String, String> {
-    if value.trim_matches('/').is_empty() {
-        return Err("mount prefix must not be empty (e.g. /Game)".to_string());
-    }
-    if value.contains([':', '\\']) || value.contains(char::is_whitespace) {
-        return Err(format!(
-            "mount prefix '{value}' looks like a filesystem path; expected a UE mount root like /Game. \
-             On Git Bash/MSYS2 pass it as //Game to avoid POSIX path mangling."
-        ));
-    }
+    MountMap::parse(value).map_err(|err| {
+        format!("{err}. On Git Bash/MSYS2 pass /Game as //Game to avoid POSIX path mangling.")
+    })?;
     Ok(value.to_string())
 }

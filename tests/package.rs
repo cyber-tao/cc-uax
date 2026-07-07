@@ -2,8 +2,7 @@ mod common;
 
 use cc_uax::name::NameMap;
 use cc_uax::reader::Reader;
-use cc_uax::references::referenced_packages_from_bytes;
-use cc_uax::{OutputSections, Package};
+use cc_uax::{OutputSections, Package, referenced_packages_from_bytes};
 use common::*;
 
 #[test]
@@ -44,7 +43,7 @@ fn package_parse_minimal_header() {
     assert!(pkg.imports.is_empty());
     assert!(pkg.exports.is_empty());
 
-    let json = pkg.to_json(&data, &OutputSections::full());
+    let json = pkg.to_json(&data, &OutputSections::dump());
     assert_eq!(json["summary"]["package_name"], "TestPkg");
     assert_eq!(json["summary"]["file_version_ue5"], 1018);
     assert!(json["imports"].as_array().unwrap().is_empty());
@@ -61,7 +60,7 @@ fn soft_object_path_table_error_is_reported() {
     let err = pkg.soft_object_path_error.as_deref().unwrap();
     assert!(err.contains("soft object path table seek failed"));
 
-    let json = pkg.to_json(&data, &OutputSections::full());
+    let json = pkg.to_json(&data, &OutputSections::dump());
     let diag = diagnostic_with_code(&json, "soft_object_path_table_error");
     assert_eq!(diag["severity"].as_str(), Some("warning"));
     assert_eq!(diag["path"].as_str(), Some("/summary/soft_object_paths"));

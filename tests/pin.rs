@@ -1,7 +1,9 @@
 mod common;
 
 use cc_uax::name::NameMap;
-use cc_uax::pin::{PinSerCtx, container_type_label, direction_label, parse_node_pins};
+use cc_uax::pin::{
+    PinSerCtx, container_type_label, direction_label, parse_node_pins, parse_node_pins_report,
+};
 use cc_uax::property::{ParseCtx, parse_properties};
 use cc_uax::reader::Reader;
 use common::*;
@@ -196,6 +198,43 @@ fn node_pin_array_decodes() {
     assert!(!flags.advanced_view);
 
     assert!(flags.orphaned_pin);
+}
+
+#[test]
+fn node_pin_parse_failure_reports_diagnostic() {
+    let names = NameMap {
+        names: vec!["None".to_string()],
+    };
+    let mut d = Vec::new();
+    push_i32(&mut d, 0); // no UObject guid
+    push_i32(&mut d, 10_000); // invalid pin count
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+
+    let mut r = Reader::new(&d);
+    let err = parse_node_pins_report(
+        &mut r,
+        d.len() as u64,
+        &ctx,
+        &PinSerCtx::default(),
+        "/exports/0/pins",
+    )
+    .expect_err("invalid pin stream should report a diagnostic");
+
+    assert_eq!(err.code, "pin_parse_failed");
+    assert_eq!(err.path, "/exports/0/pins");
+    assert!(err.message.contains("pin count out of range"));
+    assert_eq!(err.offset, Some(8));
+    assert_eq!(r.pos(), 0, "failed pin parse must rewind to start");
 }
 
 #[test]

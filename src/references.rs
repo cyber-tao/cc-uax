@@ -65,8 +65,126 @@ where
     (assets.into_iter().collect(), scripts.into_iter().collect())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountMap {
+    entries: Vec<MountEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MountEntry {
+    mount: String,
+    disk_prefix: String,
+}
+
+impl MountMap {
+    pub fn parse(spec: &str) -> std::result::Result<Self, String> {
+        let mut entries = Vec::new();
+        for raw in spec.split(',') {
+            let token = raw.trim();
+            if token.is_empty() {
+                continue;
+            }
+            let (mount, disk_prefix) = match token.split_once('=') {
+                Some((mount, disk_prefix)) => {
+                    (normalize_mount(mount)?, normalize_disk_prefix(disk_prefix)?)
+                }
+                None => (normalize_mount(token)?, String::new()),
+            };
+            entries.push(MountEntry { mount, disk_prefix });
+        }
+        if entries.is_empty() {
+            return Err(
+                "mount mapping must not be empty (e.g. /Game or /Game=Content)".to_string(),
+            );
+        }
+        entries.sort_by(|a, b| b.disk_prefix.len().cmp(&a.disk_prefix.len()));
+        Ok(Self { entries })
+    }
+
+    pub fn single(mount: &str) -> std::result::Result<Self, String> {
+        Self::parse(mount)
+    }
+
+    pub fn map_relative(&self, rel: &str) -> String {
+        let normalized = normalize_relative_path(rel);
+        let entry = self
+            .entries
+            .iter()
+            .find(|entry| relative_matches_prefix(&normalized, &entry.disk_prefix))
+            .unwrap_or_else(|| {
+                self.entries
+                    .iter()
+                    .find(|entry| entry.disk_prefix.is_empty())
+                    .unwrap_or(&self.entries[0])
+            });
+        let mapped = strip_disk_prefix(&normalized, &entry.disk_prefix);
+        join_mount_path(&entry.mount, mapped)
+    }
+}
+
 pub fn package_path_from_relative(rel: &str, mount: &str) -> String {
-    let mount = format!("/{}", mount.trim_matches('/'));
+    let mounts = MountMap::single(mount).unwrap_or_else(|_| MountMap {
+        entries: vec![MountEntry {
+            mount: "/Game".to_string(),
+            disk_prefix: String::new(),
+        }],
+    });
+    package_path_from_relative_with_mounts(rel, &mounts)
+}
+
+pub fn package_path_from_relative_with_mounts(rel: &str, mounts: &MountMap) -> String {
+    mounts.map_relative(rel)
+}
+
+fn normalize_mount(raw: &str) -> std::result::Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.trim_matches('/').is_empty() {
+        return Err("mount prefix must not be empty (e.g. /Game)".to_string());
+    }
+    if trimmed.contains([':', '\\']) || trimmed.contains(char::is_whitespace) {
+        return Err(format!(
+            "mount prefix '{raw}' looks like a filesystem path; expected a UE mount root like /Game"
+        ));
+    }
+    Ok(format!("/{}", trimmed.trim_matches('/')))
+}
+
+fn normalize_disk_prefix(raw: &str) -> std::result::Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.contains([':', '\\']) || trimmed.contains(char::is_whitespace) {
+        return Err(format!(
+            "mount disk prefix '{raw}' must be a relative path under --scan-dir"
+        ));
+    }
+    if trimmed.is_empty() || trimmed == "." {
+        return Ok(String::new());
+    }
+    Ok(normalize_relative_path(trimmed))
+}
+
+fn normalize_relative_path(path: &str) -> String {
+    path.replace('\\', "/").trim_start_matches('/').to_string()
+}
+
+fn relative_matches_prefix(rel: &str, prefix: &str) -> bool {
+    prefix.is_empty()
+        || rel.eq_ignore_ascii_case(prefix)
+        || rel.get(prefix.len()..).is_some_and(|tail| {
+            tail.starts_with('/') && rel[..prefix.len()].eq_ignore_ascii_case(prefix)
+        })
+}
+
+fn strip_disk_prefix<'a>(rel: &'a str, prefix: &str) -> &'a str {
+    if prefix.is_empty() {
+        return rel;
+    }
+    if rel.eq_ignore_ascii_case(prefix) {
+        return "";
+    }
+    rel.get(prefix.len() + 1..).unwrap_or(rel)
+}
+
+fn join_mount_path(mount: &str, rel: &str) -> String {
     let normalized = rel.replace('\\', "/");
     let trimmed = normalized.trim_start_matches('/');
     let lower = trimmed.to_ascii_lowercase();
@@ -77,7 +195,11 @@ pub fn package_path_from_relative(rel: &str, mount: &str) -> String {
     } else {
         trimmed
     };
-    format!("{mount}/{without_ext}")
+    if without_ext.is_empty() {
+        mount.to_string()
+    } else {
+        format!("{mount}/{without_ext}")
+    }
 }
 
 fn sorted_referenced_packages<I, S>(imports: I, soft: &[String]) -> Vec<String>

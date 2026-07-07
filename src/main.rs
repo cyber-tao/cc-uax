@@ -21,7 +21,7 @@ fn main() -> Result<()> {
     let sections = match args.sections.as_deref() {
         Some(spec) => OutputSections::parse(spec)
             .with_context(|| format!("Invalid --sections value: '{spec}'"))?,
-        None => OutputSections::full(),
+        None => OutputSections::dump(),
     };
 
     let mut json = package.to_json(&data, &sections);
@@ -39,7 +39,7 @@ fn main() -> Result<()> {
         }
     } else if args.scan_dir.is_some() {
         bail!(
-            "--scan-dir requires the references section; add -S refs (for example: -S full,refs)"
+            "--scan-dir requires the references section; add -S refs (for example: -S dump,refs)"
         );
     }
 
