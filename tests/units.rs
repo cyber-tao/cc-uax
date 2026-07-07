@@ -3,10 +3,19 @@ use cc_uax::object::{ObjectExport, PackageIndex};
 use cc_uax::package::{
     collect_package_references, package_path_from_relative, referenced_packages_from_bytes,
 };
-use cc_uax::pin::{PinSerCtx, direction_label, parse_node_pins};
+use cc_uax::pin::{PinSerCtx, container_type_label, direction_label, parse_node_pins};
 use cc_uax::property::{ParseCtx, TypeName, parse_properties};
 use cc_uax::reader::{RawName, Reader};
 use cc_uax::{OutputSections, Package};
+
+fn diagnostic_with_code<'a>(json: &'a serde_json::Value, code: &str) -> &'a serde_json::Value {
+    json["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diag| diag["code"].as_str() == Some(code))
+        .unwrap_or_else(|| panic!("missing diagnostic code {code}: {json}"))
+}
 
 #[test]
 fn fstring_ansi() {
@@ -350,12 +359,16 @@ fn soft_object_path_table_error_is_reported() {
     assert!(err.contains("soft object path table seek failed"));
 
     let json = pkg.to_json(&data, &OutputSections::full());
+    let diag = diagnostic_with_code(&json, "soft_object_path_table_error");
+    assert_eq!(diag["severity"].as_str(), Some("warning"));
+    assert_eq!(diag["path"].as_str(), Some("/summary/soft_object_paths"));
     assert!(
-        json["summary"]["soft_object_paths_error"]
+        diag["message"]
             .as_str()
             .unwrap()
             .contains("soft object path table seek failed")
     );
+    assert!(json["summary"].get("soft_object_paths_error").is_none());
 }
 
 #[test]
@@ -550,8 +563,16 @@ fn invalid_script_window_is_reported_in_layout() {
     sections.properties = true;
 
     let json = pkg.to_json(&[0; 4], &sections);
-    let err = json["exports"][0]["serial_window_error"].as_str().unwrap();
-    assert!(err.contains("outside serial size"));
+    let diag = diagnostic_with_code(&json, "serial_window_invalid");
+    assert_eq!(diag["severity"].as_str(), Some("error"));
+    assert_eq!(diag["path"].as_str(), Some("/exports/0"));
+    assert!(
+        diag["message"]
+            .as_str()
+            .unwrap()
+            .contains("outside serial size")
+    );
+    assert!(json["exports"][0].get("serial_window_error").is_none());
     assert!(json["exports"][0].get("properties").is_none());
 }
 
@@ -868,11 +889,17 @@ fn pre_complete_typename_version_reports_unsupported_properties() {
     sections.properties = true;
 
     let json = pkg.to_json(&[0u8; 8], &sections);
-    let diag = json["exports"][0]["properties_unsupported_version"]
-        .as_str()
-        .unwrap();
-    assert!(diag.contains("1011"));
+    let diag = diagnostic_with_code(&json, "properties_unsupported_version");
+    assert_eq!(diag["severity"].as_str(), Some("warning"));
+    assert_eq!(diag["path"].as_str(), Some("/exports/0/properties"));
+    assert!(diag["message"].as_str().unwrap().contains("1011"));
+    assert_eq!(diag["details"]["file_version_ue5"].as_i64(), Some(1011));
     assert!(json["exports"][0].get("properties").is_none());
+    assert!(
+        json["exports"][0]
+            .get("properties_unsupported_version")
+            .is_none()
+    );
     assert!(
         json["exports"][0]
             .get("properties_unconsumed_bytes")
@@ -1716,6 +1743,15 @@ fn native_struct_edgraph_pin_type_decodes() {
     let v = &entries[0].value;
     assert_eq!(v["category"].as_str(), Some("int"));
     assert_eq!(v["sub_category_object"]["index"].as_i64(), Some(-9));
+    assert_eq!(v["container_type"].as_str(), Some("none"));
+    assert_eq!(v["is_reference"].as_bool(), Some(false));
+    assert_eq!(v["is_weak_pointer"].as_bool(), Some(false));
+    assert_eq!(v["is_const"].as_bool(), Some(false));
+    assert_eq!(v["is_uobject_wrapper"].as_bool(), Some(false));
+    assert_eq!(
+        v["serialize_as_single_precision_float"].as_bool(),
+        Some(false)
+    );
 }
 
 #[test]
@@ -2010,7 +2046,12 @@ fn push_empty_ftext(v: &mut Vec<u8>) {
 #[test]
 fn node_pin_array_decodes() {
     let names = NameMap {
-        names: vec!["MyPin".to_string(), "exec".to_string(), "None".to_string()],
+        names: vec![
+            "MyPin".to_string(),
+            "exec".to_string(),
+            "None".to_string(),
+            "MemberFunc".to_string(),
+        ],
     };
     let mut d = Vec::new();
     push_i32(&mut d, 0); // PossiblySerializeObjectGuid presence = false
@@ -2030,12 +2071,14 @@ fn node_pin_array_decodes() {
     push_raw_name(&mut d, 2); // pin type sub_category
     push_i32(&mut d, 0); // sub_category_object
     d.push(0); // container type = none
-    push_i32(&mut d, 0); // bIsReference
-    push_i32(&mut d, 0); // bIsWeakPointer
-    push_i32(&mut d, 0); // member reference parent
-    push_raw_name(&mut d, 2); // member reference name
-    d.extend_from_slice(&[0u8; 16]); // member reference guid
-    push_i32(&mut d, 0); // bIsConst
+    push_i32(&mut d, 1); // bIsReference
+    push_i32(&mut d, 1); // bIsWeakPointer
+    push_i32(&mut d, -4); // member reference parent
+    push_raw_name(&mut d, 3); // member reference name
+    push_guid(&mut d, 4, 3, 2, 1); // member reference guid
+    push_i32(&mut d, 1); // bIsConst
+    push_i32(&mut d, 1); // bIsUObjectWrapper
+    push_i32(&mut d, 1); // bSerializeAsSinglePrecisionFloat
     push_fstring(&mut d, ""); // default value
     push_fstring(&mut d, ""); // autogenerated default
     push_i32(&mut d, 0); // default object
@@ -2046,9 +2089,11 @@ fn node_pin_array_decodes() {
     push_guid(&mut d, 9, 9, 9, 9); // referenced pin guid
     push_i32(&mut d, 0); // SubPins count
     push_i32(&mut d, 1); // parent pin = null
-    push_i32(&mut d, 1); // reference passthrough = null
-    d.extend_from_slice(&[0u8; 16]); // persistent guid (editor-only block)
-    push_u32(&mut d, 0); // editor bitfield
+    push_i32(&mut d, 0); // reference passthrough = not null
+    push_i32(&mut d, 5); // pass-through node index
+    push_guid(&mut d, 8, 8, 8, 8); // pass-through pin guid
+    push_guid(&mut d, 6, 7, 8, 9); // persistent guid (editor-only block)
+    push_u32(&mut d, (1 << 0) | (1 << 3) | (1 << 5)); // editor bitfield
 
     let ctx = ParseCtx {
         names: &names,
@@ -2058,7 +2103,11 @@ fn node_pin_array_decodes() {
         niagara_version: -1,
         fortnite_main_version: -1,
     };
-    let vc = PinSerCtx::default();
+    let vc = PinSerCtx {
+        has_uobject_wrapper: true,
+        has_single_precision_float: true,
+        ..PinSerCtx::default()
+    };
     let mut r = Reader::new(&d);
     let pins = parse_node_pins(&mut r, d.len() as u64, &ctx, &vc).expect("pins should parse");
 
@@ -2068,11 +2117,37 @@ fn node_pin_array_decodes() {
     assert_eq!(p.name, "MyPin");
     assert_eq!(direction_label(p.direction), "output");
     assert_eq!(p.category, "exec");
+    assert_eq!(container_type_label(p.container_type), "none");
+    assert!(p.is_reference);
+    assert!(p.is_weak_pointer);
+    assert_eq!(p.member_parent, -4);
+    assert_eq!(p.member_name, "MemberFunc");
+    assert_eq!(p.member_guid.to_hex(), "00000004000000030000000200000001");
+    assert!(p.is_const);
+    assert!(p.is_uobject_wrapper);
+    assert!(p.serialize_as_single_precision_float);
     assert_eq!(p.pin_id.to_hex(), "00000001000000020000000300000004");
     assert_eq!(p.linked_to.len(), 1);
     assert_eq!(p.linked_to[0].node_index, 2);
     assert!(p.sub_pins.is_empty());
     assert!(p.parent_pin.is_none());
+    let pass_through = p.reference_pass_through.as_ref().unwrap();
+    assert_eq!(pass_through.node_index, 5);
+    assert_eq!(
+        pass_through.pin_id.to_hex(),
+        "00000008000000080000000800000008"
+    );
+    assert_eq!(
+        p.persistent_guid.unwrap().to_hex(),
+        "00000006000000070000000800000009"
+    );
+    let flags = p.editor_flags.as_ref().unwrap();
+    assert!(flags.hidden);
+    assert!(!flags.not_connectable);
+    assert!(!flags.default_value_read_only);
+    assert!(flags.default_value_ignored);
+    assert!(!flags.advanced_view);
+    assert!(flags.orphaned_pin);
 }
 
 #[test]
@@ -2097,17 +2172,17 @@ fn edgraph_pin_type_map_container_decodes() {
     push_raw_name(&mut value, 4); // terminal category = "string"
     push_raw_name(&mut value, 5); // terminal sub_category
     push_i32(&mut value, 0); // terminal sub_category_object
-    push_i32(&mut value, 0); // terminal bIsConst
-    push_i32(&mut value, 0); // terminal bIsWeakPointer
-    push_i32(&mut value, 0); // terminal bIsUObjectWrapper (wrapper flag enabled)
-    push_i32(&mut value, 0); // bIsReference
-    push_i32(&mut value, 0); // bIsWeakPointer
-    push_i32(&mut value, 0); // member reference parent
-    push_raw_name(&mut value, 5); // member reference name
-    value.extend_from_slice(&[0u8; 16]); // member reference guid
-    push_i32(&mut value, 0); // bIsConst
-    push_i32(&mut value, 0); // bIsUObjectWrapper
-    push_i32(&mut value, 0); // bSerializeAsSinglePrecisionFloat
+    push_i32(&mut value, 1); // terminal bIsConst
+    push_i32(&mut value, 1); // terminal bIsWeakPointer
+    push_i32(&mut value, 1); // terminal bIsUObjectWrapper (wrapper flag enabled)
+    push_i32(&mut value, 1); // bIsReference
+    push_i32(&mut value, 1); // bIsWeakPointer
+    push_i32(&mut value, -8); // member reference parent
+    push_raw_name(&mut value, 4); // member reference name
+    push_guid(&mut value, 1, 1, 2, 2); // member reference guid
+    push_i32(&mut value, 1); // bIsConst
+    push_i32(&mut value, 1); // bIsUObjectWrapper
+    push_i32(&mut value, 1); // bSerializeAsSinglePrecisionFloat
     let d = build_struct_property(2, 5, &value);
 
     let ctx = ParseCtx {
@@ -2130,6 +2205,25 @@ fn edgraph_pin_type_map_container_decodes() {
     let v = &entries[0].value;
     assert_eq!(v["category"].as_str(), Some("int"));
     assert_eq!(v["sub_category_object"]["index"].as_i64(), Some(-4));
+    assert_eq!(v["container_type"].as_str(), Some("map"));
+    assert_eq!(v["value_type"]["category"].as_str(), Some("string"));
+    assert_eq!(v["value_type"]["is_const"].as_bool(), Some(true));
+    assert_eq!(v["value_type"]["is_weak_pointer"].as_bool(), Some(true));
+    assert_eq!(v["value_type"]["is_uobject_wrapper"].as_bool(), Some(true));
+    assert_eq!(v["is_reference"].as_bool(), Some(true));
+    assert_eq!(v["is_weak_pointer"].as_bool(), Some(true));
+    assert_eq!(v["member_reference"]["parent"]["index"].as_i64(), Some(-8));
+    assert_eq!(v["member_reference"]["name"].as_str(), Some("string"));
+    assert_eq!(
+        v["member_reference"]["guid"].as_str(),
+        Some("00000001000000010000000200000002")
+    );
+    assert_eq!(v["is_const"].as_bool(), Some(true));
+    assert_eq!(v["is_uobject_wrapper"].as_bool(), Some(true));
+    assert_eq!(
+        v["serialize_as_single_precision_float"].as_bool(),
+        Some(true)
+    );
 }
 
 #[test]

@@ -1,6 +1,8 @@
 use crate::name::NameMap;
 use crate::object::{ObjectExport, ObjectImport};
-use crate::pin::{Pin, PinRef, PinSerCtx, direction_label, parse_node_pins};
+use crate::pin::{
+    Pin, PinRef, PinSerCtx, PinTerminalType, container_type_label, direction_label, parse_node_pins,
+};
 use crate::property::{
     ParseCtx, PropertyEntry, entries_to_json, parse_object_properties, read_soft_object_path,
 };
@@ -237,6 +239,8 @@ impl Package {
 
     pub fn to_json(&self, data: &[u8], opts: &OutputSections) -> Value {
         let mut root = serde_json::Map::new();
+        let mut diagnostics = Vec::new();
+        self.collect_table_diagnostics(&mut diagnostics);
         if opts.summary {
             root.insert("summary".into(), self.summary_json());
         }
@@ -250,8 +254,12 @@ impl Package {
             root.insert("imports".into(), self.imports_json());
         }
         if opts.exports {
-            root.insert("exports".into(), self.exports_json(data, opts));
+            root.insert(
+                "exports".into(),
+                self.exports_json(data, opts, &mut diagnostics),
+            );
         }
+        root.insert("diagnostics".into(), Value::Array(diagnostics));
         Value::Object(root)
     }
 
@@ -262,7 +270,7 @@ impl Package {
             .iter()
             .map(|c| json!({ "key": c.key.to_hex(), "version": c.version }))
             .collect();
-        let mut summary = json!({
+        let summary = json!({
             "package_name": s.package_name,
             "tag": format!("0x{:08X}", s.tag),
             "legacy_file_version": s.legacy_file_version,
@@ -279,17 +287,28 @@ impl Package {
             "bulk_data_start_offset": s.bulk_data_start_offset,
             "custom_versions": custom,
         });
-        if let Some(err) = &self.soft_object_path_error
-            && let Value::Object(ref mut m) = summary
-        {
-            m.insert("soft_object_paths_error".into(), json!(err));
-        }
-        if let Some(err) = &self.soft_package_reference_error
-            && let Value::Object(ref mut m) = summary
-        {
-            m.insert("soft_package_references_error".into(), json!(err));
-        }
         summary
+    }
+
+    fn collect_table_diagnostics(&self, diagnostics: &mut Vec<Value>) {
+        if let Some(err) = &self.soft_object_path_error {
+            diagnostics.push(diagnostic(
+                "warning",
+                "soft_object_path_table_error",
+                "/summary/soft_object_paths".to_string(),
+                err.clone(),
+                None,
+            ));
+        }
+        if let Some(err) = &self.soft_package_reference_error {
+            diagnostics.push(diagnostic(
+                "warning",
+                "soft_package_reference_table_error",
+                "/summary/soft_package_references".to_string(),
+                err.clone(),
+                None,
+            ));
+        }
     }
 
     fn imports_json(&self) -> Value {
@@ -348,7 +367,12 @@ impl Package {
             .any(|p| p.eq_ignore_ascii_case(package_path))
     }
 
-    fn exports_json(&self, data: &[u8], opts: &OutputSections) -> Value {
+    fn exports_json(
+        &self,
+        data: &[u8],
+        opts: &OutputSections,
+        diagnostics: &mut Vec<Value>,
+    ) -> Value {
         // resolve_object_ref walks the outer chain and allocates; the same index recurs
         // often across a large property/pin tree, so memoize the resolved JSON by index.
         let object_ref_memo = std::cell::RefCell::new(HashMap::<i32, Value>::new());
@@ -441,9 +465,17 @@ impl Package {
             let serial_window = match export_serial_window(exp, has_script, file_len) {
                 Ok(w) => w,
                 Err(err) => {
-                    if opts.layout {
-                        obj.insert("serial_window_error".into(), json!(err));
-                    }
+                    diagnostics.push(diagnostic(
+                        "error",
+                        "serial_window_invalid",
+                        format!("/exports/{i}"),
+                        err,
+                        Some(json!({
+                            "export_index": pkg_index,
+                            "serial_offset": exp.serial_offset,
+                            "serial_size": exp.serial_size,
+                        })),
+                    ));
                     None
                 }
             };
@@ -455,14 +487,22 @@ impl Package {
 
                 if !modern_property_tags {
                     if opts.properties && end > start {
-                        obj.insert(
-                            "properties_unsupported_version".into(),
-                            json!(format!(
+                        diagnostics.push(diagnostic(
+                            "warning",
+                            "properties_unsupported_version",
+                            format!("/exports/{i}/properties"),
+                            format!(
                                 "tagged-property decoding requires FileVersionUE5 >= {} (complete type names); this package is {}",
                                 ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
                                 self.summary.file_version_ue5
-                            )),
-                        );
+                            ),
+                            Some(json!({
+                                "required_file_version_ue5": ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+                                "file_version_ue5": self.summary.file_version_ue5,
+                                "property_start": start,
+                                "property_end": end,
+                            })),
+                        ));
                     } else if opts.properties && end == start {
                         obj.insert("properties".into(), Value::Array(Vec::new()));
                     }
@@ -484,10 +524,21 @@ impl Package {
                         let consumed = reader.pos().saturating_sub(start);
                         let range = end - start;
                         if consumed < range {
-                            obj.insert(
-                                "properties_unconsumed_bytes".into(),
-                                json!(range - consumed),
-                            );
+                            diagnostics.push(diagnostic(
+                                "warning",
+                                "properties_unconsumed_bytes",
+                                format!("/exports/{i}/properties"),
+                                format!(
+                                    "property parser left {} byte(s) unconsumed",
+                                    range - consumed
+                                ),
+                                Some(json!({
+                                    "unconsumed_bytes": range - consumed,
+                                    "property_start": start,
+                                    "property_end": end,
+                                    "parser_position": reader.pos(),
+                                })),
+                            ));
                         }
                     }
                 } else if opts.properties && end == start {
@@ -510,7 +561,17 @@ impl Package {
                 if pins.is_none() {
                     let pin_bytes = window.serial_end.saturating_sub(window.property_end);
                     if has_script && is_node && pin_bytes > 0 {
-                        obj.insert("pins_unparsed_bytes".into(), json!(pin_bytes));
+                        diagnostics.push(diagnostic(
+                            "warning",
+                            "pins_unparsed_bytes",
+                            format!("/exports/{i}/pins"),
+                            format!("pin parser could not decode {pin_bytes} byte(s)"),
+                            Some(json!({
+                                "unparsed_bytes": pin_bytes,
+                                "property_end": window.property_end,
+                                "serial_end": window.serial_end,
+                            })),
+                        ));
                     }
                 }
             }
@@ -672,6 +733,37 @@ impl Package {
                         self.resolve_object_ref(p.sub_category_object),
                     );
                 }
+                o.insert(
+                    "container_type".into(),
+                    json!(container_type_label(p.container_type)),
+                );
+                if let Some(value_type) = &p.value_type {
+                    o.insert(
+                        "value_type".into(),
+                        terminal_type_to_json(value_type, |idx| self.resolve_object_ref(idx)),
+                    );
+                }
+                o.insert("is_reference".into(), json!(p.is_reference));
+                o.insert("is_weak_pointer".into(), json!(p.is_weak_pointer));
+                o.insert("is_const".into(), json!(p.is_const));
+                o.insert("is_uobject_wrapper".into(), json!(p.is_uobject_wrapper));
+                o.insert(
+                    "serialize_as_single_precision_float".into(),
+                    json!(p.serialize_as_single_precision_float),
+                );
+                if p.member_parent != 0 || !p.member_name.is_empty() || !p.member_guid.is_zero() {
+                    let mut member = serde_json::Map::new();
+                    if p.member_parent != 0 {
+                        member.insert("parent".into(), self.resolve_object_ref(p.member_parent));
+                    }
+                    if !p.member_name.is_empty() {
+                        member.insert("name".into(), json!(p.member_name));
+                    }
+                    if !p.member_guid.is_zero() {
+                        member.insert("guid".into(), json!(p.member_guid.to_hex()));
+                    }
+                    o.insert("member_reference".into(), Value::Object(member));
+                }
                 if !p.default_value.is_empty() {
                     o.insert("default_value".into(), json!(p.default_value));
                 }
@@ -702,6 +794,30 @@ impl Package {
                     o.insert(
                         "parent_pin".into(),
                         self.link_to_json(parent, names, export_full_names),
+                    );
+                }
+                if let Some(pass_through) = &p.reference_pass_through {
+                    o.insert(
+                        "reference_pass_through".into(),
+                        self.link_to_json(pass_through, names, export_full_names),
+                    );
+                }
+                if let Some(guid) = p.persistent_guid
+                    && !guid.is_zero()
+                {
+                    o.insert("persistent_guid".into(), json!(guid.to_hex()));
+                }
+                if let Some(flags) = &p.editor_flags {
+                    o.insert(
+                        "editor_flags".into(),
+                        json!({
+                            "hidden": flags.hidden,
+                            "not_connectable": flags.not_connectable,
+                            "default_value_read_only": flags.default_value_read_only,
+                            "default_value_ignored": flags.default_value_ignored,
+                            "advanced_view": flags.advanced_view,
+                            "orphaned_pin": flags.orphaned_pin,
+                        }),
                     );
                 }
                 Value::Object(o)
@@ -855,6 +971,45 @@ fn is_valid_package_name(name: &str) -> bool {
 
 fn name_or_null(s: String) -> Value {
     if s.is_empty() { Value::Null } else { json!(s) }
+}
+
+fn terminal_type_to_json<F>(ty: &PinTerminalType, resolve: F) -> Value
+where
+    F: Fn(i32) -> Value,
+{
+    let mut o = serde_json::Map::new();
+    o.insert("category".into(), json!(ty.category));
+    if !ty.sub_category.is_empty() {
+        o.insert("sub_category".into(), json!(ty.sub_category));
+    }
+    if ty.sub_category_object != 0 {
+        o.insert(
+            "sub_category_object".into(),
+            resolve(ty.sub_category_object),
+        );
+    }
+    o.insert("is_const".into(), json!(ty.is_const));
+    o.insert("is_weak_pointer".into(), json!(ty.is_weak_pointer));
+    o.insert("is_uobject_wrapper".into(), json!(ty.is_uobject_wrapper));
+    Value::Object(o)
+}
+
+fn diagnostic(
+    severity: &str,
+    code: &str,
+    path: String,
+    message: String,
+    details: Option<Value>,
+) -> Value {
+    let mut o = serde_json::Map::new();
+    o.insert("severity".into(), json!(severity));
+    o.insert("code".into(), json!(code));
+    o.insert("path".into(), json!(path));
+    o.insert("message".into(), json!(message));
+    if let Some(details) = details {
+        o.insert("details".into(), details);
+    }
+    Value::Object(o)
 }
 
 fn export_serial_window(
