@@ -4,7 +4,7 @@ use cc_uax::package::{
     collect_package_references, package_path_from_relative, referenced_packages_from_bytes,
 };
 use cc_uax::pin::{PinSerCtx, container_type_label, direction_label, parse_node_pins};
-use cc_uax::property::{ParseCtx, TypeName, parse_properties};
+use cc_uax::property::{ParseCtx, TypeName, parse_object_properties, parse_properties};
 use cc_uax::reader::{RawName, Reader};
 use cc_uax::{OutputSections, Package};
 
@@ -419,6 +419,8 @@ fn nested_struct_respects_declared_value_end() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -455,6 +457,8 @@ fn truncated_property_array_index_stops_parse() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -489,6 +493,8 @@ fn excessive_array_count_falls_back_to_hex() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -533,6 +539,8 @@ fn native_struct_array_falls_back_to_hex() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -649,6 +657,8 @@ fn text_property_unknown_history_falls_back_to_hex() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, end);
@@ -708,6 +718,8 @@ fn native_struct_box_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -743,6 +755,8 @@ fn native_struct_box2f_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -778,6 +792,8 @@ fn parse_text_property_value(value: &[u8]) -> serde_json::Value {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -866,19 +882,47 @@ fn text_history_transform_decodes_nested_text() {
     assert!(value["source"]["text"].is_null());
 }
 
+fn push_legacy_tag_header(v: &mut Vec<u8>, name_idx: i32, type_idx: i32, size: i32) {
+    push_raw_name(v, name_idx);
+    push_raw_name(v, type_idx);
+    push_i32(v, size);
+    push_i32(v, 0); // ArrayIndex
+}
+
+fn push_legacy_tag_tail(v: &mut Vec<u8>) {
+    v.push(0); // HasPropertyGuid
+    v.push(0); // UE5 1011 PropertyExtensions = NoExtension
+}
+
+fn push_legacy_tag_tail_with_guid(v: &mut Vec<u8>) {
+    v.push(1); // HasPropertyGuid
+    push_guid(v, 1, 2, 3, 4);
+    v.push(0); // UE5 1011 PropertyExtensions = NoExtension
+}
+
 #[test]
-fn pre_complete_typename_version_reports_unsupported_properties() {
-    // Packages older than PROPERTY_TAG_COMPLETE_TYPE_NAME (1012) use a different tag
-    // layout; decoding must be skipped with a clear diagnostic, not a silent empty list.
+fn pre_complete_typename_version_decodes_legacy_properties() {
     let mut base = Package::parse(&build_minimal_package()).unwrap();
     base.summary.file_version_ue5 = 1011;
+    let mut data = Vec::new();
+    data.push(0); // object serialization control byte
+    push_legacy_tag_header(&mut data, 1, 2, 4);
+    push_legacy_tag_tail(&mut data);
+    push_i32(&mut data, 123);
+    push_raw_name(&mut data, 3); // None
+
     let pkg = Package {
         summary: base.summary,
         names: NameMap {
-            names: vec!["Obj".to_string()],
+            names: vec![
+                "Obj".to_string(),
+                "Value".to_string(),
+                "IntProperty".to_string(),
+                "None".to_string(),
+            ],
         },
         imports: Vec::new(),
-        exports: vec![test_export(0, 8, 0, 0)],
+        exports: vec![test_export(0, data.len() as i64, 0, 0)],
         soft_object_paths: Vec::new(),
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
@@ -888,23 +932,140 @@ fn pre_complete_typename_version_reports_unsupported_properties() {
     sections.exports = true;
     sections.properties = true;
 
-    let json = pkg.to_json(&[0u8; 8], &sections);
-    let diag = diagnostic_with_code(&json, "properties_unsupported_version");
-    assert_eq!(diag["severity"].as_str(), Some("warning"));
-    assert_eq!(diag["path"].as_str(), Some("/exports/0/properties"));
-    assert!(diag["message"].as_str().unwrap().contains("1011"));
-    assert_eq!(diag["details"]["file_version_ue5"].as_i64(), Some(1011));
-    assert!(json["exports"][0].get("properties").is_none());
+    let json = pkg.to_json(&data, &sections);
+    let props = json["exports"][0]["properties"].as_array().unwrap();
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0]["name"].as_str(), Some("Value"));
+    assert_eq!(props[0]["type"].as_str(), Some("IntProperty"));
+    assert_eq!(props[0]["value"].as_i64(), Some(123));
     assert!(
-        json["exports"][0]
-            .get("properties_unsupported_version")
-            .is_none()
+        !json["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diag| diag["code"].as_str() == Some("properties_unsupported_version"))
     );
-    assert!(
-        json["exports"][0]
-            .get("properties_unconsumed_bytes")
-            .is_none()
+}
+
+#[test]
+fn legacy_property_tags_decode_type_metadata() {
+    let names = NameMap {
+        names: vec![
+            "BoolVal".to_string(),          // 0
+            "BoolProperty".to_string(),     // 1
+            "ByteVal".to_string(),          // 2
+            "ByteProperty".to_string(),     // 3
+            "MyEnum".to_string(),           // 4
+            "EnumValue".to_string(),        // 5
+            "StructVal".to_string(),        // 6
+            "StructProperty".to_string(),   // 7
+            "Vector".to_string(),           // 8
+            "ArrayVal".to_string(),         // 9
+            "ArrayProperty".to_string(),    // 10
+            "IntProperty".to_string(),      // 11
+            "SetVal".to_string(),           // 12
+            "SetProperty".to_string(),      // 13
+            "MapVal".to_string(),           // 14
+            "MapProperty".to_string(),      // 15
+            "OptionalVal".to_string(),      // 16
+            "OptionalProperty".to_string(), // 17
+            "GuidVal".to_string(),          // 18
+            "None".to_string(),             // 19
+        ],
+    };
+    let mut d = Vec::new();
+    d.push(0); // object serialization control byte
+
+    push_legacy_tag_header(&mut d, 0, 1, 0);
+    d.push(1); // BoolVal
+    push_legacy_tag_tail(&mut d);
+
+    push_legacy_tag_header(&mut d, 2, 3, 8);
+    push_raw_name(&mut d, 4); // EnumName
+    push_legacy_tag_tail(&mut d);
+    push_raw_name(&mut d, 5); // enum value
+
+    push_legacy_tag_header(&mut d, 6, 7, 24);
+    push_raw_name(&mut d, 8); // StructName
+    d.extend_from_slice(&[0u8; 16]); // StructGuid
+    push_legacy_tag_tail(&mut d);
+    push_f64(&mut d, 1.0);
+    push_f64(&mut d, 2.0);
+    push_f64(&mut d, 3.0);
+
+    push_legacy_tag_header(&mut d, 9, 10, 12);
+    push_raw_name(&mut d, 11); // InnerType
+    push_legacy_tag_tail(&mut d);
+    push_i32(&mut d, 2);
+    push_i32(&mut d, 7);
+    push_i32(&mut d, 8);
+
+    push_legacy_tag_header(&mut d, 12, 13, 16);
+    push_raw_name(&mut d, 11); // InnerType
+    push_legacy_tag_tail(&mut d);
+    push_i32(&mut d, 0); // NumToRemove
+    push_i32(&mut d, 2);
+    push_i32(&mut d, 9);
+    push_i32(&mut d, 10);
+
+    push_legacy_tag_header(&mut d, 14, 15, 16);
+    push_raw_name(&mut d, 11); // Key InnerType
+    push_raw_name(&mut d, 11); // ValueType
+    push_legacy_tag_tail(&mut d);
+    push_i32(&mut d, 0); // NumKeysToRemove
+    push_i32(&mut d, 1);
+    push_i32(&mut d, 3);
+    push_i32(&mut d, 4);
+
+    push_legacy_tag_header(&mut d, 16, 17, 8);
+    push_raw_name(&mut d, 11); // InnerType
+    push_legacy_tag_tail(&mut d);
+    push_i32(&mut d, 1); // optional is set
+    push_i32(&mut d, 77);
+
+    push_legacy_tag_header(&mut d, 18, 11, 4);
+    push_legacy_tag_tail_with_guid(&mut d);
+    push_i32(&mut d, 99);
+
+    push_raw_name(&mut d, 19); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5:
+            cc_uax::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION,
+    };
+    let mut r = Reader::new(&d);
+    let props = parse_object_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(r.pos(), d.len() as u64);
+    assert_eq!(props.len(), 8);
+    assert_eq!(props[0].value.as_bool(), Some(true));
+    assert_eq!(props[1].type_str, "ByteProperty(MyEnum)");
+    assert_eq!(props[1].value.as_str(), Some("EnumValue"));
+    assert_eq!(props[2].type_str, "StructProperty(Vector)");
+    assert_eq!(props[2].value["x"].as_f64(), Some(1.0));
+    assert_eq!(props[3].value.as_array().unwrap()[1].as_i64(), Some(8));
+    assert_eq!(props[4].value.as_array().unwrap()[1].as_i64(), Some(10));
+    assert_eq!(
+        props[5].value.as_array().unwrap()[0]["key"].as_i64(),
+        Some(3)
     );
+    assert_eq!(
+        props[5].value.as_array().unwrap()[0]["value"].as_i64(),
+        Some(4)
+    );
+    assert_eq!(props[6].value.as_i64(), Some(77));
+    assert_eq!(
+        props[7].guid.as_deref(),
+        Some("00000001000000020000000300000004")
+    );
+    assert_eq!(props[7].value.as_i64(), Some(99));
 }
 
 #[test]
@@ -939,6 +1100,8 @@ fn property_tag_extensions_are_byte_aligned() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -979,6 +1142,8 @@ fn skipped_serialize_property_is_marked_and_parsing_continues() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1016,6 +1181,8 @@ fn native_struct_gameplay_tag_container_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1051,6 +1218,8 @@ fn native_struct_vector4f_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1094,6 +1263,8 @@ fn native_struct_niagara_variable_decodes() {
         soft_object_paths: &[],
         niagara_version: 0,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1134,6 +1305,8 @@ fn native_struct_spline_empty_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1182,6 +1355,8 @@ fn optional_property_decodes_set_and_unset() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1213,6 +1388,8 @@ fn native_struct_gameplay_effect_version_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1255,6 +1432,8 @@ fn float_curve_parses_as_tagged_fallback() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1315,6 +1494,8 @@ fn native_struct_rich_curve_key_array_keeps_stride() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1359,6 +1540,8 @@ fn material_scalar_input_resolves_expression() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1399,6 +1582,8 @@ fn native_struct_per_platform_float_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1437,6 +1622,8 @@ fn native_struct_movie_scene_frame_range_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1495,6 +1682,8 @@ fn native_struct_movie_scene_float_channel_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: 53,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1549,6 +1738,8 @@ fn text_ordered_format_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1594,6 +1785,8 @@ fn text_string_table_entry_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1637,6 +1830,8 @@ fn multicast_inline_delegate_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1683,6 +1878,8 @@ fn native_struct_instanced_struct_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1735,6 +1932,8 @@ fn native_struct_edgraph_pin_type_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1786,6 +1985,8 @@ fn soft_object_property_resolves_list_index() {
         soft_object_paths: &table,
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1823,6 +2024,8 @@ fn lazy_object_property_decodes_guid() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1881,6 +2084,8 @@ fn frame_rate_struct_parses_as_tagged_properties() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1935,6 +2140,8 @@ fn map_removed_keys_are_discarded() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -1981,6 +2188,8 @@ fn set_removed_elements_are_discarded() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -2102,6 +2311,8 @@ fn node_pin_array_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let vc = PinSerCtx {
         has_uobject_wrapper: true,
@@ -2197,6 +2408,8 @@ fn edgraph_pin_type_map_container_decodes() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -2260,6 +2473,8 @@ fn tagged_fallback_struct_parses_as_properties() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
+        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);

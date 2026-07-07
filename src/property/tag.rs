@@ -2,6 +2,7 @@ use super::value::parse_value;
 use super::{OVERRIDABLE_SERIALIZATION_BIT, PREVIEW_MAX, ParseCtx, PropertyEntry, to_hex};
 use crate::name::NameMap;
 use crate::reader::Reader;
+use crate::version::{ue4, ue5};
 use anyhow::{Result, bail};
 use serde_json::json;
 
@@ -20,6 +21,17 @@ pub struct TypeName {
 }
 
 impl TypeName {
+    fn leaf(name: String) -> Self {
+        TypeName {
+            name,
+            params: Vec::new(),
+        }
+    }
+
+    fn with_params(name: String, params: Vec<TypeName>) -> Self {
+        TypeName { name, params }
+    }
+
     pub fn parse(r: &mut Reader, names: &NameMap) -> Result<Self> {
         let mut flat: Vec<(String, i32)> = Vec::new();
         let mut remaining: i64 = 1;
@@ -72,6 +84,17 @@ impl TypeName {
     }
 }
 
+struct PropertyTag {
+    name: String,
+    type_name: TypeName,
+    size: i32,
+    array_index: i32,
+    guid: Option<String>,
+    is_binary_native: bool,
+    bool_val: bool,
+    is_skipped: bool,
+}
+
 pub(crate) fn parse_properties(
     r: &mut Reader,
     ctx: &ParseCtx,
@@ -87,96 +110,204 @@ pub(crate) fn parse_properties(
         if r.pos() + 8 > end_limit {
             break;
         }
-        let name_raw = match r.read_raw_name() {
-            Ok(n) => n,
+        let tag = match read_property_tag(r, ctx, end_limit) {
+            Ok(Some(tag)) => tag,
+            Ok(None) => break,
             Err(_) => break,
         };
-        let name = ctx.names.resolve_raw(name_raw);
-        if name == "None" || name.is_empty() {
-            break;
-        }
-        let type_name = match TypeName::parse(r, ctx.names) {
-            Ok(t) => t,
-            Err(_) => break,
-        };
-        let size = match r.read_i32() {
-            Ok(s) => s,
-            Err(_) => break,
-        };
-        let flags = match r.read_u8() {
-            Ok(f) => f,
-            Err(_) => break,
-        };
-        let array_index = if flags & TAG_FLAG_HAS_ARRAY_INDEX != 0 {
-            match r.read_i32() {
-                Ok(i) => i,
-                Err(_) => break,
-            }
-        } else {
-            0
-        };
-        let guid = if flags & TAG_FLAG_HAS_PROPERTY_GUID != 0 {
-            match r.read_guid() {
-                Ok(g) => Some(g.to_hex()),
-                Err(_) => break,
-            }
-        } else {
-            None
-        };
-        if flags & TAG_FLAG_HAS_PROPERTY_EXTENSIONS != 0 && parse_extensions(r).is_err() {
-            break;
-        }
-        let is_binary_native = flags & TAG_FLAG_HAS_BINARY_OR_NATIVE_SERIALIZE != 0;
-        let bool_val = flags & TAG_FLAG_BOOL_TRUE != 0;
-        // SkippedSerialize (0x20): the value was intentionally not written (Size == 0),
-        // so there is nothing to decode for this property.
-        let is_skipped = flags & TAG_FLAG_SKIPPED_SERIALIZE != 0;
 
-        if size < 0 {
+        if tag.size < 0 {
             break;
         }
         let value_start = r.pos();
-        let aligned = value_start.saturating_add(size as u64);
+        let aligned = value_start.saturating_add(tag.size as u64);
         if aligned > end_limit {
             break;
         }
 
-        let value = if is_skipped {
+        // SkippedSerialize (0x20): the value was intentionally not written (Size == 0),
+        // so there is nothing to decode for this property.
+        let value = if tag.is_skipped {
             json!({ "@skipped": true })
-        } else if type_name.name == "BoolProperty" {
-            json!(bool_val)
+        } else if tag.type_name.name == "BoolProperty" {
+            json!(tag.bool_val)
         } else {
-            match parse_value(r, &type_name, ctx, is_binary_native, aligned) {
+            match parse_value(r, &tag.type_name, ctx, tag.is_binary_native, aligned) {
                 Ok(v) => v,
                 Err(_) => {
                     let _ = r.seek(value_start);
-                    let n = (size as usize).min(PREVIEW_MAX);
+                    let n = (tag.size as usize).min(PREVIEW_MAX);
                     let preview = r.read_bytes(n).unwrap_or_default();
-                    json!({ "@unparsed": to_hex(&preview), "size": size })
+                    json!({ "@unparsed": to_hex(&preview), "size": tag.size })
                 }
             }
         };
 
         if r.seek(aligned).is_err() {
             entries.push(PropertyEntry {
-                name,
-                type_str: type_name.display(),
-                array_index,
+                name: tag.name,
+                type_str: tag.type_name.display(),
+                array_index: tag.array_index,
                 value,
-                guid,
+                guid: tag.guid,
             });
             break;
         }
 
         entries.push(PropertyEntry {
-            name,
-            type_str: type_name.display(),
-            array_index,
+            name: tag.name,
+            type_str: tag.type_name.display(),
+            array_index: tag.array_index,
             value,
-            guid,
+            guid: tag.guid,
         });
     }
     entries
+}
+
+fn read_property_tag(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    end_limit: u64,
+) -> Result<Option<PropertyTag>> {
+    let name_raw = r.read_raw_name()?;
+    let name = ctx.names.resolve_raw(name_raw);
+    if name == "None" || name.is_empty() {
+        return Ok(None);
+    }
+    if ctx.file_version_ue5 >= ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME {
+        read_complete_property_tag(r, ctx, name).map(Some)
+    } else {
+        read_legacy_property_tag(r, ctx, end_limit, name).map(Some)
+    }
+}
+
+fn read_complete_property_tag(r: &mut Reader, ctx: &ParseCtx, name: String) -> Result<PropertyTag> {
+    let type_name = TypeName::parse(r, ctx.names)?;
+    let size = r.read_i32()?;
+    let flags = r.read_u8()?;
+    let array_index = if flags & TAG_FLAG_HAS_ARRAY_INDEX != 0 {
+        r.read_i32()?
+    } else {
+        0
+    };
+    let guid = if flags & TAG_FLAG_HAS_PROPERTY_GUID != 0 {
+        Some(r.read_guid()?.to_hex())
+    } else {
+        None
+    };
+    if flags & TAG_FLAG_HAS_PROPERTY_EXTENSIONS != 0 {
+        parse_extensions(r)?;
+    }
+    Ok(PropertyTag {
+        name,
+        type_name,
+        size,
+        array_index,
+        guid,
+        is_binary_native: flags & TAG_FLAG_HAS_BINARY_OR_NATIVE_SERIALIZE != 0,
+        bool_val: flags & TAG_FLAG_BOOL_TRUE != 0,
+        is_skipped: flags & TAG_FLAG_SKIPPED_SERIALIZE != 0,
+    })
+}
+
+fn read_legacy_property_tag(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    _end_limit: u64,
+    name: String,
+) -> Result<PropertyTag> {
+    let property_type = ctx.names.resolve_raw(r.read_raw_name()?);
+    let size = r.read_i32()?;
+    let array_index = r.read_i32()?;
+    let (type_name, bool_val) = read_legacy_type_name(r, ctx, &property_type)?;
+    let guid = if ctx.file_version_ue4 >= ue4::PROPERTY_GUID_IN_PROPERTY_TAG {
+        if r.read_u8()? != 0 {
+            Some(r.read_guid()?.to_hex())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    if ctx.file_version_ue5 >= ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION {
+        parse_extensions(r)?;
+    }
+    Ok(PropertyTag {
+        name,
+        type_name,
+        size,
+        array_index,
+        guid,
+        is_binary_native: false,
+        bool_val,
+        is_skipped: false,
+    })
+}
+
+fn read_legacy_type_name(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    property_type: &str,
+) -> Result<(TypeName, bool)> {
+    let ty = match property_type {
+        "StructProperty" => {
+            let struct_name = ctx.names.resolve_raw(r.read_raw_name()?);
+            if ctx.file_version_ue4 >= ue4::STRUCT_GUID_IN_PROPERTY_TAG {
+                let _struct_guid = r.read_guid()?;
+            }
+            TypeName::with_params(property_type.to_string(), vec![TypeName::leaf(struct_name)])
+        }
+        "BoolProperty" => {
+            let bool_val = r.read_u8()? != 0;
+            return Ok((TypeName::leaf(property_type.to_string()), bool_val));
+        }
+        "ByteProperty" => {
+            let enum_name = ctx.names.resolve_raw(r.read_raw_name()?);
+            let params = if enum_name.is_empty() || enum_name == "None" {
+                Vec::new()
+            } else {
+                vec![TypeName::leaf(enum_name)]
+            };
+            TypeName::with_params(property_type.to_string(), params)
+        }
+        "EnumProperty" => {
+            let enum_name = ctx.names.resolve_raw(r.read_raw_name()?);
+            TypeName::with_params(
+                property_type.to_string(),
+                vec![
+                    TypeName::leaf(enum_name),
+                    TypeName::leaf("ByteProperty".into()),
+                ],
+            )
+        }
+        "ArrayProperty" => {
+            let inner = if ctx.file_version_ue4 >= ue4::INNER_ARRAY_TAG_INFO {
+                ctx.names.resolve_raw(r.read_raw_name()?)
+            } else {
+                "None".to_string()
+            };
+            TypeName::with_params(property_type.to_string(), vec![TypeName::leaf(inner)])
+        }
+        "OptionalProperty" => {
+            let inner = ctx.names.resolve_raw(r.read_raw_name()?);
+            TypeName::with_params(property_type.to_string(), vec![TypeName::leaf(inner)])
+        }
+        "SetProperty" if ctx.file_version_ue4 >= ue4::PROPERTY_TAG_SET_MAP_SUPPORT => {
+            let inner = ctx.names.resolve_raw(r.read_raw_name()?);
+            TypeName::with_params(property_type.to_string(), vec![TypeName::leaf(inner)])
+        }
+        "MapProperty" if ctx.file_version_ue4 >= ue4::PROPERTY_TAG_SET_MAP_SUPPORT => {
+            let key = ctx.names.resolve_raw(r.read_raw_name()?);
+            let value = ctx.names.resolve_raw(r.read_raw_name()?);
+            TypeName::with_params(
+                property_type.to_string(),
+                vec![TypeName::leaf(key), TypeName::leaf(value)],
+            )
+        }
+        _ => TypeName::leaf(property_type.to_string()),
+    };
+    Ok((ty, false))
 }
 
 fn parse_extensions(r: &mut Reader) -> Result<()> {

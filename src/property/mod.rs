@@ -30,6 +30,8 @@ pub struct ParseCtx<'a> {
     /// FFortniteMainBranchObjectVersion of the package (-1 when absent), gating the
     /// MovieScene channel bShowCurve field.
     pub fortnite_main_version: i32,
+    pub file_version_ue4: i32,
+    pub file_version_ue5: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -65,12 +67,13 @@ pub fn parse_object_properties(
     r: &mut Reader,
     ctx: &ParseCtx,
     end_limit: u64,
-    ue5_version: i32,
 ) -> Vec<PropertyEntry> {
     // A UClass tagged-property block opens with a serialization-control byte
     // (EClassSerializationControlExtension, uint8). When OverridableSerialization-
     // Information (0x02) is set, an EOverriddenPropertyOperation byte (uint8) follows.
-    if ue5_version >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION {
+    if ctx.file_version_ue5
+        >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
+    {
         let control = match r.read_u8() {
             Ok(c) => c,
             Err(_) => return Vec::new(),
