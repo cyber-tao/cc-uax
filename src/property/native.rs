@@ -37,6 +37,33 @@ pub(crate) fn parse_native_struct(
     ctx: &ParseCtx,
     value_end: u64,
 ) -> Result<Option<Value>> {
+    if let Some(v) = parse_math_struct(r, name)? {
+        return Ok(Some(v));
+    }
+    if let Some(v) = parse_scalar_struct(r, name, ctx, value_end)? {
+        return Ok(Some(v));
+    }
+    if let Some(v) = parse_material_input_struct(r, name, ctx)? {
+        return Ok(Some(v));
+    }
+    if let Some(v) = parse_sequencer_struct(r, name, ctx, value_end)? {
+        return Ok(Some(v));
+    }
+    if let Some(v) = parse_graph_pin_struct(r, name, ctx)? {
+        return Ok(Some(v));
+    }
+    if let Some(v) = parse_gameplay_struct(r, name, ctx, value_end)? {
+        return Ok(Some(v));
+    }
+    if let Some(v) = parse_mesh_cloth_struct(r, name, ctx, value_end)? {
+        return Ok(Some(v));
+    }
+    parse_niagara_struct(r, name, ctx, value_end)
+}
+
+// Core math / geometry / color / time value types serialized natively (immutable
+// structs). None of these need name resolution or the value window.
+fn parse_math_struct(r: &mut Reader, name: &str) -> Result<Option<Value>> {
     let v = match name {
         // Note: FVector_NetQuantize* subclasses only declare WithNetSerializer, so
         // their package payload is tagged properties — do not decode them natively.
@@ -130,12 +157,39 @@ pub(crate) fn parse_native_struct(
                 "leave_tangent_weight": r.read_f32()? as f64,
             })
         }
+        _ => return Ok(None),
+    };
+    Ok(Some(v))
+}
+
+// PerPlatform* / PerQualityLevel* scalar overrides (default + optional map).
+fn parse_scalar_struct(
+    r: &mut Reader,
+    name: &str,
+    ctx: &ParseCtx,
+    value_end: u64,
+) -> Result<Option<Value>> {
+    let v = match name {
         "PerPlatformFloat" => parse_per_platform(r, ctx.names, ScalarKind::F32, value_end)?,
         "PerPlatformInt" => parse_per_platform(r, ctx.names, ScalarKind::I32, value_end)?,
         "PerPlatformBool" => parse_per_platform(r, ctx.names, ScalarKind::Bool32, value_end)?,
         "PerPlatformFrameRate" => {
             parse_per_platform(r, ctx.names, ScalarKind::FrameRate, value_end)?
         }
+        "PerQualityLevelInt" => parse_per_quality_level(r, ScalarKind::I32, value_end)?,
+        "PerQualityLevelFloat" => parse_per_quality_level(r, ScalarKind::F32, value_end)?,
+        _ => return Ok(None),
+    };
+    Ok(Some(v))
+}
+
+// Material expression inputs (FExpressionInput + FMaterialInput<T> constants).
+fn parse_material_input_struct(
+    r: &mut Reader,
+    name: &str,
+    ctx: &ParseCtx,
+) -> Result<Option<Value>> {
+    let v = match name {
         "ExpressionInput" | "MaterialAttributesInput" => {
             Value::Object(parse_expression_input(r, ctx)?)
         }
@@ -180,6 +234,19 @@ pub(crate) fn parse_native_struct(
             o.insert("constant".into(), json!(r.read_u32()?));
             Value::Object(o)
         }
+        _ => return Ok(None),
+    };
+    Ok(Some(v))
+}
+
+// Sequencer MovieScene channels/ranges.
+fn parse_sequencer_struct(
+    r: &mut Reader,
+    name: &str,
+    ctx: &ParseCtx,
+    value_end: u64,
+) -> Result<Option<Value>> {
+    let v = match name {
         "MovieSceneFrameRange" => {
             let lower_type = r.read_u8()?;
             let lower = r.read_i32()?;
@@ -194,8 +261,14 @@ pub(crate) fn parse_native_struct(
         }
         "MovieSceneFloatChannel" => parse_movie_scene_channel(r, ctx, false, value_end)?,
         "MovieSceneDoubleChannel" => parse_movie_scene_channel(r, ctx, true, value_end)?,
-        "PerQualityLevelInt" => parse_per_quality_level(r, ScalarKind::I32, value_end)?,
-        "PerQualityLevelFloat" => parse_per_quality_level(r, ScalarKind::F32, value_end)?,
+        _ => return Ok(None),
+    };
+    Ok(Some(v))
+}
+
+// Blueprint pin type embedded as a native struct payload.
+fn parse_graph_pin_struct(r: &mut Reader, name: &str, ctx: &ParseCtx) -> Result<Option<Value>> {
+    let v = match name {
         "EdGraphPinType" => {
             let pin_type = crate::pin::parse_pin_type(r, ctx, &ctx.pins)?;
             let mut o = serde_json::Map::new();
@@ -247,6 +320,19 @@ pub(crate) fn parse_native_struct(
             );
             Value::Object(o)
         }
+        _ => return Ok(None),
+    };
+    Ok(Some(v))
+}
+
+// Gameplay / generic engine structs with custom native serialization.
+fn parse_gameplay_struct(
+    r: &mut Reader,
+    name: &str,
+    ctx: &ParseCtx,
+    value_end: u64,
+) -> Result<Option<Value>> {
+    let v = match name {
         "InstancedStruct" => {
             // Modern format (>= CustomVersionAdded): no legacy header/version prefix.
             let script_struct = r.read_i32()?;
@@ -298,6 +384,19 @@ pub(crate) fn parse_native_struct(
             }
             json!({ "tags": tags })
         }
+        _ => return Ok(None),
+    };
+    Ok(Some(v))
+}
+
+// Mesh / cloth / property-bag structs (sampled or hex-tailed payloads).
+fn parse_mesh_cloth_struct(
+    r: &mut Reader,
+    name: &str,
+    ctx: &ParseCtx,
+    value_end: u64,
+) -> Result<Option<Value>> {
+    let v = match name {
         "SkeletalMeshSamplingLODBuiltData" => {
             parse_skeletal_mesh_sampling_lod_built_data(r, value_end)?
         }
@@ -307,6 +406,19 @@ pub(crate) fn parse_native_struct(
             parse_tagged_struct_with_payload(r, name, ctx, value_end, "rest_collection")?
         }
         "InstancedPropertyBag" => parse_instanced_property_bag(r, value_end)?,
+        _ => return Ok(None),
+    };
+    Ok(Some(v))
+}
+
+// Niagara core variable/type structs (modern registry format only).
+fn parse_niagara_struct(
+    r: &mut Reader,
+    name: &str,
+    ctx: &ParseCtx,
+    value_end: u64,
+) -> Result<Option<Value>> {
+    let v = match name {
         "NiagaraDataInterfaceGPUParamInfo" => parse_niagara_gpu_param_info(r, ctx, value_end)?,
         // Niagara core variable types (modern format only). FNiagaraTypeDefinition
         // serializes via SerializeTaggedProperties, so it reuses parse_properties.

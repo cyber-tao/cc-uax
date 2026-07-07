@@ -1,8 +1,8 @@
 mod common;
 
 use cc_uax::name::NameMap;
-use cc_uax::references::referenced_packages_from_bytes;
 use cc_uax::reader::Reader;
+use cc_uax::references::referenced_packages_from_bytes;
 use cc_uax::{OutputSections, Package};
 use common::*;
 
