@@ -7,7 +7,7 @@ description: Parse and inspect Unreal Engine 5 .uasset/.umap package files, and 
 
 It is a **system-installed CLI tool** — `cc-uax` lives on `PATH` and behaves identically on Windows, Linux, and macOS. All commands below are plain `cc-uax` invocations.
 
-Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`, little-endian); full tagged-property decoding requires `FileVersionUE5 >= 1012` (older packages report `properties_unsupported_version`). Cooked / unversioned / big-endian / UE4-legacy packages are rejected — see Gotchas.
+Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`, little-endian). Legacy UE5 property tags (`1000..1011`) and complete-type-name property tags (`>= 1012`) are decoded. Cooked / unversioned / big-endian / UE4-legacy packages are rejected — see Gotchas.
 
 ## Prerequisites
 
@@ -103,7 +103,7 @@ cc-uax --help
 - **`-d` writes `.cc-uax-cache.sqlite` into the scan-dir.** When scanning a UE5 project you do not own, pass `--no-cache` or delete the file afterwards. The cache key is path+mtime+size.
 - **Git Bash / MSYS2 mangles `-m /Game`.** A leading-slash argument like `-m /Game` gets path-converted to `C:/Program Files/Git/Game`, corrupting the mount prefix (symptom: `self` starts with `/C:/Program Files/Git/Game/...`). Use a double slash — `-m //Game` — which MSYS2 restores to `/Game`; or run from PowerShell/cmd. Native Linux/macOS shells are unaffected.
 - **Cooked / unversioned / big-endian packages are rejected by design.** cc-uax targets editor-saved versioned assets only. These are hard limits, not bugs — see Troubleshooting for the exact messages.
-- **Some property values come back as `@unparsed` hex.** Structs with custom binary serialization that cc-uax hasn't decoded yet (e.g. non-core Niagara VM / GPU binding structs, skeletal-mesh sampling and cloth LOD build data) are emitted as a hex preview capped by `PREVIEW_MAX`, with `type` and `size` preserved. This keeps byte alignment intact so the next property still decodes. Treat `@unparsed` as "struct recognized, value not yet structured". Niagara core variable types (`NiagaraVariable` / `NiagaraVariableBase` / `NiagaraVariableWithOffset` / `NiagaraTypeDefinition`) and Blueprint graph-node pins, by contrast, are decoded structurally — use `-S logic` for the pins.
+- **`@unparsed` means an unknown future custom payload, not normal UE5.7 coverage.** The current UE5.7 validation set has zero `@unparsed` fallbacks; if one appears on a new project, cc-uax still preserves the struct `type`, byte `size`, and hex preview so alignment is not lost and the next property can decode. Blueprint graph-node pins are decoded structurally — use `-S logic` for the pins.
 - **Only `.uasset` and `.umap` are package files.** Companion files (`.uexp`, `.ubulk`, `.ini`) are not UE5 package summaries — don't pass them.
 
 ## Troubleshooting

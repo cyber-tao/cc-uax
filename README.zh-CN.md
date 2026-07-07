@@ -12,7 +12,7 @@
 [![UE5](https://img.shields.io/badge/Unreal%20Engine-5.7-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=flat)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-5851DB)](#)
-![Status](https://img.shields.io/badge/status-stable%20%201%2C423%20assets%20validated-1F6FEB)
+![Status](https://img.shields.io/badge/status-stable%20%202%2C096%20assets%20validated-1F6FEB)
 
 [English](README.md) · **简体中文**
 
@@ -28,12 +28,12 @@
 
 名字说得很直白：**cc** = Claude Code，**uax** = uasset。它同时还附带一个 [agent skill](#-作为-agent-skill-使用)——配置好后，Claude Code（或 OpenAI Codex）会在你要求检查 `.uasset`/`.umap` 时自动调用 `cc-uax`，无需手读二进制。
 
-> 目标范围：UE5（`FileVersionUE5 >= 1000`）的 **versioned、未 cooked 的编辑器资产**。包头、各表与引用图从 `>= 1000` 起即可解析；完整的标签化属性解码需要 UE5.7 的完整类型名标签布局（`FileVersionUE5 >= 1012`），更旧的包会输出 `properties_unsupported_version` 提示而非解码后的属性。Cooked / unversioned 包与 UE4 旧格式明确不在支持范围内。
+> 目标范围：UE5（`FileVersionUE5 >= 1000`）的 **versioned、未 cooked 的编辑器资产**。包头、各表、引用图、UE5 legacy property tag（`1000..1011`）与完整类型名 property tag（`>= 1012`）均可解码。Cooked / unversioned 包与 UE4 旧格式明确不在支持范围内。
 
 ## ✨ 功能
 
 - **完整包头** —— `FPackageFileSummary`、Name 表、Import 与 Export 映射、自定义版本。
-- **Versioned tagged property** —— UE5.7 新式 `FPropertyTag` + 完整 `FPropertyTypeName`。
+- **Versioned tagged property** —— UE5 legacy `FPropertyTag` 与 UE5.7 新式完整 `FPropertyTypeName` tag。
 - **精确属性区间** —— 通过 `ScriptSerialization` 范围定位每个对象的数据，正确消费 `UClass` / `UBlueprint` 头部控制字节。
 - **丰富的值类型解码**
 
@@ -51,7 +51,7 @@
 
 - **蓝图图逻辑** —— 紧随 tagged property 区间之后解码 `UEdGraphNode` 的 pin：每个节点的 pins、pin 类型、默认值/默认对象，以及 `LinkedTo` 连线，从而可重建完整的节点间执行与数据流图 —— 蓝图（`K2Node_*`）与 Niagara（`NiagaraNode*`）图节点均覆盖。图节点还会蒸馏出 `member`（其引用的函数 / 事件 / 变量）与 `member_from`（所属 C++ 类），便于与源码交叉对照。
 - **可选输出区块** —— `--sections`（别名 `-S`）按需组合要输出的区块，或直接选预设（`logic`、`debug`、`full`）—— 让逻辑分析精简、查 BUG 全面。
-- **优雅的十六进制回退** —— 暂未结构化、带自定义二进制序列化的类型（少数特化的 Niagara VM / 网格 / 布料结构体）输出带 `type` + `size` 标注的十六进制预览，**保证字节对齐不被破坏**。
+- **优雅的十六进制回退** —— 未来遇到尚未结构化的自定义二进制结构体时，输出带 `type` + `size` 标注的十六进制预览，**保证字节对齐不被破坏**；当前 UE5.7 验证集内 `@unparsed` 为 0。
 - **引用图谱**
   - `-S refs` —— 从 import 表提取前向引用（`assets` / `scripts`），并加入包头软引用表（`soft`，如 `TSoftObjectPtr`/`TSoftClassPtr`），去重排序。
   - `--scan-dir` —— 反向引用：哪些资产引用了*当前文件*（`referenced_by`，硬引用或软引用均计入），通过 `--mount` 路径映射。
@@ -137,7 +137,8 @@ cargo build --release    # 产物在 target/release/cc-uax[.exe]
 | Agent | 用户级位置 | 项目级位置 |
 |---|---|---|
 | Claude Code | `~/.claude/skills/cc-uax/` | `<repo>/.claude/skills/cc-uax/` |
-| Codex | `~/.agents/skills/cc-uax/` | `<repo>/.agents/skills/cc-uax/` |
+| Codex | `~/.codex/skills/cc-uax/` | `<repo>/.codex/skills/cc-uax/` |
+| Codex / Agents legacy | `~/.agents/skills/cc-uax/` | `<repo>/.agents/skills/cc-uax/` |
 
 > skill 就是一个带 `SKILL.md`（YAML frontmatter 含 `name`、`description`）的目录。放进项目级路径并提交，团队每个成员都能自动获得该 skill。
 
@@ -184,6 +185,7 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 
 ```jsonc
 {
+  "diagnostics": [],
   "summary":  { /* 版本、引擎版本、各表计数、自定义版本、包名 */ },
   "imports":  [ { "index": -1, "class": "...", "name": "...", "full_name": "..." } ],
   "exports":  [
@@ -198,6 +200,8 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
         { "name": "execute", "direction": "input", "category": "exec",
           "linked_to": [ { "node": "...K2Node_Knot_7", "node_index": 25, "pin": "OutputPin" } ] },
         { "name": "Material", "direction": "input", "category": "object",
+          "container_type": "none", "is_reference": true, "is_const": false,
+          "is_weak_pointer": false, "is_uobject_wrapper": false,
           "default_object": { "ref": "/Game/.../MI_Box_Destroyed", "index": -45 } }
       ]
     }
@@ -245,18 +249,32 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 cc-uax/
 ├── src/
 │   ├── lib.rs          # 库入口 —— 导出 Package、OutputSections
-│   ├── main.rs         # CLI 入口 + 反向扫描 + cache 模块
+│   ├── main.rs         # CLI 入口编排
+│   ├── cli/
+│   │   ├── mod.rs
+│   │   ├── args.rs     # Clap 参数与区块解析
+│   │   ├── reverse_refs.rs # 反向引用扫描与 worker 协调
+│   │   └── cache.rs    # SQLite 反向引用缓存（仅二进制侧）
 │   ├── package.rs      # 核心：Package 流水线 + JSON 输出（区块）+ pin 编排
 │   ├── summary.rs      # FPackageFileSummary（魔数、版本、表偏移）
 │   ├── name.rs         # NameMap —— Name 表解析与解析
 │   ├── object.rs       # PackageIndex（+/- ⇒ export/import）、Import、Export
-│   ├── property.rs     # 递归 tagged property 解码器 + 十六进制回退
+│   ├── property/
+│   │   ├── mod.rs      # Property 解析入口与共享类型
+│   │   ├── tag.rs      # Legacy 与完整类型名 FPropertyTag 布局
+│   │   ├── value.rs    # 递归 tagged property 值解码
+│   │   ├── native.rs   # 原生结构体解码与对齐回退
+│   │   └── text.rs     # FText 解析
 │   ├── pin.rs          # EdGraphNode pin 解码器 —— pins、pin 类型、LinkedTo 连线
 │   ├── version.rs      # UE5/UE4 文件版本常量 + 自定义版本 GUID
-│   ├── reader.rs       # 小端字节流读取原语
-│   └── cache.rs        # SQLite 反向引用缓存（仅二进制侧）
+│   └── reader.rs       # 小端字节流读取原语
 ├── tests/
-│   └── units.rs        # 手写字节向量集成测试
+│   ├── common/         # 共享字节向量构造器
+│   ├── model.rs
+│   ├── package.rs
+│   ├── pin.rs
+│   ├── property.rs
+│   └── reader.rs       # 按模块组织的手写字节向量集成测试
 ├── skills/
 │   └── cc-uax/
 │       └── SKILL.md    # Agent skill（Claude Code + Codex 兼容）
@@ -277,22 +295,22 @@ cc-uax/
 2. `PackageFileSummary::parse` —— 校验 `PACKAGE_FILE_TAG`（`0x9E2A83C1`），检测字节序，读取版本与表偏移。
 3. `NameMap::parse` —— 解析 Name，含数字后缀（`Foo_3`）。
 4. Import / Export 表 —— `PackageIndex` 正负号选择表。
-5. 每个 export 的 `ScriptSerialization` 窗口 → `property.rs` 递归解码；未知结构体回退到十六进制，对齐永不破坏。
+5. 每个 export 的 `ScriptSerialization` 窗口 → `property/` 递归解码 legacy 与完整类型名 property tag；未来未知结构体回退到十六进制，对齐永不破坏。
 6. 图节点 —— 属性窗口之后，`pin.rs` 解码 `UEdGraphNode` 的 pin 区域（`pins` + `LinkedTo`），并把节点身份蒸馏为 `member` / `member_from`。
 
 > 完整架构指引见 [CLAUDE.md](CLAUDE.md)。
 
 ## ⚠️ 支持范围与限制
 
-- ✅ **已验证** 某 UE5.7 项目的 **1,423 个 `.uasset`** 文件 —— 全部成功解析，每个对象的属性区间字节完全对齐。
+- ✅ **已验证** 某 UE5.7 项目的 **2,096 个 `.uasset` / `.umap` 文件** —— failed = 0，diagnostics = 0，`@unparsed` = 0。
 - ❌ Cooked 包（unversioned / 包级压缩）与 UE4 旧格式**不支持**。
-- 🔧 多数原生二进制结构体（含 Niagara 核心变量类型）已结构化解码；少数特化结构体（非核心 Niagara 的 VM / GPU 绑定信息、骨骼网格采样与布料 LOD 构建数据）仍以十六进制预览呈现，待补解码器。
+- 🔧 当前 UE5.7 验证集用到的原生二进制结构体（含 Niagara、GPU binding、groom dataflow、skeletal-mesh sampling、cloth LOD payload）已结构化解码；未来未知自定义 payload 仍会使用保持对齐的 `@unparsed` 预览。
 - 🔧 `referenced_by` 从磁盘推导包路径 —— 输入文件必须位于映射到 `--mount` 的 `--scan-dir` 内。硬引用（import）与软引用（`TSoftObjectPtr`/`TSoftClassPtr`）均计入统计。
 - 🔧 缓存按修改时间 + 大小失效，内置 schema 版本变化时自动重建。
 
 ## 🤝 贡献
 
-这是一个聚焦单一用途的工具。如扩展解码器，请在 [tests/units.rs](tests/units.rs) 中添加手写字节向量测试，并确保 export 的属性区间保持字节对齐。提交前运行 `cargo fmt && cargo clippy --all-targets && cargo test`。
+这是一个聚焦单一用途的工具。如扩展解码器，请在 [tests/](tests/) 下添加手写字节向量测试，并确保 export 的属性区间保持字节对齐。提交前运行 `cargo fmt -- --check`、`cargo clippy --all-targets`、`cargo test` 和 `cargo test --no-default-features`。
 
 ## 📄 许可
 

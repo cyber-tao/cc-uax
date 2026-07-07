@@ -12,7 +12,8 @@
 #   2. Downloads the x86_64 Windows archive (also runs on Windows 11 ARM via x64 emulation)
 #   3. Installs cc-uax.exe (default: $env:LOCALAPPDATA\Programs\cc-uax, override with $env:INSTALL_DIR)
 #   4. Adds the install dir to the user PATH (idempotent)
-#   5. Installs the cc-uax skill into Claude Code (~\.claude\skills) and Codex (~\.agents\skills)
+#   5. Installs the cc-uax skill into Claude Code (~\.claude\skills),
+#      Codex (~\.codex\skills), and the legacy Agents path (~\.agents\skills)
 #
 # Environment overrides (set before invoking):
 #   $env:INSTALL_DIR   binary install location   (default: ~\AppData\Local\Programs\cc-uax)
@@ -71,6 +72,7 @@ if ($DoUninstall) {
     } else {
         foreach ($dir in @(
                 (Join-Path $env:USERPROFILE '.claude\skills\cc-uax'),
+                (Join-Path $env:USERPROFILE '.codex\skills\cc-uax'),
                 (Join-Path $env:USERPROFILE '.agents\skills\cc-uax')
             )) {
             if (Test-Path $dir) {
@@ -168,17 +170,15 @@ if ($NoSkill) {
     $SkillSrc = Join-Path $Extract "cc-uax-${Target}-${Version}\skills\cc-uax\SKILL.md"
     if (-not (Test-Path $SkillSrc)) { Die "SKILL.md missing in archive" }
 
-    # Claude Code: ~\.claude\skills\cc-uax\
-    $CcDir = Join-Path $env:USERPROFILE '.claude\skills\cc-uax'
-    New-Item -ItemType Directory -Force -Path $CcDir | Out-Null
-    Copy-Item $SkillSrc (Join-Path $CcDir 'SKILL.md') -Force
-    Write-Ok "Claude Code skill -> $CcDir\SKILL.md"
-
-    # Codex: ~\.agents\skills\cc-uax\
-    $CodexDir = Join-Path $env:USERPROFILE '.agents\skills\cc-uax'
-    New-Item -ItemType Directory -Force -Path $CodexDir | Out-Null
-    Copy-Item $SkillSrc (Join-Path $CodexDir 'SKILL.md') -Force
-    Write-Ok "Codex skill        -> $CodexDir\SKILL.md"
+    foreach ($dir in @(
+            (Join-Path $env:USERPROFILE '.claude\skills\cc-uax'),
+            (Join-Path $env:USERPROFILE '.codex\skills\cc-uax'),
+            (Join-Path $env:USERPROFILE '.agents\skills\cc-uax')
+        )) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        Copy-Item $SkillSrc (Join-Path $dir 'SKILL.md') -Force
+        Write-Ok "skill -> $dir\SKILL.md"
+    }
 }
 
 # ── summary ─────────────────────────────────────────────────────────────────

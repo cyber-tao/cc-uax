@@ -12,7 +12,7 @@ A single CLI that turns opaque UE5 editor assets into structured JSON — so Cla
 [![UE5](https://img.shields.io/badge/Unreal%20Engine-5.7-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=flat)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-5851DB)](#)
-![Status](https://img.shields.io/badge/status-stable%20%201%2C423%20assets%20validated-1F6FEB)
+![Status](https://img.shields.io/badge/status-stable%20%202%2C096%20assets%20validated-1F6FEB)
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -28,12 +28,12 @@ A real UE5 project lives inside opaque `.uasset`/`.umap` binaries — every Blue
 
 The name says it plainly: **cc** = Claude Code, **uax** = uasset. The tool also doubles as an [agent skill](#-use-as-an-agent-skill) — once wired up, Claude Code (or OpenAI Codex) calls `cc-uax` automatically the moment you ask it to inspect a `.uasset`/`.umap`, so you never hand-read the binary.
 
-> Scope: **versioned, uncooked editor assets** on UE5 (`FileVersionUE5 >= 1000`). Header, tables and the reference graph parse from `>= 1000`; full tagged-property decoding needs the UE5.7 complete-type-name tag layout (`FileVersionUE5 >= 1012`) and older packages report `properties_unsupported_version` instead. Cooked / unversioned packages and UE4 legacy formats are intentionally out of scope.
+> Scope: **versioned, uncooked editor assets** on UE5 (`FileVersionUE5 >= 1000`). Header, tables, the reference graph, legacy UE5 property tags (`1000..1011`), and complete-type-name property tags (`>= 1012`) are decoded. Cooked / unversioned packages and UE4 legacy formats are intentionally out of scope.
 
 ## ✨ Features
 
 - **Full package header** — `FPackageFileSummary`, name table, import & export maps, custom versions.
-- **Versioned tagged properties** — UE5.7-style `FPropertyTag` + complete `FPropertyTypeName`.
+- **Versioned tagged properties** — UE5 legacy `FPropertyTag` plus UE5.7-style complete `FPropertyTypeName` tags.
 - **Precise property windows** — locates each object's data via the `ScriptSerialization` range; correctly consumes `UClass` / `UBlueprint` header control bytes.
 - **Rich value decoding**
 
@@ -51,7 +51,7 @@ The name says it plainly: **cc** = Claude Code, **uax** = uasset. The tool also 
 
 - **Blueprint graph logic** — `UEdGraphNode` pins are decoded right after the tagged-property region: every node's pins, pin types, default values/objects, and `LinkedTo` edges, so the full node-to-node execution & data graph is reconstructable — covering both Blueprint (`K2Node_*`) and Niagara (`NiagaraNode*`) graphs. Graph nodes also expose a distilled `member` (the function / event / variable they reference) plus `member_from` (its owning C++ class) for quick cross-referencing with source.
 - **Selectable output sections** — `--sections` (alias `-S`) composes exactly the blocks you want, or picks a preset (`logic`, `debug`, `full`) — keeping logic analysis lean and bug-hunting thorough.
-- **Graceful hex fallback** — types with custom binary serialization not yet structured (a few specialized Niagara VM / mesh / cloth structs) emit a `type`+`size`-tagged hex preview that **preserves byte alignment**.
+- **Graceful hex fallback** — future custom binary structs that are not yet structured emit a `type`+`size`-tagged hex preview that **preserves byte alignment**; the current UE5.7 validation set has zero `@unparsed` fallbacks.
 - **Reference graph**
   - `-S refs` — forward refs from the import table (`assets` / `scripts`) plus the header's soft-package-reference table (`soft`, e.g. `TSoftObjectPtr`/`TSoftClassPtr`), de-duplicated & sorted.
   - `--scan-dir` — reverse refs: which assets reference *this* file (`referenced_by`, hard **or** soft), via `--mount` path mapping.
@@ -137,7 +137,8 @@ The one-line installer configures the skill for both agents. To set it up manual
 | Agent | User-level location | Project-level location |
 |---|---|---|
 | Claude Code | `~/.claude/skills/cc-uax/` | `<repo>/.claude/skills/cc-uax/` |
-| Codex | `~/.agents/skills/cc-uax/` | `<repo>/.agents/skills/cc-uax/` |
+| Codex | `~/.codex/skills/cc-uax/` | `<repo>/.codex/skills/cc-uax/` |
+| Codex / Agents legacy | `~/.agents/skills/cc-uax/` | `<repo>/.agents/skills/cc-uax/` |
 
 > A skill is just a directory with a `SKILL.md` (YAML frontmatter: `name`, `description`). Drop it into the project-level path and commit it to share with every contributor.
 
@@ -184,6 +185,7 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 
 ```jsonc
 {
+  "diagnostics": [],
   "summary":  { /* versions, engine version, table counts, custom versions, package name */ },
   "imports":  [ { "index": -1, "class": "...", "name": "...", "full_name": "..." } ],
   "exports":  [
@@ -198,6 +200,8 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
         { "name": "execute", "direction": "input", "category": "exec",
           "linked_to": [ { "node": "...K2Node_Knot_7", "node_index": 25, "pin": "OutputPin" } ] },
         { "name": "Material", "direction": "input", "category": "object",
+          "container_type": "none", "is_reference": true, "is_const": false,
+          "is_weak_pointer": false, "is_uobject_wrapper": false,
           "default_object": { "ref": "/Game/.../MI_Box_Destroyed", "index": -45 } }
       ]
     }
@@ -245,18 +249,32 @@ For a single block just name it: `-S summary` (header only), or `-S refs` (forwa
 cc-uax/
 ├── src/
 │   ├── lib.rs          # Library root — exports Package, OutputSections
-│   ├── main.rs         # CLI entry + reverse-scan + cache module
+│   ├── main.rs         # CLI entry orchestration
+│   ├── cli/
+│   │   ├── mod.rs
+│   │   ├── args.rs     # Clap arguments and section parsing
+│   │   ├── reverse_refs.rs # Reverse-reference scan and worker coordination
+│   │   └── cache.rs    # SQLite reverse-ref cache (binary-only)
 │   ├── package.rs      # Core: Package pipeline + JSON output (sections) + pin orchestration
 │   ├── summary.rs      # FPackageFileSummary (magic, versions, table offsets)
 │   ├── name.rs         # NameMap — name table parse & resolve
 │   ├── object.rs       # PackageIndex (+/- ⇒ export/import), Import, Export
-│   ├── property.rs     # Recursive tagged-property decoder + hex fallback
+│   ├── property/
+│   │   ├── mod.rs      # Property parser entry points and shared types
+│   │   ├── tag.rs      # Legacy and complete-type-name FPropertyTag layouts
+│   │   ├── value.rs    # Recursive tagged-property value decoder
+│   │   ├── native.rs   # Native struct decoders + alignment fallbacks
+│   │   └── text.rs     # FText parsing
 │   ├── pin.rs          # EdGraphNode pin decoder — pins, pin types, LinkedTo edges
 │   ├── version.rs      # UE5/UE4 file-version constants + custom-version GUIDs
-│   ├── reader.rs       # Little-endian byte-stream primitives
-│   └── cache.rs        # SQLite reverse-ref cache (binary-only)
+│   └── reader.rs       # Little-endian byte-stream primitives
 ├── tests/
-│   └── units.rs        # Hand-built byte-vector integration tests
+│   ├── common/         # Shared byte-vector builders
+│   ├── model.rs
+│   ├── package.rs
+│   ├── pin.rs
+│   ├── property.rs
+│   └── reader.rs       # Hand-built byte-vector integration tests by module
 ├── skills/
 │   └── cc-uax/
 │       └── SKILL.md    # Agent skill (Claude Code + Codex compatible)
@@ -277,22 +295,22 @@ cc-uax/
 2. `PackageFileSummary::parse` — validates `PACKAGE_FILE_TAG` (`0x9E2A83C1`), detects endianness, reads versions + table offsets.
 3. `NameMap::parse` — resolves names including number suffixes (`Foo_3`).
 4. Import / Export tables — `PackageIndex` sign selects the table.
-5. Per-export `ScriptSerialization` window → `property.rs` recursively decodes; unknown structs fall back to hex so alignment never breaks.
+5. Per-export `ScriptSerialization` window → `property/` recursively decodes legacy and complete property tags; unknown future structs fall back to hex so alignment never breaks.
 6. Graph nodes — after the property window, `pin.rs` decodes the `UEdGraphNode` pin region (`pins` + `LinkedTo`), and node identities are distilled into `member` / `member_from`.
 
 > See [CLAUDE.md](CLAUDE.md) for the full architectural guide.
 
 ## ⚠️ Scope & Limitations
 
-- ✅ **Validated** on **1,423 `.uasset`** files from a UE5.7 project — all parsed, every object's property region fully byte-aligned.
+- ✅ **Validated** on **2,096 `.uasset` / `.umap` files** from a UE5.7 project — failed = 0, diagnostics = 0, `@unparsed` = 0.
 - ❌ Cooked packages (unversioned / package compression) and UE4 legacy formats are **not** supported.
-- 🔧 Most native-binary structs — including Niagara core variable types — are decoded structurally; a few specialized ones (non-core Niagara VM / GPU binding info, skeletal-mesh sampling & cloth LOD build data) still render as hex preview pending decoders.
+- 🔧 Native-binary structs used by the current UE5.7 validation set — including Niagara, GPU binding, groom dataflow, skeletal-mesh sampling, and cloth LOD payloads — are decoded structurally; unknown future custom payloads still use the alignment-preserving `@unparsed` preview.
 - 🔧 `referenced_by` derives package paths from disk — the input file must live under `--scan-dir` mapped to `--mount`. Both hard references (imports) and soft references (`TSoftObjectPtr`/`TSoftClassPtr`) are counted.
 - 🔧 Cache invalidates on mtime + size and auto-rebuilds when the built-in schema version changes.
 
 ## 🤝 Contributing
 
-This is a focused single-purpose tool. If you extend a decoder, add a hand-built byte-vector test in [tests/units.rs](tests/units.rs) and ensure the export's property window stays byte-aligned. Run `cargo fmt && cargo clippy --all-targets && cargo test` before submitting.
+This is a focused single-purpose tool. If you extend a decoder, add a hand-built byte-vector test under [tests/](tests/) and ensure the export's property window stays byte-aligned. Run `cargo fmt -- --check`, `cargo clippy --all-targets`, `cargo test`, and `cargo test --no-default-features` before submitting.
 
 ## 📄 License
 

@@ -13,7 +13,8 @@
 #   2. Fetches the latest release version from GitHub
 #   3. Downloads + verifies the platform archive
 #   4. Installs the `cc-uax` binary (default: ~/.local/bin, override with INSTALL_DIR=...)
-#   5. Installs the cc-uax skill into Claude Code (~/.claude/skills) and Codex (~/.agents/skills)
+#   5. Installs the cc-uax skill into Claude Code (~/.claude/skills),
+#      Codex (~/.codex/skills), and the legacy Agents path (~/.agents/skills)
 #
 # Environment overrides:
 #   INSTALL_DIR   binary install location        (default: ~/.local/bin)
@@ -65,7 +66,7 @@ if [ "$UNINSTALL" = "1" ]; then
     if [ "$NO_SKILL" = "1" ]; then
         warn "NO_SKILL=1 — leaving skills in place"
     else
-        for dir in "${HOME}/.claude/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
+        for dir in "${HOME}/.claude/skills/cc-uax" "${HOME}/.codex/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
             if [ -d "$dir" ]; then
                 rm -rf "$dir"
                 ok "removed ${dir}"
@@ -162,17 +163,11 @@ else
     SKILL_SRC="${TMPDIR}/${STAGE}/skills/cc-uax/SKILL.md"
     [ -f "$SKILL_SRC" ] || die "SKILL.md missing in archive"
 
-    # Claude Code: ~/.claude/skills/cc-uax/
-    CC_DIR="${HOME}/.claude/skills/cc-uax"
-    mkdir -p "$CC_DIR"
-    cp "$SKILL_SRC" "${CC_DIR}/SKILL.md"
-    ok "Claude Code skill → ${CC_DIR}/SKILL.md"
-
-    # Codex: ~/.agents/skills/cc-uax/
-    CODEX_DIR="${HOME}/.agents/skills/cc-uax"
-    mkdir -p "$CODEX_DIR"
-    cp "$SKILL_SRC" "${CODEX_DIR}/SKILL.md"
-    ok "Codex skill        → ${CODEX_DIR}/SKILL.md"
+    for dest in "${HOME}/.claude/skills/cc-uax" "${HOME}/.codex/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
+        mkdir -p "$dest"
+        cp "$SKILL_SRC" "${dest}/SKILL.md"
+        ok "skill → ${dest}/SKILL.md"
+    done
 fi
 
 # ── summary ─────────────────────────────────────────────────────────────────

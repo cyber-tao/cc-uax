@@ -8,8 +8,9 @@
 #
 # What it does:
 #   1. cargo install --path . --force  →  builds and installs `cc-uax` into ~/.cargo/bin
-#   2. Copies skills/cc-uax/SKILL.md into Claude Code (~/.claude/skills/cc-uax)
-#      and Codex (~/.agents/skills/cc-uax), overwriting any existing copy.
+#   2. Copies skills/cc-uax/SKILL.md into Claude Code (~/.claude/skills/cc-uax),
+#      Codex (~/.codex/skills/cc-uax), and legacy Agents (~/.agents/skills/cc-uax),
+#      overwriting any existing copy.
 #
 # This is a local development helper. For the end-user release installer, see install.sh.
 #
@@ -51,7 +52,7 @@ if [ "$UNINSTALL" = "1" ]; then
     else
         warn "cargo not found — skipping binary removal"
     fi
-    for dir in "${HOME}/.claude/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
+    for dir in "${HOME}/.claude/skills/cc-uax" "${HOME}/.codex/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
         if [ -d "$dir" ]; then
             rm -rf "$dir"
             ok "removed ${dir}"
@@ -80,7 +81,7 @@ ok "cc-uax → ${CARGO_BIN}/cc-uax"
 
 # ── [2/2] refresh skills (overwrite) ─────────────────────────────────────────
 printf "\n${C_BLUE}[2/2]${C_NC} Refresh agent skills\n"
-for dest in "${HOME}/.claude/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
+for dest in "${HOME}/.claude/skills/cc-uax" "${HOME}/.codex/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
     mkdir -p "$dest"
     cp "$SKILL_SRC" "${dest}/SKILL.md"
     ok "skill → ${dest}/SKILL.md"

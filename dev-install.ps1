@@ -7,8 +7,9 @@
 #
 # What it does:
 #   1. cargo install --path . --force  →  builds and installs `cc-uax.exe` into ~\.cargo\bin
-#   2. Copies skills\cc-uax\SKILL.md into Claude Code (~\.claude\skills\cc-uax)
-#      and Codex (~\.agents\skills\cc-uax), overwriting any existing copy.
+#   2. Copies skills\cc-uax\SKILL.md into Claude Code (~\.claude\skills\cc-uax),
+#      Codex (~\.codex\skills\cc-uax), and legacy Agents (~\.agents\skills\cc-uax),
+#      overwriting any existing copy.
 #
 # This is a local development helper. For the end-user release installer, see install.ps1.
 #
@@ -41,6 +42,7 @@ if ($Uninstall -or ($env:UNINSTALL -eq '1')) {
     }
     foreach ($dir in @(
             (Join-Path $env:USERPROFILE '.claude\skills\cc-uax'),
+            (Join-Path $env:USERPROFILE '.codex\skills\cc-uax'),
             (Join-Path $env:USERPROFILE '.agents\skills\cc-uax')
         )) {
         if (Test-Path $dir) {
@@ -76,6 +78,7 @@ Write-Ok "cc-uax -> $CargoBin\cc-uax.exe"
 Write-Step 2 'Refresh agent skills'
 foreach ($dir in @(
         (Join-Path $env:USERPROFILE '.claude\skills\cc-uax'),
+        (Join-Path $env:USERPROFILE '.codex\skills\cc-uax'),
         (Join-Path $env:USERPROFILE '.agents\skills\cc-uax')
     )) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
