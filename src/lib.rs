@@ -1,14 +1,23 @@
 pub mod decode;
 pub mod diagnostic;
+#[doc(hidden)]
 pub mod name;
+#[doc(hidden)]
 pub mod object;
+#[doc(hidden)]
 pub mod output;
+#[doc(hidden)]
 pub mod package;
+#[doc(hidden)]
 pub mod pin;
+#[doc(hidden)]
 pub mod property;
+#[doc(hidden)]
 pub mod reader;
 pub mod references;
+#[doc(hidden)]
 pub mod summary;
+#[doc(hidden)]
 pub mod version;
 
 pub use decode::{DecodeOptions, DecodeReport};

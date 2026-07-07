@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`cc-uax` is a Rust CLI that parses Unreal Engine 5 `.uasset`/`.umap` package files and emits structured JSON — package header, tagged properties, the Blueprint node-and-pin graph, and forward/reverse asset references. Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`). The header, tables and reference graph parse from `>= 1000`; full tagged-property decoding requires the UE5.7 complete-type-name tag layout (`FileVersionUE5 >= 1012`), and older packages emit a `properties_unsupported_version` diagnostic instead of decoded properties. Cooked/unversioned packages and UE4 legacy formats are explicitly out of scope.
+`cc-uax` is a Rust CLI that parses Unreal Engine 5 `.uasset`/`.umap` package files and emits structured JSON — package header, tagged properties, the Blueprint node-and-pin graph, and forward/reverse asset references. Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`). The header, tables, reference graph and tagged-property decoding support both legacy UE5 property tags and the newer complete-type-name tag layout (`FileVersionUE5 >= 1012`). Cooked/unversioned packages and UE4 legacy formats are explicitly out of scope.
 
 ## Commands
 
@@ -26,7 +26,7 @@ No benchmarks, no separate lint config. CI is whatever runs these locally.
 
 `Cargo.toml` defines both a `lib` (`cc_uax`) and a `bin` (`cc-uax`):
 
-- **lib** (`src/lib.rs`): the parser. Declares 10 modules — `name`, `object`, `output`, `package`, `pin`, `property`, `reader`, `references`, `summary`, `version` — and re-exports `Package` + `OutputSections`.
+- **lib** (`src/lib.rs`): the parser and report model. It re-exports the stable surface (`Package`, `DecodeOptions`, `DecodeReport`, diagnostics, `OutputSections` / `SectionSet`, and reference helpers). Internal parser modules remain available for tests but should not be treated as the external API.
 - **bin** (`src/main.rs` + `src/cli/`): the CLI. `main.rs` declares `mod cli`, whose submodules are `args` / `cache` / `reverse_refs`; the binary pulls in `rusqlite`.
 
 `src/cli/cache.rs` is **only** included by the binary, never by the lib. Keep the SQLite reverse-scan cache out of the parser crate; `rusqlite` is a bin-side concern. When changing the parser, do not reach into `cli/cache.rs` or add parser deps through it.
@@ -39,10 +39,16 @@ The central entry point is `Package::parse` in [src/package.rs](src/package.rs).
 2. **`PackageFileSummary::parse`** ([src/summary.rs](src/summary.rs)) — package header. Validates the `PACKAGE_FILE_TAG` (`0x9E2A83C1`) magic and detects byte order via `PACKAGE_FILE_TAG_SWAPPED`; reads engine/file versions, `CustomVersion`s, and the offset+count of every downstream table. `is_unversioned()` and `filter_editor_only()` gate later behavior.
 3. **`NameMap`** ([src/name.rs](src/name.rs)) — the name table. `resolve` returns a `String` (`<invalid_name#N>` on a bad index) with number-suffix semantics (e.g. `Foo_3`).
 4. **Import / Export tables** ([src/object.rs](src/object.rs)) — `PackageIndex` encodes the table: **positive = export, negative = import**. `ObjectExport` carries `serial_offset` / `serial_size`, which delimit each object's serialized property region.
-5. **Per-export property region** ([src/property/](src/property/)) — for each export, `parse_object_properties` seeks to the `ScriptSerialization` window and recursively decodes UE5.7 tagged properties (`FPropertyTag` + full `FPropertyTypeName`).
-6. **Per-node pin region** ([src/pin.rs](src/pin.rs)) — for `UEdGraphNode` exports, `parse_node_pins` decodes the pin array that follows the property window (`ScriptSerializationEndOffset` → `serial_size`), yielding pins, pin types, defaults, and `LinkedTo` edges. `distill_member` (in [src/output/json.rs](src/output/json.rs)) lifts the node's `MemberReference` into `member` / `member_from`.
+5. **Decode report** ([src/decode/](src/decode/)) — per-export decode orchestration. It builds serial windows, calls property parsing, consumes known UObject / metadata tails, retries pin candidates, distills graph members, and accumulates structured diagnostics.
+6. **Per-export property region** ([src/property/](src/property/)) — for each export, property parsing seeks to the `ScriptSerialization` window and recursively decodes legacy UE5 property tags and complete-type-name tags (`FPropertyTag` + `FPropertyTypeName` when present).
+7. **Per-node pin region** ([src/pin.rs](src/pin.rs)) — for graph-node exports, `parse_node_pins_report` decodes the pin array that follows the property window (`ScriptSerializationEndOffset` → `serial_size`), yielding pins, pin types, defaults, and `LinkedTo` edges. Decode report member distillation lifts `MemberReference` into `member` / `member_from`.
+8. **Output serializers** ([src/output/](src/output/)) — serialize the completed `DecodeReport` to JSON; output code must not drive parsing decisions.
 
 The per-export `serial_offset`/`serial_size` windowing is what guarantees byte alignment across objects — never parse properties outside their window, and if you add a value decoder, it must consume exactly its bytes or fall back to hex preview (see below).
+
+## Diagnostics
+
+Diagnostics are structured values from [src/diagnostic.rs](src/diagnostic.rs): `severity`, `code`, `path`, `message`, optional byte `offset`, and optional JSON `context`. Byte previews use `ByteRangePreview { start, end, size, preview }`. Do not add ad-hoc diagnostic strings in output serializers; parsing and decode layers should create `Diagnostic` values and `output/` should only serialize them.
 
 ## Version gating
 
@@ -65,20 +71,20 @@ The per-export `serial_offset`/`serial_size` windowing is what guarantees byte a
 - Each owned pin: id, name, optional `FText` friendly name, `SourceIndex`, tooltip, direction, `FEdGraphPinType`, default value/object/text, then `LinkedTo` / `SubPins` (pin references = node `PackageIndex` + pin `Guid`) and `ParentPin`.
 - `EditablePinBase`-derived nodes (`K2Node_Event`, `K2Node_FunctionEntry`) append a `UserDefinedPins` array after the pins; the parser accepts trailing bytes once the count-prefixed pin array parses cleanly (`pos <= end`).
 - Field presence is gated on custom versions read from the summary (`EdGraphPinSourceIndex`, `PinTypeIncludesUObjectWrapperFlag`, `SerializeFloatPinDefaultValuesAsSinglePrecision`) — GUIDs + thresholds live in `version.rs::custom`. **UE bools serialize as 4 bytes**, so use `read_bool32`.
-- The output layer ([src/output/json.rs](src/output/json.rs)) only attempts pin parsing for graph-node classes (`is_graph_node_class`: `K2Node*` / `EdGraphNode*` / `NiagaraNode*` / `NiagaraOverviewNode` / `*GraphNode*`; the `*Binding*` exclusion for helpers such as `AnimGraphNodeBinding_Base` only applies to the fuzzy `*GraphNode*` match), then resolves each `LinkedTo` reference to a readable `{ node, pin }` via a cross-node `(node_index, pin_guid) → name` map.
+- The decode layer only attempts pin parsing for graph-node classes (`is_graph_node_class`: `K2Node*` / `EdGraphNode*` / `NiagaraNode*` / `NiagaraOverviewNode` / `*GraphNode*`; the `*Binding*` exclusion for helpers such as `AnimGraphNodeBinding_Base` only applies to the fuzzy `*GraphNode*` match). The output layer resolves each `LinkedTo` reference to a readable `{ node, pin }` via a cross-node `(node_index, pin_guid) → name` map.
 
 ## Reference analysis
 
 - **Forward references** (`collect_package_references` in [src/references.rs](src/references.rs)): reads the import table and partitions external packages into `assets` vs `scripts` by the `/Script/` prefix (`SCRIPT_PATH_PREFIX`). The header's `SoftPackageReferences` table (one FName package per entry) is parsed too and emitted as `soft`. Output keys: `assets`, `scripts`, `soft`.
-- **Reverse references** (CLI only, [src/cli/reverse_refs.rs](src/cli/reverse_refs.rs)): `--scan-dir <DIR>` walks the directory (`collect_asset_files`), maps disk paths to package paths via `--mount` (default `/Game`) using `package_path_from_relative` (in [src/references.rs](src/references.rs)), parses every asset (imports + soft references, via `referenced_packages_from_bytes`), and computes `referenced_by`.
+- **Reverse references** (CLI only, [src/cli/reverse_refs.rs](src/cli/reverse_refs.rs)): `--scan-dir <DIR>` walks the directory (`collect_asset_files`), maps disk paths to package paths via `--mount` using `MountMap` (default `/Game`; explicit mappings such as `/Game=Content,/Plugin=Plugins/Plugin/Content,/Engine=Engine/Content` are supported), parses every asset (imports + soft references, via `referenced_packages_from_bytes`), and computes `referenced_by`.
 - **Cache** (`RefCache` in [src/cli/cache.rs](src/cli/cache.rs)): the reverse scan writes `.cc-uax-cache.sqlite` at the scan-dir root, keyed by file path + mtime + size; unparseable files are cached as negative results (`parse_ok = false`) so they are not re-read every scan. Bump `CACHE_SCHEMA_VERSION` whenever the reference-extraction logic changes — existing caches auto-invalidate on schema mismatch. `--no-cache` disables it.
 
 ## CLI surface
 
 `Args` (clap derive) in [src/cli/args.rs](src/cli/args.rs). `OutputSections` (in [src/output/sections.rs](src/output/sections.rs)) is the set of section flags — `summary` / `imports` / `names` / `references` / `exports` / `pins` / `properties` / `layout` — and the **only** content selector:
 
-- `--sections` / `-S` (comma-separated) selects sections; it accepts section keys (with aliases `references`≡`refs`, `exports`≡`identity`, `properties`≡`props`) and the multi-section presets `logic` / `debug` / `full` (`OutputSections::parse`). Default (no flag) is `full`.
-- There are no separate `-s` / `-P` / `-r` / `-n` flags — every content choice goes through `-S` (e.g. `-S summary`, `-S full,names`).
+- `--sections` / `-S` (comma-separated) selects sections; it accepts section keys (with aliases `references`≡`refs`, `exports`≡`identity`, `properties`≡`props`) and the multi-section presets `logic` / `debug` / `dump` / `all` (`OutputSections::parse`). Default (no flag) is `dump`.
+- There are no separate `-s` / `-P` / `-r` / `-n` flags — every content choice goes through `-S` (e.g. `-S summary`, `-S dump,names`).
 - `references` (`-S refs`) + `--scan-dir` drives the reverse-reference scan, gated on the resolved `references` section; `--scan-dir` without it is a hard error.
 - `--compact` / `--output <FILE>` shape the serialized text; `--mount` / `--no-cache` feed the reverse scan.
 

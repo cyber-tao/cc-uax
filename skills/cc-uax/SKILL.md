@@ -45,11 +45,12 @@ To uninstall (remove the binary, PATH entry, and skills): `bash install.sh unins
 | Reverse refs — who references this asset | `cc-uax -c -S refs -d <Content-dir> <file>` |
 | Property-focused dump (properties + byte layout, no pins) | `cc-uax -c -S debug <file>` |
 | Export/import structure without property decode | `cc-uax -c -S exports,layout <file>` |
-| Full export parse (default: summary/imports/exports with pins, properties, layout) | `cc-uax -c <file>` |
+| Dump export parse (default: summary/imports/exports with pins, properties, layout) | `cc-uax -c <file>` |
+| Exhaustive JSON including names and references | `cc-uax -c -S all <file>` |
 | Pick exact sections | `cc-uax -c -S exports,pins,properties <file>` |
 | Summary + full name table | `cc-uax -c -S summary,names <file>` |
 
-`-S`/`--sections` is the single content selector — presets `logic` (graph nodes + pins), `debug` (properties + layout), `full` (default: summary + imports + exports with pins/properties/layout; excludes `names` and `references` unless requested); or comma-separate section keys `summary,imports,exports`/`identity`, `pins,properties,layout,names,references` (`refs` aliases `references`). Omitting `-S` yields `full`.
+`-S`/`--sections` is the single content selector — presets `logic` (graph nodes + pins), `debug` (properties + layout), `dump` (default: summary + imports + exports with pins/properties/layout; excludes `names` and `references` unless requested), and `all` (`dump` + `names` + `references`); or comma-separate section keys `summary,imports,exports`/`identity`, `pins,properties,layout,names,references` (`refs` aliases `references`). Omitting `-S` yields `dump`.
 
 ### Verified examples (real UE5.6 asset, `FileVersionUE5 = 1017`)
 
@@ -87,7 +88,7 @@ cc-uax -c -S summary Lvl_ThirdPerson.umap
 # → "package_name": "/Game/ThirdPerson/Lvl_ThirdPerson"
 ```
 
-Full flag reference:
+Flag reference:
 
 ```bash
 cc-uax --help
@@ -99,7 +100,7 @@ cc-uax --help
 
 ## Gotchas
 
-- **`-d` must point at the project's `Content/` root, not a subfolder.** `--mount /Game` (the default) maps `<scan-dir>/<relative>` → `/Game/<relative>`. If you point `-d` at `Content/Characters/`, a file at `Content/Characters/Meshes/SK_Mannequin.uasset` reports `self = /Game/Meshes/SK_Mannequin` instead of `/Game/Characters/Meshes/SK_Mannequin`, so no match is found and `referenced_by` comes back empty. Always pass the `Content/` root.
+- **Map disk roots explicitly for project-root or plugin scans.** `--mount /Game` (the default) maps `<scan-dir>/<relative>` → `/Game/<relative>` and is best when `-d` is the project `Content/` root. When scanning from a project root or including plugin/Engine content, pass a mapping such as `--mount /Game=Content,/MyPlugin=Plugins/MyPlugin/Content,/Engine=Engine/Content`.
 - **`-d` writes `.cc-uax-cache.sqlite` into the scan-dir.** When scanning a UE5 project you do not own, pass `--no-cache` or delete the file afterwards. The cache key is path+mtime+size.
 - **Git Bash / MSYS2 mangles `-m /Game`.** A leading-slash argument like `-m /Game` gets path-converted to `C:/Program Files/Git/Game`, corrupting the mount prefix (symptom: `self` starts with `/C:/Program Files/Git/Game/...`). Use a double slash — `-m //Game` — which MSYS2 restores to `/Game`; or run from PowerShell/cmd. Native Linux/macOS shells are unaffected.
 - **Cooked / unversioned / big-endian packages are rejected by design.** cc-uax targets editor-saved versioned assets only. These are hard limits, not bugs — see Troubleshooting for the exact messages.
@@ -113,4 +114,4 @@ cc-uax --help
 - **`package is unversioned (... typically a cooked package)`**: the asset was saved by a cooked build. cc-uax cannot read it; find the source editor asset instead.
 - **`package uses swapped (big-endian) byte order, possibly a cooked console package`**: console cooked package. Out of scope.
 - **`looks like a legacy UE3 package`**: `LegacyFileVersion >= 0`. Out of scope.
-- **`-S refs -d` returns `referenced_by: []` but you expect hits**: almost always the scan-dir mismatch (point `-d` at `Content/`) or the MSYS2 mount mangling (use `-m //Game` under Git Bash). Confirm a suspected dependent actually imports the target's package path with `cc-uax -S refs <dependent>`.
+- **`-S refs -d` returns `referenced_by: []` but you expect hits**: usually the scan-dir/mount mapping is wrong or MSYS2 mangled `-m /Game` (use `-m //Game` under Git Bash). Confirm a suspected dependent actually imports the target's package path with `cc-uax -S refs <dependent>`.

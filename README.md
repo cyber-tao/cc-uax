@@ -50,7 +50,7 @@ The name says it plainly: **cc** = Claude Code, **uax** = uasset. The tool also 
   | Gameplay & FX | `GameplayTagContainer`, `GameplayEffectVersion`, `Spline`, `AlphaBlend`, Niagara core (`NiagaraVariable` / `NiagaraVariableBase` / `NiagaraVariableWithOffset` / `NiagaraTypeDefinition`) |
 
 - **Blueprint graph logic** — `UEdGraphNode` pins are decoded right after the tagged-property region: every node's pins, pin types, default values/objects, and `LinkedTo` edges, so the full node-to-node execution & data graph is reconstructable — covering both Blueprint (`K2Node_*`) and Niagara (`NiagaraNode*`) graphs. Graph nodes also expose a distilled `member` (the function / event / variable they reference) plus `member_from` (its owning C++ class) for quick cross-referencing with source.
-- **Selectable output sections** — `--sections` (alias `-S`) composes exactly the blocks you want, or picks a preset (`logic`, `debug`, `full`) — keeping logic analysis lean and bug-hunting thorough.
+- **Selectable output sections** — `--sections` (alias `-S`) composes exactly the blocks you want, or picks a preset (`logic`, `debug`, `dump`, `all`) — keeping logic analysis lean and bug-hunting thorough.
 - **Graceful hex fallback** — future custom binary structs that are not yet structured emit a `type`+`size`-tagged hex preview that **preserves byte alignment**; the current UE5.7 validation set has zero `@unparsed` fallbacks.
 - **Reference graph**
   - `-S refs` — forward refs from the import table (`assets` / `scripts`) plus the header's soft-package-reference table (`soft`, e.g. `TSoftObjectPtr`/`TSoftClassPtr`), de-duplicated & sorted.
@@ -151,7 +151,7 @@ cc-uax <input.uasset> [options]
   -c, --compact         Compact JSON (default: pretty-printed)
   -S, --sections <LIST> Sections to emit, comma-separated, or a preset (see Output sections)
   -d, --scan-dir <DIR>  Recursively scan <DIR>; also list who references this file (with -S refs)
-  -m, --mount <PREFIX>  Mount prefix corresponding to <DIR> (default /Game)
+  -m, --mount <PREFIX>  Mount mapping for <DIR> (default /Game; supports /Game=Content,/Plugin=Plugins/Plugin/Content)
       --no-cache        Disable the reverse-scan disk cache
   -h, --help            Show help
   -V, --version         Show version
@@ -181,7 +181,7 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 
 ## 📋 Output Schema
 
-**Full mode**
+**Dump mode**
 
 ```jsonc
 {
@@ -229,17 +229,22 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 
 Add `summary` explicitly, e.g. `-S summary,refs`, if you want header fields alongside reference output.
 
+**Diagnostics**
+
+`diagnostics[]` uses a stable shape: `severity` (`error` / `warning` / `info`), `code`, `path`, `message`, optional byte `offset`, and optional `context`. Byte previews use `{ start, end, size, preview }`. Unknown or failed value decoders emit warning diagnostics such as `property_value_fallback` instead of silently swallowing the reason.
+
 ### Output sections
 
-`--sections <LIST>` (alias `-S`) selects which blocks to emit; items are comma-separated and may mix section keys with a preset. When omitted, the default is `full`.
+`--sections <LIST>` (alias `-S`) selects which blocks to emit; items are comma-separated and may mix section keys with a preset. When omitted, the default is `dump`.
 
 | Preset | Expands to | Use for |
 |---|---|---|
 | `logic` | `summary` + exports (identity + `member` + `pins`) | Graph / framework analysis alongside C++ |
 | `debug` | `summary` + `imports` + exports (`properties` + `layout`) | Bug hunting / serialization checks |
-| `full`  | `summary` + `imports` + exports (`pins` + `properties` + `layout`) — the default; excludes `names` and `references` unless requested | Complete export dump |
+| `dump`  | `summary` + `imports` + exports (`pins` + `properties` + `layout`) — the default; excludes `names` and `references` unless requested | Complete export dump |
+| `all`   | `dump` + `names` + `references` | Exhaustive package JSON |
 
-Section keys (composable, e.g. `-S exports,pins,properties` or `-S full,names`): `summary`, `imports`, `exports` (identity base), `pins`, `properties`, `layout` (serial offsets / flags / script window), `names`, `references` (alias `refs`).
+Section keys (composable, e.g. `-S exports,pins,properties` or `-S dump,names`): `summary`, `imports`, `exports` (identity base), `pins`, `properties`, `layout` (serial offsets / flags / script window), `names`, `references` (alias `refs`).
 
 For a single block just name it: `-S summary` (header only), or `-S refs` (forward refs; add `--scan-dir` for reverse refs).
 
@@ -248,14 +253,17 @@ For a single block just name it: `-S summary` (header only), or `-S refs` (forwa
 ```
 cc-uax/
 ├── src/
-│   ├── lib.rs          # Library root — exports Package, OutputSections
+│   ├── lib.rs          # Library root — exports Package, DecodeReport, diagnostics, sections, references
 │   ├── main.rs         # CLI entry orchestration
 │   ├── cli/
 │   │   ├── mod.rs
 │   │   ├── args.rs     # Clap arguments and section parsing
 │   │   ├── reverse_refs.rs # Reverse-reference scan and worker coordination
 │   │   └── cache.rs    # SQLite reverse-ref cache (binary-only)
-│   ├── package.rs      # Core: Package pipeline + JSON output (sections) + pin orchestration
+│   ├── package.rs      # Core package parser
+│   ├── decode/         # Export decode report, structured diagnostics, property/pin/member orchestration
+│   ├── diagnostic.rs   # Stable diagnostic model
+│   ├── output/         # Pure JSON serializers for reports, exports, properties, pins
 │   ├── summary.rs      # FPackageFileSummary (magic, versions, table offsets)
 │   ├── name.rs         # NameMap — name table parse & resolve
 │   ├── object.rs       # PackageIndex (+/- ⇒ export/import), Import, Export
@@ -295,8 +303,9 @@ cc-uax/
 2. `PackageFileSummary::parse` — validates `PACKAGE_FILE_TAG` (`0x9E2A83C1`), detects endianness, reads versions + table offsets.
 3. `NameMap::parse` — resolves names including number suffixes (`Foo_3`).
 4. Import / Export tables — `PackageIndex` sign selects the table.
-5. Per-export `ScriptSerialization` window → `property/` recursively decodes legacy and complete property tags; unknown future structs fall back to hex so alignment never breaks.
-6. Graph nodes — after the property window, `pin.rs` decodes the `UEdGraphNode` pin region (`pins` + `LinkedTo`), and node identities are distilled into `member` / `member_from`.
+5. Per-export `ScriptSerialization` window → `decode/` calls `property/` to recursively decode legacy and complete property tags; unknown future structs fall back to hex so alignment never breaks.
+6. Graph nodes — after the property window, `decode/` calls `pin.rs` to decode the `UEdGraphNode` pin region (`pins` + `LinkedTo`), and node identities are distilled into `member` / `member_from`.
+7. `output/` serializes the already-decoded report to JSON; it does not drive parsing decisions.
 
 > See [CLAUDE.md](CLAUDE.md) for the full architectural guide.
 
@@ -305,7 +314,7 @@ cc-uax/
 - ✅ **Validated** on **2,096 `.uasset` / `.umap` files** from a UE5.7 project — failed = 0, diagnostics = 0, `@unparsed` = 0.
 - ❌ Cooked packages (unversioned / package compression) and UE4 legacy formats are **not** supported.
 - 🔧 Native-binary structs used by the current UE5.7 validation set — including Niagara, GPU binding, groom dataflow, skeletal-mesh sampling, and cloth LOD payloads — are decoded structurally; unknown future custom payloads still use the alignment-preserving `@unparsed` preview.
-- 🔧 `referenced_by` derives package paths from disk — the input file must live under `--scan-dir` mapped to `--mount`. Both hard references (imports) and soft references (`TSoftObjectPtr`/`TSoftClassPtr`) are counted.
+- 🔧 `referenced_by` derives package paths from disk — the input file must live under `--scan-dir` mapped by `--mount`. A single `/Game` maps the whole scan root; explicit mappings such as `/Game=Content,/MyPlugin=Plugins/MyPlugin/Content,/Engine=Engine/Content` support project-root scans with plugins or Engine content. Both hard references (imports) and soft references (`TSoftObjectPtr`/`TSoftClassPtr`) are counted.
 - 🔧 Cache invalidates on mtime + size and auto-rebuilds when the built-in schema version changes.
 
 ## 🤝 Contributing

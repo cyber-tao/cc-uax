@@ -11,7 +11,7 @@
 # What it does:
 #   1. Detects OS + arch and maps to a release target
 #   2. Fetches the latest release version from GitHub
-#   3. Downloads + verifies the platform archive
+#   3. Downloads + validates the platform archive structure
 #   4. Installs the `cc-uax` binary (default: ~/.local/bin, override with INSTALL_DIR=...)
 #   5. Installs the cc-uax skill into Claude Code (~/.claude/skills),
 #      Codex (~/.codex/skills), and the legacy Agents path (~/.agents/skills)
@@ -132,7 +132,7 @@ ARCHIVE="cc-uax-${TARGET}-${VERSION_NUM}.tar.gz"
 URL="https://github.com/${REPO}/releases/download/${TAG}/${ARCHIVE}"
 info "$URL"
 curl -fL --progress-bar -o "${TMPDIR}/${ARCHIVE}" "$URL" || die "download failed"
-# verify it's actually a gzip, not a 404 HTML page
+# validate it's actually a gzip archive, not a 404 HTML page
 tar -tzf "${TMPDIR}/${ARCHIVE}" >/dev/null 2>&1 || die "archive is corrupt or target asset missing: $ARCHIVE"
 ok "downloaded ${ARCHIVE}"
 

@@ -50,7 +50,7 @@
   | Gameplay 与特效 | `GameplayTagContainer`、`GameplayEffectVersion`、`Spline`、`AlphaBlend`、Niagara 核心（`NiagaraVariable` / `NiagaraVariableBase` / `NiagaraVariableWithOffset` / `NiagaraTypeDefinition`） |
 
 - **蓝图图逻辑** —— 紧随 tagged property 区间之后解码 `UEdGraphNode` 的 pin：每个节点的 pins、pin 类型、默认值/默认对象，以及 `LinkedTo` 连线，从而可重建完整的节点间执行与数据流图 —— 蓝图（`K2Node_*`）与 Niagara（`NiagaraNode*`）图节点均覆盖。图节点还会蒸馏出 `member`（其引用的函数 / 事件 / 变量）与 `member_from`（所属 C++ 类），便于与源码交叉对照。
-- **可选输出区块** —— `--sections`（别名 `-S`）按需组合要输出的区块，或直接选预设（`logic`、`debug`、`full`）—— 让逻辑分析精简、查 BUG 全面。
+- **可选输出区块** —— `--sections`（别名 `-S`）按需组合要输出的区块，或直接选预设（`logic`、`debug`、`dump`、`all`）—— 让逻辑分析精简、查 BUG 全面。
 - **优雅的十六进制回退** —— 未来遇到尚未结构化的自定义二进制结构体时，输出带 `type` + `size` 标注的十六进制预览，**保证字节对齐不被破坏**；当前 UE5.7 验证集内 `@unparsed` 为 0。
 - **引用图谱**
   - `-S refs` —— 从 import 表提取前向引用（`assets` / `scripts`），并加入包头软引用表（`soft`，如 `TSoftObjectPtr`/`TSoftClassPtr`），去重排序。
@@ -151,7 +151,7 @@ cc-uax <input.uasset> [选项]
   -c, --compact         紧凑 JSON（默认：美化）
   -S, --sections <LIST> 要输出的区块（逗号分隔）或预设（见“输出区块”）
   -d, --scan-dir <DIR>  递归扫描 <DIR>；附带列出谁引用了当前文件（配合 -S refs）
-  -m, --mount <PREFIX>  <DIR> 对应的挂载前缀（默认 /Game）
+  -m, --mount <PREFIX>  <DIR> 的挂载映射（默认 /Game；支持 /Game=Content,/Plugin=Plugins/Plugin/Content）
       --no-cache        关闭反向扫描磁盘缓存
   -h, --help            显示帮助
   -V, --version         显示版本
@@ -229,17 +229,22 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 
 如果希望引用输出同时包含包头字段，请显式使用 `-S summary,refs`。
 
+**诊断**
+
+`diagnostics[]` 使用稳定结构：`severity`（`error` / `warning` / `info`）、`code`、`path`、`message`、可选字节 `offset` 与可选 `context`。字节预览统一为 `{ start, end, size, preview }`。未知或失败的 value decoder 会输出 `property_value_fallback` 等 warning，而不是静默吞掉原因。
+
 ### 输出区块
 
-`--sections <LIST>`（别名 `-S`）选择输出哪些区块；用逗号分隔，可混用区块键与预设。省略时默认 `full`。
+`--sections <LIST>`（别名 `-S`）选择输出哪些区块；用逗号分隔，可混用区块键与预设。省略时默认 `dump`。
 
 | 预设 | 展开为 | 适用 |
 |---|---|---|
 | `logic` | `summary` + exports（identity + `member` + `pins`） | 对照 C++ 的图 / 框架分析 |
 | `debug` | `summary` + `imports` + exports（`properties` + `layout`） | 查 BUG / 序列化核对 |
-| `full`  | `summary` + `imports` + exports（`pins` + `properties` + `layout`）— 默认；除非显式请求，否则不包含 `names` 和 `references` | 完整 export 导出 |
+| `dump`  | `summary` + `imports` + exports（`pins` + `properties` + `layout`）— 默认；除非显式请求，否则不包含 `names` 和 `references` | 完整 export 导出 |
+| `all`   | `dump` + `names` + `references` | 穷尽式 package JSON |
 
-区块键（可组合，如 `-S exports,pins,properties` 或 `-S full,names`）：`summary`、`imports`、`exports`（identity 基础）、`pins`、`properties`、`layout`（serial 偏移 / flags / script 窗口）、`names`、`references`（别名 `refs`）。
+区块键（可组合，如 `-S exports,pins,properties` 或 `-S dump,names`）：`summary`、`imports`、`exports`（identity 基础）、`pins`、`properties`、`layout`（serial 偏移 / flags / script 窗口）、`names`、`references`（别名 `refs`）。
 
 只要单个区块直接写名字即可：`-S summary`（仅包头），或 `-S refs`（前向引用；加 `--scan-dir` 得反向引用）。
 
@@ -248,14 +253,17 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 ```
 cc-uax/
 ├── src/
-│   ├── lib.rs          # 库入口 —— 导出 Package、OutputSections
+│   ├── lib.rs          # 库入口 —— 导出 Package、DecodeReport、诊断、区块和引用 helpers
 │   ├── main.rs         # CLI 入口编排
 │   ├── cli/
 │   │   ├── mod.rs
 │   │   ├── args.rs     # Clap 参数与区块解析
 │   │   ├── reverse_refs.rs # 反向引用扫描与 worker 协调
 │   │   └── cache.rs    # SQLite 反向引用缓存（仅二进制侧）
-│   ├── package.rs      # 核心：Package 流水线 + JSON 输出（区块）+ pin 编排
+│   ├── package.rs      # 核心 package 解析器
+│   ├── decode/         # Export 解码报告、结构化诊断、property/pin/member 编排
+│   ├── diagnostic.rs   # 稳定诊断模型
+│   ├── output/         # 纯 JSON serializer：report/export/property/pin
 │   ├── summary.rs      # FPackageFileSummary（魔数、版本、表偏移）
 │   ├── name.rs         # NameMap —— Name 表解析与解析
 │   ├── object.rs       # PackageIndex（+/- ⇒ export/import）、Import、Export
@@ -305,7 +313,7 @@ cc-uax/
 - ✅ **已验证** 某 UE5.7 项目的 **2,096 个 `.uasset` / `.umap` 文件** —— failed = 0，diagnostics = 0，`@unparsed` = 0。
 - ❌ Cooked 包（unversioned / 包级压缩）与 UE4 旧格式**不支持**。
 - 🔧 当前 UE5.7 验证集用到的原生二进制结构体（含 Niagara、GPU binding、groom dataflow、skeletal-mesh sampling、cloth LOD payload）已结构化解码；未来未知自定义 payload 仍会使用保持对齐的 `@unparsed` 预览。
-- 🔧 `referenced_by` 从磁盘推导包路径 —— 输入文件必须位于映射到 `--mount` 的 `--scan-dir` 内。硬引用（import）与软引用（`TSoftObjectPtr`/`TSoftClassPtr`）均计入统计。
+- 🔧 `referenced_by` 从磁盘推导包路径 —— 输入文件必须位于由 `--mount` 映射的 `--scan-dir` 内。单个 `/Game` 会把整个扫描根目录映射为 `/Game`；显式映射如 `/Game=Content,/MyPlugin=Plugins/MyPlugin/Content,/Engine=Engine/Content` 可覆盖项目根、插件和 Engine 内容。硬引用（import）与软引用（`TSoftObjectPtr`/`TSoftClassPtr`）均计入统计。
 - 🔧 缓存按修改时间 + 大小失效，内置 schema 版本变化时自动重建。
 
 ## 🤝 贡献
