@@ -271,7 +271,7 @@ cc-uax/
 │   │   ├── mod.rs      # Property 解析入口与共享类型
 │   │   ├── tag.rs      # Legacy 与完整类型名 FPropertyTag 布局
 │   │   ├── value.rs    # 递归 tagged property 值解码
-│   │   ├── native.rs   # 原生结构体解码与对齐回退
+│   │   ├── native/     # 按类别拆分的原生结构体解码与对齐回退
 │   │   └── text.rs     # FText 解析
 │   ├── pin.rs          # EdGraphNode pin 解码器 —— pins、pin 类型、LinkedTo 连线
 │   ├── version.rs      # UE5/UE4 文件版本常量 + 自定义版本 GUID

@@ -271,7 +271,7 @@ cc-uax/
 │   │   ├── mod.rs      # Property parser entry points and shared types
 │   │   ├── tag.rs      # Legacy and complete-type-name FPropertyTag layouts
 │   │   ├── value.rs    # Recursive tagged-property value decoder
-│   │   ├── native.rs   # Native struct decoders + alignment fallbacks
+│   │   ├── native/     # Native struct decoders by category + alignment fallbacks
 │   │   └── text.rs     # FText parsing
 │   ├── pin.rs          # EdGraphNode pin decoder — pins, pin types, LinkedTo edges
 │   ├── version.rs      # UE5/UE4 file-version constants + custom-version GUIDs
