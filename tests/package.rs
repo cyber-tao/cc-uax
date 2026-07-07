@@ -241,7 +241,16 @@ fn post_property_tail_is_reported_on_export() {
         json["exports"][0]["post_property_tail"]["preview"].as_str(),
         Some("01020304")
     );
-    assert!(json["diagnostics"].as_array().unwrap().is_empty());
+    let diag = diagnostic_with_code(&json, "post_property_tail");
+    assert_eq!(diag["severity"].as_str(), Some("warning"));
+    assert_eq!(
+        diag["offset"].as_u64(),
+        json["exports"][0]["post_property_tail"]["start"].as_u64()
+    );
+    assert_eq!(
+        diag["context"]["tail"]["preview"].as_str(),
+        Some("01020304")
+    );
 }
 
 #[test]

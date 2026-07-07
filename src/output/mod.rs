@@ -1,7 +1,11 @@
-//! JSON output layer: `Package::to_json` and the per-section serializers, plus the
-//! export serial-window and Blueprint-pin serialization helpers.
+//! JSON output layer: `Package::to_json` and per-section serializers. Parsing
+//! and per-export decoding live in `crate::decode`.
 
+mod export_json;
 mod json;
+mod pin_json;
+mod property_json;
+mod report_json;
 pub mod sections;
 
 pub use sections::OutputSections;

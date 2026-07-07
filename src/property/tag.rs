@@ -1,5 +1,8 @@
 use super::value::parse_value;
-use super::{OVERRIDABLE_SERIALIZATION_BIT, PREVIEW_MAX, ParseCtx, PropertyEntry, to_hex};
+use super::{
+    OVERRIDABLE_SERIALIZATION_BIT, PREVIEW_MAX, ParseCtx, PropertyEntry, PropertyParse, to_hex,
+};
+use crate::diagnostic::Diagnostic;
 use crate::name::NameMap;
 use crate::reader::Reader;
 use crate::version::{ue4, ue5};
@@ -95,33 +98,74 @@ struct PropertyTag {
     is_skipped: bool,
 }
 
-pub(crate) fn parse_properties(
+pub(crate) fn parse_properties_report(
     r: &mut Reader,
     ctx: &ParseCtx,
     end_limit: u64,
-) -> Vec<PropertyEntry> {
+    path: &str,
+) -> PropertyParse {
     let mut entries = Vec::new();
+    let mut diagnostics = Vec::new();
     let mut guard = 0usize;
     loop {
         guard += 1;
         if guard > 1_000_000 {
+            diagnostics.push(
+                Diagnostic::warning(
+                    "property_guard_limit_reached",
+                    path,
+                    "stopped after 1000000 properties; data may be corrupt",
+                )
+                .with_offset(r.pos()),
+            );
             break;
         }
         if r.pos() + 8 > end_limit {
             break;
         }
+        let tag_start = r.pos();
+        let prop_path = format!("{path}/{}", entries.len());
         let tag = match read_property_tag(r, ctx, end_limit) {
             Ok(Some(tag)) => tag,
             Ok(None) => break,
-            Err(_) => break,
+            Err(err) => {
+                diagnostics.push(
+                    Diagnostic::warning(
+                        "property_tag_parse_failed",
+                        prop_path,
+                        format!("failed to parse property tag: {err:#}"),
+                    )
+                    .with_offset(tag_start),
+                );
+                break;
+            }
         };
 
         if tag.size < 0 {
+            diagnostics.push(
+                Diagnostic::warning(
+                    "property_negative_size",
+                    prop_path,
+                    format!("property '{}' has negative size {}", tag.name, tag.size),
+                )
+                .with_offset(tag_start),
+            );
             break;
         }
         let value_start = r.pos();
         let aligned = value_start.saturating_add(tag.size as u64);
         if aligned > end_limit {
+            diagnostics.push(
+                Diagnostic::warning(
+                    "property_value_overruns_window",
+                    prop_path,
+                    format!(
+                        "property '{}' value range [{value_start}, {aligned}) exceeds end {end_limit}",
+                        tag.name
+                    ),
+                )
+                .with_offset(value_start),
+            );
             break;
         }
 
@@ -134,10 +178,28 @@ pub(crate) fn parse_properties(
         } else {
             match parse_value(r, &tag.type_name, ctx, tag.is_binary_native, aligned) {
                 Ok(v) => v,
-                Err(_) => {
+                Err(err) => {
                     let _ = r.seek(value_start);
                     let n = (tag.size as usize).min(PREVIEW_MAX);
                     let preview = r.read_bytes(n).unwrap_or_default();
+                    diagnostics.push(
+                        Diagnostic::warning(
+                            "property_value_unparsed",
+                            prop_path.clone(),
+                            format!(
+                                "failed to decode property '{}' as {}: {err:#}",
+                                tag.name,
+                                tag.type_name.display()
+                            ),
+                        )
+                        .with_offset(value_start)
+                        .with_context(json!({
+                            "property": tag.name.clone(),
+                            "type": tag.type_name.display(),
+                            "size": tag.size,
+                            "preview": to_hex(&preview),
+                        })),
+                    );
                     json!({ "@unparsed": to_hex(&preview), "size": tag.size })
                 }
             }
@@ -162,7 +224,10 @@ pub(crate) fn parse_properties(
             guid: tag.guid,
         });
     }
-    entries
+    PropertyParse {
+        entries,
+        diagnostics,
+    }
 }
 
 fn read_property_tag(

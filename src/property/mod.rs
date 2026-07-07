@@ -3,6 +3,7 @@ mod tag;
 mod text;
 mod value;
 
+use crate::diagnostic::Diagnostic;
 use crate::name::NameMap;
 use crate::pin::PinSerCtx;
 use crate::reader::Reader;
@@ -43,6 +44,12 @@ pub struct PropertyEntry {
     pub guid: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PropertyParse {
+    pub entries: Vec<PropertyEntry>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 pub fn entries_to_json(props: &[PropertyEntry]) -> Value {
     let arr: Vec<Value> = props
         .iter()
@@ -68,6 +75,15 @@ pub fn parse_object_properties(
     ctx: &ParseCtx,
     end_limit: u64,
 ) -> Vec<PropertyEntry> {
+    parse_object_properties_report(r, ctx, end_limit, "/properties").entries
+}
+
+pub fn parse_object_properties_report(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    end_limit: u64,
+    path: &str,
+) -> PropertyParse {
     // A UClass tagged-property block opens with a serialization-control byte
     // (EClassSerializationControlExtension, uint8). When OverridableSerialization-
     // Information (0x02) is set, an EOverriddenPropertyOperation byte (uint8) follows.
@@ -76,17 +92,50 @@ pub fn parse_object_properties(
     {
         let control = match r.read_u8() {
             Ok(c) => c,
-            Err(_) => return Vec::new(),
+            Err(err) => {
+                return PropertyParse {
+                    entries: Vec::new(),
+                    diagnostics: vec![
+                        Diagnostic::warning(
+                            "property_control_byte_read_failed",
+                            path,
+                            format!("failed to read object property control byte: {err:#}"),
+                        )
+                        .with_offset(r.pos()),
+                    ],
+                };
+            }
         };
-        if control & OVERRIDABLE_SERIALIZATION_BIT != 0 && r.read_u8().is_err() {
-            return Vec::new();
+        if control & OVERRIDABLE_SERIALIZATION_BIT != 0
+            && let Err(err) = r.read_u8()
+        {
+            return PropertyParse {
+                entries: Vec::new(),
+                diagnostics: vec![
+                    Diagnostic::warning(
+                        "property_override_byte_read_failed",
+                        path,
+                        format!("failed to read overridden property operation byte: {err:#}"),
+                    )
+                    .with_offset(r.pos()),
+                ],
+            };
         }
     }
-    parse_properties(r, ctx, end_limit)
+    parse_properties_report(r, ctx, end_limit, path)
 }
 
 pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<PropertyEntry> {
-    tag::parse_properties(r, ctx, end_limit)
+    parse_properties_report(r, ctx, end_limit, "/properties").entries
+}
+
+pub fn parse_properties_report(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    end_limit: u64,
+    path: &str,
+) -> PropertyParse {
+    tag::parse_properties_report(r, ctx, end_limit, path)
 }
 
 pub(crate) fn validate_count(

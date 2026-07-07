@@ -1,3 +1,4 @@
+use crate::diagnostic::Diagnostic;
 use crate::property::{ParseCtx, parse_text};
 use crate::reader::{Guid, Reader};
 use crate::summary::PackageFileSummary;
@@ -112,6 +113,11 @@ pub struct Pin {
     pub reference_pass_through: Option<PinRef>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PinParse {
+    pub pins: Vec<Pin>,
+}
+
 pub fn direction_label(direction: u8) -> &'static str {
     if direction == PIN_DIRECTION_INPUT {
         "input"
@@ -136,12 +142,37 @@ pub fn parse_node_pins(
     ctx: &ParseCtx,
     vc: &PinSerCtx,
 ) -> Option<Vec<Pin>> {
+    parse_node_pins_report(r, end, ctx, vc, "/pins")
+        .ok()
+        .map(|parsed| parsed.pins)
+}
+
+pub fn parse_node_pins_report(
+    r: &mut Reader,
+    end: u64,
+    ctx: &ParseCtx,
+    vc: &PinSerCtx,
+    path: &str,
+) -> std::result::Result<PinParse, Diagnostic> {
     let start = r.pos();
     match parse_pins_inner(r, end, ctx, vc) {
-        Ok(pins) if r.pos() <= end => Some(pins),
-        _ => {
+        Ok(pins) if r.pos() <= end => Ok(PinParse { pins }),
+        Ok(_) => {
             let _ = r.seek(start);
-            None
+            Err(
+                Diagnostic::warning("pin_region_overrun", path, "pin parser overran pin region")
+                    .with_offset(start),
+            )
+        }
+        Err(err) => {
+            let failed_at = r.pos();
+            let _ = r.seek(start);
+            Err(Diagnostic::warning(
+                "pin_parse_failed",
+                path,
+                format!("pin parser failed: {err:#}"),
+            )
+            .with_offset(failed_at))
         }
     }
 }

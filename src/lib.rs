@@ -1,3 +1,5 @@
+pub mod decode;
+pub mod diagnostic;
 pub mod name;
 pub mod object;
 pub mod output;
@@ -9,5 +11,7 @@ pub mod references;
 pub mod summary;
 pub mod version;
 
+pub use decode::{DecodeOptions, DecodeReport};
+pub use diagnostic::{ByteRangePreview, Diagnostic, Severity};
 pub use output::OutputSections;
 pub use package::Package;
