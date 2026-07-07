@@ -69,9 +69,12 @@ pub mod custom {
     /// FFortniteMainBranchObjectVersion::SerializeFloatChannelShowCurve — from this
     /// version on, MovieScene float/double channels serialize a trailing bShowCurve.
     pub const SERIALIZE_FLOAT_CHANNEL_SHOW_CURVE: i32 = 53;
+    pub const NIAGARA_ADD_GENERATED_FUNCTIONS_TO_GPU_PARAM_INFO: i32 = 55;
     /// FNiagaraCustomVersion::VariablesUseTypeDefRegistry — from this version on,
     /// FNiagaraVariableBase serializes Name + a tagged-property FNiagaraTypeDefinition.
     pub const NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY: i32 = 64;
+    pub const NIAGARA_ADD_VARIADIC_PARAMETERS_TO_GPU_FUNCTION_INFO: i32 = 77;
+    pub const NIAGARA_SERIALIZE_USAGE_BITMASK_TO_GPU_FUNCTION_INFO: i32 = 91;
     pub const PIN_TYPE_INCLUDES_UOBJECT_WRAPPER_FLAG: i32 = 32;
     pub const SERIALIZE_FLOAT_PIN_SINGLE_PRECISION: i32 = 36;
 }

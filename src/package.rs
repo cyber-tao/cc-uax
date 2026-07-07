@@ -495,21 +495,19 @@ impl Package {
                         let consumed = reader.pos().saturating_sub(start);
                         let range = end - start;
                         if consumed < range {
-                            diagnostics.push(diagnostic(
-                                "warning",
-                                "properties_unconsumed_bytes",
-                                format!("/exports/{i}/properties"),
-                                format!(
-                                    "property parser left {} byte(s) unconsumed",
-                                    range - consumed
-                                ),
-                                Some(json!({
-                                    "unconsumed_bytes": range - consumed,
-                                    "property_start": start,
-                                    "property_end": end,
-                                    "parser_position": reader.pos(),
-                                })),
-                            ));
+                            let tail_start = reader.pos();
+                            let tail_size = range - consumed;
+                            let preview_len = tail_size.min(64) as usize;
+                            let preview = reader.read_bytes(preview_len).unwrap_or_default();
+                            obj.insert(
+                                "post_property_tail".into(),
+                                json!({
+                                    "size": tail_size,
+                                    "start": tail_start,
+                                    "end": end,
+                                    "preview": hex_preview(&preview),
+                                }),
+                            );
                         }
                     }
                 } else if opts.properties && end == start {
@@ -981,6 +979,16 @@ fn diagnostic(
         o.insert("details".into(), details);
     }
     Value::Object(o)
+}
+
+fn hex_preview(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    s
 }
 
 fn export_serial_window(
