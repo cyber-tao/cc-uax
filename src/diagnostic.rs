@@ -26,7 +26,7 @@ pub struct Diagnostic {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<Value>,
+    pub context: Option<Box<Value>>,
 }
 
 impl Diagnostic {
@@ -76,7 +76,7 @@ impl Diagnostic {
     }
 
     pub fn with_context(mut self, context: Value) -> Self {
-        self.context = Some(context);
+        self.context = Some(Box::new(context));
         self
     }
 }

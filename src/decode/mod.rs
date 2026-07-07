@@ -12,7 +12,7 @@ use crate::version::{custom, ue5};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DecodeOptions {
     pub sections: OutputSections,
 }
@@ -20,14 +20,6 @@ pub struct DecodeOptions {
 impl DecodeOptions {
     pub fn new(sections: OutputSections) -> Self {
         Self { sections }
-    }
-}
-
-impl Default for DecodeOptions {
-    fn default() -> Self {
-        Self {
-            sections: OutputSections::default(),
-        }
     }
 }
 
