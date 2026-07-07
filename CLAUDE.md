@@ -26,7 +26,7 @@ No benchmarks, no separate lint config. CI is whatever runs these locally.
 
 `Cargo.toml` defines both a `lib` (`cc_uax`) and a `bin` (`cc-uax`):
 
-- **lib** (`src/lib.rs`): the parser. Declares 8 modules — `name`, `object`, `package`, `pin`, `property`, `reader`, `summary`, `version` — and re-exports `Package` + `OutputSections`.
+- **lib** (`src/lib.rs`): the parser. Declares 10 modules — `name`, `object`, `output`, `package`, `pin`, `property`, `reader`, `references`, `summary`, `version` — and re-exports `Package` + `OutputSections`.
 - **bin** (`src/main.rs`): the CLI. Declares its own `mod cache` and pulls in `rusqlite`.
 
 `src/cache.rs` is **only** included by the binary, never by the lib. Keep the SQLite reverse-scan cache out of the parser crate; `rusqlite` is a bin-side concern. When changing the parser, do not reach into `cache.rs` or add parser deps through it.
@@ -69,17 +69,17 @@ The per-export `serial_offset`/`serial_size` windowing is what guarantees byte a
 
 ## Reference analysis
 
-- **Forward references** (`collect_package_references` in [src/package.rs](src/package.rs)): reads the import table and partitions external packages into `assets` vs `scripts` by the `/Script/` prefix (`SCRIPT_PATH_PREFIX`). The header's `SoftPackageReferences` table (one FName package per entry) is parsed too and emitted as `soft`. Output keys: `assets`, `scripts`, `soft`.
+- **Forward references** (`collect_package_references` in [src/references.rs](src/references.rs)): reads the import table and partitions external packages into `assets` vs `scripts` by the `/Script/` prefix (`SCRIPT_PATH_PREFIX`). The header's `SoftPackageReferences` table (one FName package per entry) is parsed too and emitted as `soft`. Output keys: `assets`, `scripts`, `soft`.
 - **Reverse references** (CLI only, [src/main.rs](src/main.rs)): `--scan-dir <DIR>` walks the directory (`collect_asset_files`), maps disk paths to package paths via `--mount` (default `/Game`) using `package_path_from_relative`, parses every asset (imports + soft references, via `referenced_packages_from_bytes`), and computes `referenced_by`.
 - **Cache** (`RefCache` in [src/cache.rs](src/cache.rs)): the reverse scan writes `.cc-uax-cache.sqlite` at the scan-dir root, keyed by file path + mtime + size; unparseable files are cached as negative results (`parse_ok = false`) so they are not re-read every scan. Bump `CACHE_SCHEMA_VERSION` whenever the reference-extraction logic changes — existing caches auto-invalidate on schema mismatch. `--no-cache` disables it.
 
 ## CLI surface
 
-`Args` (clap derive) in [src/main.rs](src/main.rs). `OutputSections` (in `package.rs`) is the set of section flags — `summary` / `imports` / `names` / `references` / `exports` / `pins` / `properties` / `layout` — and the **only** content selector:
+`Args` (clap derive) in [src/main.rs](src/main.rs). `OutputSections` (in [src/output/sections.rs](src/output/sections.rs)) is the set of section flags — `summary` / `imports` / `names` / `references` / `exports` / `pins` / `properties` / `layout` — and the **only** content selector:
 
 - `--sections` / `-S` (comma-separated) selects sections; it accepts section keys (with aliases `references`≡`refs`, `exports`≡`identity`, `properties`≡`props`) and the multi-section presets `logic` / `debug` / `full` (`OutputSections::parse`). Default (no flag) is `full`.
 - There are no separate `-s` / `-P` / `-r` / `-n` flags — every content choice goes through `-S` (e.g. `-S summary`, `-S full,names`).
-- `references` (`-S refs`) + `--scan-dir` drives the reverse-reference scan, gated on the resolved `references` section; `--scan-dir` without it just warns.
+- `references` (`-S refs`) + `--scan-dir` drives the reverse-reference scan, gated on the resolved `references` section; `--scan-dir` without it is a hard error.
 - `--compact` / `--output <FILE>` shape the serialized text; `--mount` / `--no-cache` feed the reverse scan.
 
 ## Conventions

@@ -146,3 +146,26 @@ fn output_sections_parse_presets_and_aliases() {
 
     assert!(OutputSections::parse("summary,unknown").is_err());
 }
+
+#[test]
+fn output_sections_edge_cases() {
+    // pins / properties / layout each imply exports.
+    let pins = OutputSections::parse("pins").unwrap();
+    assert!(pins.pins && pins.exports);
+    let props = OutputSections::parse("properties").unwrap();
+    assert!(props.properties && props.exports);
+    let layout = OutputSections::parse("layout").unwrap();
+    assert!(layout.layout && layout.exports);
+
+    // Aliases resolve to their canonical section.
+    let aliased = OutputSections::parse("refs,props,identity").unwrap();
+    assert!(aliased.references && aliased.properties && aliased.exports);
+
+    // Parsing is case-insensitive and tolerates duplicate tokens and whitespace.
+    let dup = OutputSections::parse("SUMMARY, summary , Full").unwrap();
+    assert!(dup.summary && dup.imports && dup.exports && dup.pins && dup.properties && dup.layout);
+
+    // A single unknown token anywhere is rejected; so is an empty spec.
+    assert!(OutputSections::parse("summary,bogus").is_err());
+    assert!(OutputSections::parse("").is_err());
+}
