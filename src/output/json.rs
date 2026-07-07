@@ -109,9 +109,9 @@ impl Package {
                     "class_package": self.names.resolve_raw(imp.class_package),
                     "class": self.names.resolve_raw(imp.class_name),
                     "name": self.names.resolve_raw(imp.object_name),
-                    "outer": name_or_null(self.resolve_full_name(imp.outer_index.0, 0)),
+                    "outer": name_or_null(self.resolve_full_name(imp.outer_index.0)),
                     "package_name": imp.package_name.map(|p| self.names.resolve_raw(p)),
-                    "full_name": self.resolve_full_name(pkg_index, 0),
+                    "full_name": self.resolve_full_name(pkg_index),
                 })
             })
             .collect();
@@ -176,7 +176,7 @@ impl Package {
 
         for (i, exp) in self.exports.iter().enumerate() {
             let pkg_index = (i as i32) + 1;
-            let class_full = self.resolve_full_name(exp.class_index.0, 0);
+            let class_full = self.resolve_full_name(exp.class_index.0);
             let is_node = is_graph_node_class(&class_full);
             let mut obj = serde_json::Map::new();
             obj.insert("index".into(), json!(pkg_index));
@@ -191,20 +191,17 @@ impl Package {
             if opts.layout {
                 obj.insert(
                     "super".into(),
-                    name_or_null(self.resolve_full_name(exp.super_index.0, 0)),
+                    name_or_null(self.resolve_full_name(exp.super_index.0)),
                 );
                 obj.insert(
                     "template".into(),
-                    name_or_null(self.resolve_full_name(exp.template_index.0, 0)),
+                    name_or_null(self.resolve_full_name(exp.template_index.0)),
                 );
                 obj.insert(
                     "outer".into(),
-                    name_or_null(self.resolve_full_name(exp.outer_index.0, 0)),
+                    name_or_null(self.resolve_full_name(exp.outer_index.0)),
                 );
-                obj.insert(
-                    "full_name".into(),
-                    json!(self.resolve_full_name(pkg_index, 0)),
-                );
+                obj.insert("full_name".into(), json!(self.resolve_full_name(pkg_index)));
                 obj.insert(
                     "object_flags".into(),
                     json!(format!("0x{:08X}", exp.object_flags)),
@@ -248,10 +245,10 @@ impl Package {
 
                 if end > start && reader.seek(start).is_ok() {
                     let props = parse_object_properties(&mut reader, &ctx, end);
-                    if let Some((member, from)) = distill_member(&props) {
-                        obj.insert("member".into(), json!(member));
-                        if let Some(from) = from {
-                            obj.insert("member_from".into(), from);
+                    if let Some(member) = distill_member(&props) {
+                        obj.insert("member".into(), json!(member.name));
+                        if let Some(parent) = member.parent {
+                            obj.insert("member_from".into(), parent);
                         }
                     }
                     if opts.properties {
@@ -318,7 +315,7 @@ impl Package {
         }
 
         let export_full_names: Vec<String> = (0..self.exports.len())
-            .map(|i| self.resolve_full_name((i as i32) + 1, 0))
+            .map(|i| self.resolve_full_name((i as i32) + 1))
             .collect();
 
         let mut pin_name_by_id: HashMap<(i32, Guid), String> = HashMap::new();
@@ -570,9 +567,9 @@ impl Package {
             export_full_names
                 .get((r.node_index - 1) as usize)
                 .cloned()
-                .unwrap_or_else(|| self.resolve_full_name(r.node_index, 0))
+                .unwrap_or_else(|| self.resolve_full_name(r.node_index))
         } else {
-            self.resolve_full_name(r.node_index, 0)
+            self.resolve_full_name(r.node_index)
         };
         o.insert("node".into(), name_or_null(node));
         o.insert("node_index".into(), json!(r.node_index));
@@ -721,7 +718,12 @@ fn is_graph_node_class(class_full: &str) -> bool {
     simple.contains("GraphNode")
 }
 
-fn distill_member(props: &[PropertyEntry]) -> Option<(String, Option<Value>)> {
+struct MemberRef {
+    name: String,
+    parent: Option<Value>,
+}
+
+fn distill_member(props: &[PropertyEntry]) -> Option<MemberRef> {
     const REF_PROPS: [&str; 4] = [
         "FunctionReference",
         "EventReference",
@@ -736,21 +738,21 @@ fn distill_member(props: &[PropertyEntry]) -> Option<(String, Option<Value>)> {
             Some(a) => a,
             None => continue,
         };
-        let mut member = None;
-        let mut from = None;
+        let mut name = None;
+        let mut parent = None;
         for p in inner {
             match p.get("name").and_then(Value::as_str) {
                 Some("MemberName") => {
-                    member = p.get("value").and_then(Value::as_str).map(str::to_owned);
+                    name = p.get("value").and_then(Value::as_str).map(str::to_owned);
                 }
                 Some("MemberParent") => {
-                    from = p.get("value").cloned();
+                    parent = p.get("value").cloned();
                 }
                 _ => {}
             }
         }
-        if let Some(m) = member {
-            return Some((m, from));
+        if let Some(name) = name {
+            return Some(MemberRef { name, parent });
         }
     }
     None

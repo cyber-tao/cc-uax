@@ -36,7 +36,7 @@ impl NameMap {
         Ok(NameMap { names })
     }
 
-    pub fn get(&self, index: i32) -> Option<&str> {
+    fn get(&self, index: i32) -> Option<&str> {
         usize::try_from(index)
             .ok()
             .and_then(|i| self.names.get(i))

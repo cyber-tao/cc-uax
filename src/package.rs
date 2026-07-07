@@ -11,6 +11,10 @@ use crate::summary::PackageFileSummary;
 use anyhow::Result;
 use serde_json::{Value, json};
 
+/// Maximum outer-chain depth when resolving a full object name; guards against
+/// cyclic outer references in malformed packages.
+const MAX_RESOLVE_DEPTH: u32 = 64;
+
 pub struct Package {
     pub summary: PackageFileSummary,
     pub names: NameMap,
@@ -74,8 +78,14 @@ impl Package {
         })
     }
 
-    pub fn resolve_full_name(&self, index: i32, depth: u32) -> String {
-        if index == 0 || depth > 64 {
+    pub fn resolve_full_name(&self, index: i32) -> String {
+        self.resolve_full_name_at(index, 0)
+    }
+
+    /// Walk the outer chain to build a dotted full name. `depth` guards against
+    /// cyclic outer references in malformed packages; see `MAX_RESOLVE_DEPTH`.
+    fn resolve_full_name_at(&self, index: i32, depth: u32) -> String {
+        if index == 0 || depth > MAX_RESOLVE_DEPTH {
             return String::new();
         }
         if index < 0 {
@@ -83,7 +93,7 @@ impl Package {
             match self.imports.get(i) {
                 Some(imp) => {
                     let name = self.names.resolve_raw(imp.object_name);
-                    let outer = self.resolve_full_name(imp.outer_index.0, depth + 1);
+                    let outer = self.resolve_full_name_at(imp.outer_index.0, depth + 1);
                     if outer.is_empty() {
                         name
                     } else {
@@ -97,7 +107,7 @@ impl Package {
             match self.exports.get(i) {
                 Some(exp) => {
                     let name = self.names.resolve_raw(exp.object_name);
-                    let outer = self.resolve_full_name(exp.outer_index.0, depth + 1);
+                    let outer = self.resolve_full_name_at(exp.outer_index.0, depth + 1);
                     if outer.is_empty() {
                         name
                     } else {
@@ -113,7 +123,7 @@ impl Package {
         if index == 0 {
             return Value::Null;
         }
-        let full = self.resolve_full_name(index, 0);
+        let full = self.resolve_full_name(index);
         json!({ "ref": full, "index": index })
     }
 }
