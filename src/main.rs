@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use cc_uax::{OutputSections, Package};
 use clap::Parser;
 use cli::args::Args;
@@ -38,7 +38,9 @@ fn main() -> Result<()> {
             }
         }
     } else if args.scan_dir.is_some() {
-        eprintln!("Note: --scan-dir only takes effect together with -S refs");
+        bail!(
+            "--scan-dir requires the references section; add -S refs (for example: -S full,refs)"
+        );
     }
 
     if let Value::Object(ref mut m) = json {

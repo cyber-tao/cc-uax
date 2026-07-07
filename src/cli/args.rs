@@ -53,6 +53,7 @@ pub struct Args {
         long,
         value_name = "PREFIX",
         default_value = "/Game",
+        value_parser = parse_mount,
         help = "Mount prefix mapping <DIR> to package paths (default: /Game)"
     )]
     pub mount: String,
@@ -62,4 +63,21 @@ pub struct Args {
         help = "Disable the on-disk reverse-reference cache (<DIR>/.cc-uax-cache.sqlite)"
     )]
     pub no_cache: bool,
+}
+
+/// Validate a `--mount` prefix. Rejects values that look like a mangled
+/// filesystem path (a common Git Bash/MSYS2 POSIX-path conversion that turns
+/// `/Game` into `C:/.../Game`), which would otherwise silently produce wrong
+/// package paths.
+fn parse_mount(value: &str) -> Result<String, String> {
+    if value.trim_matches('/').is_empty() {
+        return Err("mount prefix must not be empty (e.g. /Game)".to_string());
+    }
+    if value.contains([':', '\\']) || value.contains(char::is_whitespace) {
+        return Err(format!(
+            "mount prefix '{value}' looks like a filesystem path; expected a UE mount root like /Game. \
+             On Git Bash/MSYS2 pass it as //Game to avoid POSIX path mangling."
+        ));
+    }
+    Ok(value.to_string())
 }

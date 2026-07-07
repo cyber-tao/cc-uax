@@ -3,6 +3,8 @@ use crate::version::{PACKAGE_FILE_TAG, PACKAGE_FILE_TAG_SWAPPED, ue4, ue5};
 use anyhow::{Result, bail};
 
 const PKG_FILTER_EDITOR_ONLY: u32 = 0x8000_0000;
+/// FCustomVersion entry on disk: 16-byte GUID + 4-byte version.
+const CUSTOM_VERSION_ENTRY_BYTES: u64 = 20;
 
 #[derive(Debug, Clone)]
 pub struct CustomVersion {
@@ -169,7 +171,9 @@ impl PackageFileSummary {
         let mut custom_versions = Vec::new();
         if legacy_file_version <= -2 {
             let count = r.read_i32()?;
-            if count < 0 || (count as u64).saturating_mul(20) > r.remaining() {
+            if count < 0
+                || (count as u64).saturating_mul(CUSTOM_VERSION_ENTRY_BYTES) > r.remaining()
+            {
                 bail!("custom version count out of range: {count}");
             }
             for _ in 0..count {

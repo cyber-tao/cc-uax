@@ -41,6 +41,10 @@ pub struct ObjectImport {
     pub is_optional: bool,
 }
 
+/// Minimum bytes for one import-table entry before version-gated extras:
+/// class_package(8) + class_name(8) + outer_index(4) + object_name(8).
+const IMPORT_ENTRY_MIN_BYTES: u64 = 28;
+
 impl ObjectImport {
     pub fn parse_table(
         r: &mut Reader,
@@ -60,7 +64,7 @@ impl ObjectImport {
             bail!("import table offset must be positive when import count is {count}");
         }
         r.seek(offset as u64)?;
-        let min_entry_bytes = 28u64
+        let min_entry_bytes = IMPORT_ENTRY_MIN_BYTES
             + if ue4v >= ue4::NON_OUTER_PACKAGE_IMPORT && !filter_editor_only {
                 8
             } else {

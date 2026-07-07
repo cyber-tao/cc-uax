@@ -5,6 +5,8 @@ use crate::version::custom;
 use anyhow::{Result, bail};
 
 const MAX_PIN_COUNT: i32 = 4096;
+/// PinRef on disk: node PackageIndex (i32, 4 bytes) + pin Guid (16 bytes).
+const PIN_REF_SIZE: u64 = 20;
 const CONTAINER_TYPE_NONE: u8 = 0;
 const CONTAINER_TYPE_ARRAY: u8 = 1;
 const CONTAINER_TYPE_SET: u8 = 2;
@@ -301,7 +303,7 @@ fn parse_terminal_type(r: &mut Reader, ctx: &ParseCtx, vc: &PinSerCtx) -> Result
 
 fn parse_pin_ref_array(r: &mut Reader) -> Result<Vec<PinRef>> {
     let count = r.read_i32()?;
-    if count < 0 || count as u64 > r.remaining() {
+    if count < 0 || (count as u64).saturating_mul(PIN_REF_SIZE) > r.remaining() {
         bail!("pin reference count out of range: {count}");
     }
     let mut refs = Vec::new();
