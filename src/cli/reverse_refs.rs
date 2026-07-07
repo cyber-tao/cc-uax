@@ -1,6 +1,6 @@
 use crate::cli::cache::{CacheEntry, RefCache};
 use anyhow::{Context, Result, anyhow};
-use cc_uax::package::{package_path_from_relative, referenced_packages_from_bytes};
+use cc_uax::references::{package_path_from_relative, referenced_packages_from_bytes};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{IsTerminal, Write};

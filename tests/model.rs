@@ -1,7 +1,7 @@
 use cc_uax::OutputSections;
 use cc_uax::name::NameMap;
 use cc_uax::object::PackageIndex;
-use cc_uax::package::{collect_package_references, package_path_from_relative};
+use cc_uax::references::{collect_package_references, package_path_from_relative};
 use cc_uax::property::TypeName;
 
 #[test]
