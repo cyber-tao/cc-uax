@@ -120,7 +120,8 @@ if [ -n "${VERSION:-}" ]; then
     TAG="$VERSION"
 else
     api_url="https://api.github.com/repos/${REPO}/releases/latest"
-    TAG="$(curl -fsSL "$api_url" | grep -m1 '"tag_name"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+    release_json="$(curl -fsSL "$api_url")" || die "cannot fetch latest release metadata"
+    TAG="$(printf '%s\n' "$release_json" | sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     [ -n "$TAG" ] || die "cannot resolve latest release (network error or rate limited)"
 fi
 VERSION_NUM="${TAG#v}"
