@@ -302,7 +302,9 @@ fn fast_reference_extraction_rejects_soft_package_table_errors() {
     let diag = diagnostic_with_code(&json, "soft_package_reference_table_error");
     assert_eq!(diag["severity"].as_str(), Some("warning"));
 
-    let err = referenced_packages_from_bytes(&data).unwrap_err().to_string();
+    let err = referenced_packages_from_bytes(&data)
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("soft package reference table failed"));
     assert!(err.contains("soft package reference table seek failed"));
 }

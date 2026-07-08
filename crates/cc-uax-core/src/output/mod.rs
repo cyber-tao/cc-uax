@@ -2,7 +2,7 @@
 //! and per-export decoding live in `crate::decode`.
 
 mod export_json;
-mod json;
+mod package_json;
 mod pin_json;
 mod property_json;
 mod report_json;

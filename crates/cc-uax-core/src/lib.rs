@@ -28,4 +28,3 @@ pub use references::{
     MountMap, collect_package_references, package_path_from_relative,
     package_path_from_relative_with_mounts, referenced_packages_from_bytes,
 };
-pub type SectionSet = OutputSections;
