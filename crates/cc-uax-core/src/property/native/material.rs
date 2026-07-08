@@ -2,6 +2,9 @@ use crate::property::ParseCtx;
 use crate::reader::Reader;
 use anyhow::Result;
 use serde_json::{Value, json};
+
+const MATERIAL_INPUT_USES_LINEAR_COLOR: i32 = 171;
+
 // Material expression inputs (FExpressionInput + FMaterialInput<T> constants).
 pub(super) fn parse_material_input_struct(
     r: &mut Reader,
@@ -39,12 +42,16 @@ pub(super) fn parse_material_input_struct(
         "ColorMaterialInput" => {
             let mut o = parse_expression_input(r, ctx)?;
             o.insert("use_constant".into(), json!(r.read_bool32()?));
-            o.insert(
-                "constant".into(),
-                json!({
-                    "r": r.read_f32()?, "g": r.read_f32()?, "b": r.read_f32()?, "a": r.read_f32()?
-                }),
-            );
+            if ctx.fortnite_main_version < MATERIAL_INPUT_USES_LINEAR_COLOR {
+                o.insert("constant".into(), json!({ "packed_bgra": r.read_u32()? }));
+            } else {
+                o.insert(
+                    "constant".into(),
+                    json!({
+                        "r": r.read_f32()?, "g": r.read_f32()?, "b": r.read_f32()?, "a": r.read_f32()?
+                    }),
+                );
+            }
             Value::Object(o)
         }
         "ShadingModelMaterialInput" | "SubstrateMaterialInput" => {

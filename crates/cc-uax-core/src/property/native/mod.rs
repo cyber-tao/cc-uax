@@ -4,8 +4,10 @@ mod material;
 mod math;
 mod mesh_cloth;
 mod niagara;
+mod pcg;
 mod scalar;
 mod sequencer;
+mod state_tree;
 
 use crate::property::ParseCtx;
 use crate::reader::Reader;
@@ -33,6 +35,16 @@ pub(crate) fn is_tagged_fallback_struct(name: &str) -> bool {
             | "LandscapeLayerComponentData"
             // FVMExternalFunctionBindingInfo::Serialize calls SerializeTaggedProperties.
             | "VMExternalFunctionBindingInfo"
+            | "NiagaraVariant"
+            | "StateTreeStateLink"
+            | "MetaSoundFrontendGraphComment"
+            // These serializers only register custom versions and return false,
+            // so the actual payload remains ordinary tagged properties.
+            | "StateTreeReference"
+            | "PCGAttributePropertySelector"
+            | "PCGAttributePropertyInputSelector"
+            | "PCGAttributePropertyOutputNoSourceSelector"
+            | "PCGAttributePropertyOutputSelector"
     )
 }
 
@@ -60,7 +72,13 @@ pub(crate) fn parse_native_struct(
     if let Some(v) = gameplay::parse_gameplay_struct(r, name, ctx, value_end)? {
         return Ok(Some(v));
     }
+    if let Some(v) = state_tree::parse_state_tree_struct(r, name, ctx, value_end)? {
+        return Ok(Some(v));
+    }
     if let Some(v) = mesh_cloth::parse_mesh_cloth_struct(r, name, ctx, value_end)? {
+        return Ok(Some(v));
+    }
+    if let Some(v) = pcg::parse_pcg_struct(r, name, ctx, value_end)? {
         return Ok(Some(v));
     }
     niagara::parse_niagara_struct(r, name, ctx, value_end)

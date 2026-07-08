@@ -46,8 +46,8 @@
   | 原生结构体 | `Vector` / `Vector3f` / `Vector4` / `Vector4f` / `Rotator` / `Quat` / `Color` / `LinearColor` / `Transform` / `Transform3f` / `Box` / `Box2D` / `Box2f` / `Guid` / `DateTime` / `FrameNumber` / `IntVector2` / `IntVector4` / `RichCurveKey` … |
   | 材质输入 | `ExpressionInput` + Scalar / Vector / Vector2 / Color / ShadingModel / Substrate / MaterialAttributes |
   | 序列器与曲线 | `FrameRange`、`FloatChannel`、`DoubleChannel`、per-platform Float / Int / Bool / FrameRate、动画曲线（`FloatCurve` / `TransformCurve`） |
-  | 运行时结构体 | `InstancedStruct`、`PerQualityLevelInt` / `Float`、委托（`Delegate` / `MulticastInline` / `MulticastSparse`）、`EdGraphPinType` |
-  | Gameplay 与特效 | `GameplayTagContainer`、`GameplayEffectVersion`、`Spline`、`AlphaBlend`、Niagara 核心（`NiagaraVariable` / `NiagaraVariableBase` / `NiagaraVariableWithOffset` / `NiagaraTypeDefinition`） |
+  | 运行时结构体 | `InstancedStruct` / `InstancedStructContainer`、`StateTreeInstanceData`、`PerQualityLevelInt` / `Float`、委托（`Delegate` / `MulticastInline` / `MulticastSparse`）、`EdGraphPinType` |
+  | Gameplay、PCG 与特效 | `GameplayTagContainer`、`GameplayEffectVersion`、`Spline`、`AlphaBlend`、StateTree 引用/链接、PCG selector 与 point array、Niagara 核心（`NiagaraVariable` / `NiagaraVariableBase` / `NiagaraVariableWithOffset` / `NiagaraTypeDefinition`） |
 
 - **蓝图图逻辑** —— 紧随 tagged property 区间之后解码 `UEdGraphNode` 的 pin：每个节点的 pins、pin 类型、默认值/默认对象，以及 `LinkedTo` 连线，从而可重建完整的节点间执行与数据流图 —— 蓝图（`K2Node_*`）与 Niagara（`NiagaraNode*`）图节点均覆盖。图节点还会蒸馏出 `member`（其引用的函数 / 事件 / 变量）与 `member_from`（所属 C++ 类），便于与源码交叉对照。
 - **可选输出区块** —— `--sections`（别名 `-S`）按需组合要输出的区块，或直接选预设（`logic`、`debug`、`dump`、`all`）—— 让逻辑分析精简、查 BUG 全面。
@@ -310,7 +310,7 @@ cc-uax/
 
 - ✅ **已验证** 某 UE5.7 项目的 **2,096 个 `.uasset` / `.umap` 文件** —— failed = 0，diagnostics = 0，`@unparsed` = 0。可用 `.\scripts\validate-real-assets.ps1 -ExpectedCount 2096` 或 `CC_UAX_EXPECTED_COUNT=2096 ./scripts/validate-real-assets.sh` 复跑；用 `CC_UAX_CONTENT_DIR` 和 `CC_UAX_UE_SOURCE_DIR` 覆盖路径。要固定反向引用样本，可追加 `-ReverseRefInput D:/WorkDir/ClashOfPets/Content/COP/Art/Dusktram/Block_size/SM_Dusktram_all.uasset -ExpectedReferencer /Game/COP/Map/Dusktram/Map_Dusktram_land`。
 - ❌ Cooked 包（unversioned / 包级压缩）与 UE4 旧格式**不支持**。
-- 🔧 当前 UE5.7 验证集用到的原生二进制结构体（含 Niagara、GPU binding、groom dataflow、skeletal-mesh sampling、cloth LOD payload）已结构化解码；未来未知自定义 payload 仍会使用保持对齐的 `@unparsed` 预览。
+- 🔧 当前 UE5.7 验证集用到的原生二进制结构体（含 StateTree、PCG、InstancedStruct container、Niagara、GPU binding、groom dataflow、skeletal-mesh sampling、cloth LOD payload）已结构化解码；依赖运行时 registry 的未来自定义 payload 仍会使用保持对齐的 typed hex/opaque 预览。
 - 🔧 `referenced_by` 从磁盘推导包路径 —— 输入文件必须位于由 `--mount` 映射的 `--scan-dir` 内。单个 `/Game` 会把整个扫描根目录映射为 `/Game`；显式映射如 `/Game=Content,/MyPlugin=Plugins/MyPlugin/Content,/Engine=Engine/Content` 可覆盖项目根、插件和 Engine 内容。硬引用（import）与软引用（`TSoftObjectPtr`/`TSoftClassPtr`）均计入统计。
 - 🔧 缓存按修改时间 + 大小失效，内置 schema 版本变化时自动重建。
 

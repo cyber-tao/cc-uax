@@ -4,6 +4,79 @@ use crate::pin::PinSerCtx;
 use crate::property::{ParseCtx, parse_properties};
 use crate::reader::Reader;
 
+fn push_test_struct_property(v: &mut Vec<u8>, property_idx: i32, struct_idx: i32, value: &[u8]) {
+    push_raw_name(v, property_idx);
+    push_raw_name(v, 1); // StructProperty
+    push_i32(v, 1); // one type parameter
+    push_raw_name(v, struct_idx);
+    push_i32(v, 0);
+    push_i32(v, value.len() as i32);
+    v.push(0x08); // HasBinaryOrNativeSerialize
+    v.extend_from_slice(value);
+}
+
+fn build_name_property_value(
+    property_idx: i32,
+    name_property_idx: i32,
+    value_name_idx: i32,
+    none_idx: i32,
+) -> Vec<u8> {
+    let mut value = Vec::new();
+    push_raw_name(&mut value, property_idx);
+    push_raw_name(&mut value, name_property_idx);
+    push_i32(&mut value, 0); // type name inner param count
+    push_i32(&mut value, 8); // RawName payload size
+    value.push(0); // flags
+    push_raw_name(&mut value, value_name_idx);
+    push_raw_name(&mut value, none_idx);
+    value
+}
+
+enum PcgTestKind {
+    Transform,
+    Float(f32),
+    Vector([f64; 3]),
+    Vector4([f64; 4]),
+    Int32(i32),
+    Int64(i64),
+}
+
+fn push_pcg_point_array_property(
+    v: &mut Vec<u8>,
+    kind: PcgTestKind,
+    num_values: i32,
+    allocated_count: i32,
+) {
+    push_i32(v, num_values);
+    match kind {
+        PcgTestKind::Transform => push_pcg_transform(v),
+        PcgTestKind::Float(x) => push_f32(v, x),
+        PcgTestKind::Vector(x) => push_pcg_vector(v, x),
+        PcgTestKind::Vector4(x) => {
+            for value in x {
+                push_f64(v, value);
+            }
+        }
+        PcgTestKind::Int32(x) => push_i32(v, x),
+        PcgTestKind::Int64(x) => push_i64(v, x),
+    }
+    push_i32(v, allocated_count);
+}
+
+fn push_pcg_transform(v: &mut Vec<u8>) {
+    for x in [0.0, 0.0, 0.0, 1.0] {
+        push_f64(v, x);
+    }
+    push_pcg_vector(v, [1.0, 2.0, 3.0]);
+    push_pcg_vector(v, [1.0, 1.0, 1.0]);
+}
+
+fn push_pcg_vector(v: &mut Vec<u8>, values: [f64; 3]) {
+    for x in values {
+        push_f64(v, x);
+    }
+}
+
 #[test]
 fn native_struct_array_falls_back_to_hex() {
     let names = NameMap {
@@ -533,6 +606,49 @@ fn material_scalar_input_resolves_expression() {
 }
 
 #[test]
+fn material_color_input_uses_packed_color_before_linear_color_version() {
+    let names = NameMap {
+        names: vec![
+            "EmissiveColor".to_string(),
+            "StructProperty".to_string(),
+            "ColorMaterialInput".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, -5); // expression object index
+    push_i32(&mut value, 0); // output index
+    push_raw_name(&mut value, 3); // input name "None"
+    for m in [0, 0, 0, 0, 0] {
+        push_i32(&mut value, m);
+    }
+    push_i32(&mut value, 1); // use constant
+    push_u32(&mut value, 0xAABBCCDD); // legacy FColor payload
+    assert_eq!(value.len(), 44);
+    let d = build_struct_property(2, 3, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: 76,
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["expression"]["index"].as_i64(), Some(-5));
+    assert_eq!(v["use_constant"].as_bool(), Some(true));
+    assert_eq!(v["constant"]["packed_bgra"].as_u64(), Some(0xAABBCCDD));
+    assert!(v.get("@unparsed").is_none());
+}
+
+#[test]
 fn native_struct_per_platform_float_decodes() {
     let names = NameMap {
         names: vec![
@@ -725,6 +841,337 @@ fn native_struct_instanced_struct_decodes() {
     assert_eq!(props.len(), 1);
     assert_eq!(props[0]["name"].as_str(), Some("Inner"));
     assert_eq!(props[0]["value"].as_i64(), Some(99));
+}
+
+#[test]
+fn native_struct_instanced_struct_container_decodes_items() {
+    let names = NameMap {
+        names: vec![
+            "Data".to_string(),
+            "StructProperty".to_string(),
+            "InstancedStructContainer".to_string(),
+            "Inner".to_string(),
+            "IntProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    // First item stores tagged properties, second is an empty/null item.
+    let mut inner = Vec::new();
+    push_raw_name(&mut inner, 3); // Inner
+    push_raw_name(&mut inner, 4); // IntProperty
+    push_i32(&mut inner, 0); // type name inner param count
+    push_i32(&mut inner, 4); // size
+    inner.push(0); // flags
+    push_i32(&mut inner, 42);
+    push_raw_name(&mut inner, 5); // None
+
+    let mut value = Vec::new();
+    value.push(0); // FInstancedStructContainer version
+    push_i32(&mut value, 2); // item count
+    push_i32(&mut value, -7); // item 0 script struct
+    push_i32(&mut value, 0); // item 1 null script struct
+    push_i32(&mut value, inner.len() as i32); // item 0 serial size
+    value.extend_from_slice(&inner);
+    push_i32(&mut value, 0); // item 1 serial size
+    let d = build_struct_property(2, 5, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["version"].as_u64(), Some(0));
+    assert_eq!(v["item_count"].as_i64(), Some(2));
+    assert_eq!(v["items"][0]["script_struct"]["index"].as_i64(), Some(-7));
+    assert!(v["items"][0].get("@unparsed").is_none());
+    let props = v["items"][0]["properties"].as_array().unwrap();
+    assert_eq!(props[0]["name"].as_str(), Some("Inner"));
+    assert_eq!(props[0]["value"].as_i64(), Some(42));
+    assert_eq!(v["items"][1]["serial_size"].as_i64(), Some(0));
+}
+
+#[test]
+fn native_struct_state_tree_instance_data_decodes_storage() {
+    let names = NameMap {
+        names: vec![
+            "Data".to_string(),
+            "StructProperty".to_string(),
+            "StateTreeInstanceData".to_string(),
+            "InstanceStructs".to_string(),
+            "InstancedStructContainer".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut container = Vec::new();
+    container.push(0); // FInstancedStructContainer version
+    push_i32(&mut container, 0); // item count
+
+    let mut storage = Vec::new();
+    push_test_struct_property(&mut storage, 3, 4, &container);
+    push_raw_name(&mut storage, 5); // None
+    let d = build_struct_property(2, 5, &storage);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let storage = &entries[0].value["storage"];
+    assert_eq!(
+        storage["@struct"].as_str(),
+        Some("StateTreeInstanceStorage")
+    );
+    let props = storage["properties"].as_array().unwrap();
+    assert_eq!(props[0]["name"].as_str(), Some("InstanceStructs"));
+    assert_eq!(props[0]["value"]["item_count"].as_i64(), Some(0));
+    assert!(entries[0].value.get("@unparsed").is_none());
+}
+
+#[test]
+fn pcg_input_and_output_selectors_parse_as_tagged_properties() {
+    let names = NameMap {
+        names: vec![
+            "InputSelector".to_string(),
+            "StructProperty".to_string(),
+            "PCGAttributePropertyInputSelector".to_string(),
+            "AttributeName".to_string(),
+            "NameProperty".to_string(),
+            "Height".to_string(),
+            "OutputSelector".to_string(),
+            "PCGAttributePropertyOutputSelector".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let selector_value = build_name_property_value(3, 4, 5, 8);
+    let mut d = Vec::new();
+    push_test_struct_property(&mut d, 0, 2, &selector_value);
+    push_test_struct_property(&mut d, 6, 7, &selector_value);
+    push_raw_name(&mut d, 8); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 2);
+    assert_eq!(
+        entries[0].value["@struct"].as_str(),
+        Some("PCGAttributePropertyInputSelector")
+    );
+    assert_eq!(
+        entries[1].value["@struct"].as_str(),
+        Some("PCGAttributePropertyOutputSelector")
+    );
+    for entry in &entries {
+        let props = entry.value["properties"].as_array().unwrap();
+        assert_eq!(props[0]["name"].as_str(), Some("AttributeName"));
+        assert_eq!(props[0]["value"].as_str(), Some("Height"));
+        assert!(entry.value.get("@unparsed").is_none());
+    }
+}
+
+#[test]
+fn native_struct_pcg_point_array_decodes_channels() {
+    let names = NameMap {
+        names: vec![
+            "PointArray".to_string(),
+            "StructProperty".to_string(),
+            "PCGPointArray".to_string(),
+            "None".to_string(),
+        ],
+    };
+
+    let mut value = Vec::new();
+    push_i32(&mut value, 1); // NumPoints
+    push_pcg_point_array_property(&mut value, PcgTestKind::Transform, 1, 0);
+    push_pcg_point_array_property(&mut value, PcgTestKind::Float(0.5), 1, 0);
+    push_pcg_point_array_property(&mut value, PcgTestKind::Vector([0.0, 0.0, 0.0]), 1, 0);
+    push_pcg_point_array_property(&mut value, PcgTestKind::Vector([1.0, 1.0, 1.0]), 1, 0);
+    push_pcg_point_array_property(&mut value, PcgTestKind::Vector4([1.0, 1.0, 1.0, 1.0]), 1, 0);
+    push_pcg_point_array_property(&mut value, PcgTestKind::Float(0.0), 1, 0);
+    push_pcg_point_array_property(&mut value, PcgTestKind::Int32(123), 1, 0);
+    push_pcg_point_array_property(&mut value, PcgTestKind::Int64(456), 1, 0);
+    let d = build_struct_property(2, 3, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["num_points"].as_i64(), Some(1));
+    assert_eq!(v["transform"]["num_values"].as_i64(), Some(1));
+    assert_eq!(
+        v["transform"]["default"]["rotation"]["w"].as_f64(),
+        Some(1.0)
+    );
+    assert_eq!(v["density"]["default"].as_f64(), Some(0.5));
+    assert_eq!(v["seed"]["default"].as_i64(), Some(123));
+    assert_eq!(v["metadata_entry"]["default"].as_i64(), Some(456));
+    assert!(v.get("@unparsed").is_none());
+    assert!(v.get("payload_tail").is_none());
+}
+
+#[test]
+fn native_struct_pcg_point_decodes_structured_mask() {
+    let names = NameMap {
+        names: vec![
+            "Point".to_string(),
+            "StructProperty".to_string(),
+            "PCGPoint".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    value.push(1 << 4); // Steepness is serialized after the transform.
+    push_pcg_transform(&mut value);
+    push_f32(&mut value, 0.25);
+    let d = build_struct_property(2, 3, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["serialize_mask"].as_u64(), Some(1 << 4));
+    assert_eq!(v["transform"]["rotation"]["w"].as_f64(), Some(1.0));
+    assert_eq!(v["steepness"].as_f64(), Some(0.25));
+    assert!(v.get("@unparsed").is_none());
+}
+
+#[test]
+fn niagara_variant_parses_as_tagged_properties() {
+    let names = NameMap {
+        names: vec![
+            "Variant".to_string(),
+            "StructProperty".to_string(),
+            "NiagaraVariant".to_string(),
+            "Object".to_string(),
+            "ObjectProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 3); // Object
+    push_raw_name(&mut value, 4); // ObjectProperty
+    push_i32(&mut value, 0); // type name inner param count
+    push_i32(&mut value, 4); // size
+    value.push(0); // flags
+    push_i32(&mut value, -9);
+    push_raw_name(&mut value, 5); // None
+    let d = build_struct_property(2, 5, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["@struct"].as_str(), Some("NiagaraVariant"));
+    let props = entries[0].value["properties"].as_array().unwrap();
+    assert_eq!(props[0]["name"].as_str(), Some("Object"));
+    assert_eq!(props[0]["value"]["index"].as_i64(), Some(-9));
+    assert!(entries[0].value.get("@unparsed").is_none());
+}
+
+#[test]
+fn state_tree_reference_parses_as_tagged_properties() {
+    let names = NameMap {
+        names: vec![
+            "Ref".to_string(),
+            "StructProperty".to_string(),
+            "StateTreeReference".to_string(),
+            "StateTree".to_string(),
+            "ObjectProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 3); // StateTree
+    push_raw_name(&mut value, 4); // ObjectProperty
+    push_i32(&mut value, 0); // type name inner param count
+    push_i32(&mut value, 4); // size
+    value.push(0); // flags
+    push_i32(&mut value, -2);
+    push_raw_name(&mut value, 5); // None
+    let d = build_struct_property(2, 5, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].value["@struct"].as_str(),
+        Some("StateTreeReference")
+    );
+    let props = entries[0].value["properties"].as_array().unwrap();
+    assert_eq!(props[0]["name"].as_str(), Some("StateTree"));
+    assert_eq!(props[0]["value"]["index"].as_i64(), Some(-2));
+    assert!(entries[0].value.get("@unparsed").is_none());
 }
 
 #[test]

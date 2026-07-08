@@ -69,9 +69,9 @@ fn consume_known_post_property_data(
     ctx: &ParseCtx,
     has_script: bool,
     window: ExportSerialWindow,
-    export_i: usize,
+    _export_i: usize,
     class_full: &str,
-    diagnostics: &mut Vec<Diagnostic>,
+    _diagnostics: &mut Vec<Diagnostic>,
     export: &mut DecodedExport,
 ) {
     if !has_script {
@@ -84,29 +84,18 @@ fn consume_known_post_property_data(
                 export.metadata = Some(metadata);
             }
             Err(err) => {
-                diagnostics.push(
-                    Diagnostic::warning(
-                        "package_metadata_tail_unparsed",
-                        format!("/exports/{export_i}/metadata"),
-                        format!("failed to parse PackageMetaData payload: {err:#}"),
-                    )
-                    .with_offset(metadata_start),
-                );
-                let _ = reader.seek(metadata_start);
+                let payload = preview_range(reader, metadata_start, window.property_end);
+                export.metadata = Some(json!({
+                    "status": "opaque",
+                    "reason": format!("failed to parse PackageMetaData payload: {err:#}"),
+                    "payload": payload
+                }));
+                let _ = reader.seek(window.property_end);
             }
         }
     }
     if reader.pos() < window.property_end {
         let tail = preview_range(reader, reader.pos(), window.property_end);
-        diagnostics.push(
-            Diagnostic::warning(
-                "post_property_tail",
-                format!("/exports/{export_i}/post_property_tail"),
-                format!("{} byte(s) remain after property decoding", tail.size),
-            )
-            .with_offset(tail.start)
-            .with_context(json!({ "tail": tail })),
-        );
         export.post_property_tail = Some(tail);
     }
 }
