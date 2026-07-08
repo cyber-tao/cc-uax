@@ -308,7 +308,7 @@ cc-uax/
 
 ## ⚠️ 支持范围与限制
 
-- ✅ **已验证** 某 UE5.7 项目的 **2,096 个 `.uasset` / `.umap` 文件** —— failed = 0，diagnostics = 0，`@unparsed` = 0。可用 `.\scripts\validate-real-assets.ps1 -ExpectedCount 2096` 或 `CC_UAX_EXPECTED_COUNT=2096 ./scripts/validate-real-assets.sh` 复跑；用 `CC_UAX_CONTENT_DIR` 和 `CC_UAX_UE_SOURCE_DIR` 覆盖路径。要固定反向引用样本，可追加 `-ReverseRefInput D:/WorkDir/ClashOfPets/Content/COP/Art/Dusktram/Block_size/SM_Dusktram_all.uasset -ExpectedReferencer /Game/COP/Map/Dusktram/Map_Dusktram_land`。
+- ✅ **已验证** 真实 UE5.7 编辑器 `.uasset` / `.umap` 文件 —— failed = 0，diagnostics = 0，`@unparsed` = 0。将验证脚本指向任意 UE5 项目：`.\scripts\validate-real-assets.ps1 -ContentDir <your-project>/Content`（PowerShell）或 `CC_UAX_CONTENT_DIR=<your-project>/Content ./scripts/validate-real-assets.sh`（Bash）；可用 `-ReverseRefInput <asset.uasset> -ExpectedReferencer /Game/.../Referencer` 固定反向引用样本。
 - ❌ Cooked 包（unversioned / 包级压缩）与 UE4 旧格式**不支持**。
 - 🔧 当前 UE5.7 验证集用到的原生二进制结构体（含 StateTree、PCG、InstancedStruct container、Niagara、GPU binding、groom dataflow、skeletal-mesh sampling、cloth LOD payload）已结构化解码；依赖运行时 registry 的未来自定义 payload 仍会使用保持对齐的 typed hex/opaque 预览。
 - 🔧 `referenced_by` 从磁盘推导包路径 —— 输入文件必须位于由 `--mount` 映射的 `--scan-dir` 内。单个 `/Game` 会把整个扫描根目录映射为 `/Game`；显式映射如 `/Game=Content,/MyPlugin=Plugins/MyPlugin/Content,/Engine=Engine/Content` 可覆盖项目根、插件和 Engine 内容。硬引用（import）与软引用（`TSoftObjectPtr`/`TSoftClassPtr`）均计入统计。

@@ -16,7 +16,7 @@ cargo test --workspace --no-default-features --locked
 cargo test -p cc-uax-core tests::reader::fstring_ansi
 cargo fmt
 cargo clippy --workspace --all-targets --all-features --locked
-.\scripts\validate-real-assets.ps1 -ExpectedCount 2096 # real UE asset validation (Windows)
+.\scripts\validate-real-assets.ps1 -ContentDir <your-project>/Content # real UE asset validation (Windows)
 # rebuild from source + refresh the Claude Code / Codex skill locally (dev only)
 ./dev-install.sh          # Linux / macOS / Git Bash
 .\dev-install.ps1         # Windows PowerShell

@@ -52,11 +52,11 @@ To uninstall (remove the binary, PATH entry, and skills): `bash install.sh unins
 
 `-S`/`--sections` is the single content selector — presets `logic` (graph nodes + pins), `debug` (properties + layout), `dump` (default: summary + imports + exports with pins/properties/layout; excludes `names` and `references` unless requested), and `all` (`dump` + `names` + `references`); or comma-separate section keys `summary,imports,exports`/`identity`, `pins,properties,layout,names,references` (`refs` aliases `references`). Omitting `-S` yields `dump`.
 
-### Verified examples (UE5.7 validation corpus)
+### Verified examples
 
 ```bash
-CONTENT="D:/WorkDir/ClashOfPets/Content"
-TARGET="$CONTENT/COP/Art/Dusktram/Block_size/SM_Dusktram_all.uasset"
+CONTENT="<your-project>/Content"
+TARGET="$CONTENT/<asset.uasset>"
 
 # Header — versions and package name
 cc-uax -c -S summary "$TARGET"
@@ -73,7 +73,7 @@ cc-uax -c -S refs "$TARGET"
 
 # Reverse references — scan the project's Content/ to find dependents
 cc-uax -c -S refs -d "$CONTENT" --no-cache "$TARGET"
-# → "referenced_by" includes "/Game/COP/Map/Dusktram/Map_Dusktram_land"
+# → "referenced_by" includes "/Game/.../Map_..."
 ```
 
 `-c` / `--compact` emits compact single-line JSON; `-o <FILE>` writes to a file instead of stdout.
@@ -87,8 +87,8 @@ cc-uax -o out.json "<file.uasset>"    # pretty JSON to a file (for humans)
 `.umap` (level) files use the exact same commands — they share the UE5 package format:
 
 ```bash
-cc-uax -c -S summary Lvl_ThirdPerson.umap
-# → "package_name": "/Game/ThirdPerson/Lvl_ThirdPerson"
+cc-uax -c -S summary "<Level.umap>"
+# → "package_name": "/Game/..."
 ```
 
 Flag reference:
@@ -107,7 +107,7 @@ cc-uax --help
 - **`-d` writes `.cc-uax-cache.sqlite` into the scan-dir.** When scanning a UE5 project you do not own, pass `--no-cache` or delete the file afterwards. The cache key is path+mtime+size; malformed soft-reference tables are treated as parse failures so partial reference results are not cached as successful scans.
 - **Git Bash / MSYS2 mangles `-m /Game`.** A leading-slash argument like `-m /Game` gets path-converted to `C:/Program Files/Git/Game`, corrupting the mount prefix (symptom: `self` starts with `/C:/Program Files/Git/Game/...`). Use a double slash — `-m //Game` — which MSYS2 restores to `/Game`; or run from PowerShell/cmd. Native Linux/macOS shells are unaffected.
 - **Cooked / unversioned / big-endian packages are rejected by design.** cc-uax targets editor-saved versioned assets only. These are hard limits, not bugs — see Troubleshooting for the exact messages.
-- **`@unparsed` means an unknown future custom payload, not normal UE5.7 coverage.** The current UE5.7 validation set has zero `@unparsed` fallbacks. In the repo, re-run that check with `scripts/validate-real-assets.ps1 -ExpectedCount 2096` or `CC_UAX_EXPECTED_COUNT=2096 scripts/validate-real-assets.sh` when the UE source and Content paths are available. If one appears on a new project, cc-uax still preserves the struct `type`, byte `size`, and hex preview so alignment is not lost and the next property can decode. Blueprint graph-node pins are decoded structurally — use `-S logic` for the pins.
+- **`@unparsed` means an unknown future custom payload, not normal UE5.7 coverage.** A clean UE5.7 validation run has zero `@unparsed` fallbacks. In the repo, re-run that check with `scripts/validate-real-assets.ps1 -ContentDir <your-project>/Content` or `CC_UAX_CONTENT_DIR=<your-project>/Content scripts/validate-real-assets.sh` when a UE5 project is available. If one appears on a new project, cc-uax still preserves the struct `type`, byte `size`, and hex preview so alignment is not lost and the next property can decode. Blueprint graph-node pins are decoded structurally — use `-S logic` for the pins.
 - **Only `.uasset` and `.umap` are package files.** Companion files (`.uexp`, `.ubulk`, `.ini`) are not UE5 package summaries — don't pass them.
 
 ## Troubleshooting

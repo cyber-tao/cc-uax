@@ -1,6 +1,6 @@
 param(
-    [string]$ContentDir = $(if ($env:CC_UAX_CONTENT_DIR) { $env:CC_UAX_CONTENT_DIR } else { 'D:/WorkDir/ClashOfPets/Content' }),
-    [string]$EngineSourceDir = $(if ($env:CC_UAX_UE_SOURCE_DIR) { $env:CC_UAX_UE_SOURCE_DIR } else { 'E:/UnrealEngine_5.7' }),
+    [string]$ContentDir = $(if ($env:CC_UAX_CONTENT_DIR) { $env:CC_UAX_CONTENT_DIR } else { '' }),
+    [string]$EngineSourceDir = $(if ($env:CC_UAX_UE_SOURCE_DIR) { $env:CC_UAX_UE_SOURCE_DIR } else { '' }),
     [string]$Exe = $env:CC_UAX_EXE,
     [int]$Limit = 0,
     [int]$ExpectedCount = $(if ($env:CC_UAX_EXPECTED_COUNT) { [int]$env:CC_UAX_EXPECTED_COUNT } else { 0 }),
@@ -29,35 +29,23 @@ if (-not $SkipBuild -and -not (Test-Path $Exe)) {
 if (-not (Test-Path $Exe)) {
     throw "cc-uax executable not found: $Exe"
 }
+if (-not $ContentDir) {
+    throw "ContentDir is required: pass -ContentDir <path> or set CC_UAX_CONTENT_DIR (point it at a UE5 project's Content/ directory)"
+}
 if (-not (Test-Path $ContentDir)) {
     throw "content directory not found: $ContentDir"
-}
-
-$DefaultContentDir = 'D:/WorkDir/ClashOfPets/Content'
-$DefaultReverseRefFixture = 'COP/Art/Dusktram/Block_size/SM_Dusktram_all.uasset'
-$DefaultExpectedReferencer = '/Game/COP/Map/Dusktram/Map_Dusktram_land'
-$usesDefaultContent = $false
-if (Test-Path $DefaultContentDir) {
-    $usesDefaultContent = ((Resolve-Path $ContentDir).Path -eq (Resolve-Path $DefaultContentDir).Path)
-}
-if (-not $ReverseRefInput -and $usesDefaultContent) {
-    $fixture = Join-Path $ContentDir $DefaultReverseRefFixture
-    if (Test-Path $fixture) {
-        $ReverseRefInput = $fixture
-        if (-not $ExpectedReferencer) {
-            $ExpectedReferencer = $DefaultExpectedReferencer
-        }
-    }
 }
 
 $sourceChecks = @(
     'Engine/Source/Runtime/CoreUObject/Private/UObject/PropertyTag.cpp',
     'Engine/Source/Runtime/Engine/Private/EdGraph/EdGraphPin.cpp'
 )
-foreach ($relative in $sourceChecks) {
-    $path = Join-Path $EngineSourceDir $relative
-    if (-not (Test-Path $path)) {
-        Write-Warning "UE source reference missing: $path"
+if ($EngineSourceDir) {
+    foreach ($relative in $sourceChecks) {
+        $path = Join-Path $EngineSourceDir $relative
+        if (-not (Test-Path $path)) {
+            Write-Warning "UE source reference missing: $path"
+        }
     }
 }
 

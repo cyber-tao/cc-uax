@@ -155,8 +155,8 @@ fn mount_map_maps_game_plugin_and_engine_roots() {
             .unwrap();
 
     assert_eq!(
-        package_path_from_relative_with_mounts("Content/COP/Maps/Lobby.umap", &mounts),
-        Some("/Game/COP/Maps/Lobby".to_string())
+        package_path_from_relative_with_mounts("Content/Project/Maps/Lobby.umap", &mounts),
+        Some("/Game/Project/Maps/Lobby".to_string())
     );
 
     assert_eq!(

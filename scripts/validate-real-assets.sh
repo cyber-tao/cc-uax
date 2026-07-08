@@ -3,16 +3,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CONTENT_DIR="${CC_UAX_CONTENT_DIR:-D:/WorkDir/ClashOfPets/Content}"
-UE_SOURCE_DIR="${CC_UAX_UE_SOURCE_DIR:-E:/UnrealEngine_5.7}"
+CONTENT_DIR="${CC_UAX_CONTENT_DIR:-}"
+UE_SOURCE_DIR="${CC_UAX_UE_SOURCE_DIR:-}"
 EXE="${CC_UAX_EXE:-${REPO_ROOT}/target/release/cc-uax}"
 LIMIT="${1:-${CC_UAX_VALIDATE_LIMIT:-0}}"
 EXPECTED_COUNT="${CC_UAX_EXPECTED_COUNT:-0}"
 REVERSE_REF_INPUT="${CC_UAX_REVERSE_REF_INPUT:-}"
 EXPECTED_REFERENCER="${CC_UAX_EXPECTED_REFERENCER:-}"
-DEFAULT_CONTENT_DIR="D:/WorkDir/ClashOfPets/Content"
-DEFAULT_REVERSE_REF_FIXTURE="COP/Art/Dusktram/Block_size/SM_Dusktram_all.uasset"
-DEFAULT_EXPECTED_REFERENCER="/Game/COP/Map/Dusktram/Map_Dusktram_land"
 
 windows_path_to_wsl() {
     local path="$1"
@@ -52,37 +49,25 @@ if [ ! -x "$EXE" ]; then
     printf 'cc-uax executable not found: %s\n' "$EXE" >&2
     exit 1
 fi
+if [ -z "$CONTENT_DIR" ]; then
+    printf 'CONTENT_DIR is required: set CC_UAX_CONTENT_DIR to a UE5 project Content/ directory\n' >&2
+    exit 1
+fi
 if [ ! -d "$CONTENT_DIR" ]; then
     printf 'content directory not found: %s\n' "$CONTENT_DIR" >&2
     exit 1
 fi
 
-default_content_resolved="$DEFAULT_CONTENT_DIR"
-if [ ! -d "$default_content_resolved" ]; then
-    alt_default_content="$(windows_path_to_wsl "$DEFAULT_CONTENT_DIR")"
-    if [ -d "$alt_default_content" ]; then
-        default_content_resolved="$alt_default_content"
-    fi
-fi
-if [ -z "$REVERSE_REF_INPUT" ] && [ -d "$default_content_resolved" ] && \
-    [ "$(cd "$CONTENT_DIR" && pwd -P)" = "$(cd "$default_content_resolved" && pwd -P)" ]; then
-    fixture="${CONTENT_DIR}/${DEFAULT_REVERSE_REF_FIXTURE}"
-    if [ -f "$fixture" ]; then
-        REVERSE_REF_INPUT="$fixture"
-        if [ -z "$EXPECTED_REFERENCER" ]; then
-            EXPECTED_REFERENCER="$DEFAULT_EXPECTED_REFERENCER"
+if [ -n "$UE_SOURCE_DIR" ]; then
+    for rel in \
+        Engine/Source/Runtime/CoreUObject/Private/UObject/PropertyTag.cpp \
+        Engine/Source/Runtime/Engine/Private/EdGraph/EdGraphPin.cpp
+    do
+        if [ ! -f "${UE_SOURCE_DIR}/${rel}" ]; then
+            printf 'warning: UE source reference missing: %s\n' "${UE_SOURCE_DIR}/${rel}" >&2
         fi
-    fi
+    done
 fi
-
-for rel in \
-    Engine/Source/Runtime/CoreUObject/Private/UObject/PropertyTag.cpp \
-    Engine/Source/Runtime/Engine/Private/EdGraph/EdGraphPin.cpp
-do
-    if [ ! -f "${UE_SOURCE_DIR}/${rel}" ]; then
-        printf 'warning: UE source reference missing: %s\n' "${UE_SOURCE_DIR}/${rel}" >&2
-    fi
-done
 
 mapfile -t files < <(find "$CONTENT_DIR" -type f \( -iname '*.uasset' -o -iname '*.umap' \) | sort)
 if [ "$LIMIT" -gt 0 ] 2>/dev/null; then
