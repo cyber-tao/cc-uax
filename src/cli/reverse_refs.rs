@@ -30,7 +30,14 @@ pub fn compute_referenced_by(
 
     let self_rel_key = self_rel.to_string_lossy().replace('\\', "/");
     let mount_map = MountMap::parse(mount).map_err(anyhow::Error::msg)?;
-    let self_pkg = package_path_from_relative_with_mounts(&self_rel_key, &mount_map);
+    let self_pkg =
+        package_path_from_relative_with_mounts(&self_rel_key, &mount_map).ok_or_else(|| {
+            anyhow!(
+                "Input file is not covered by --mount mapping: relative path '{}' under {}",
+                self_rel_key,
+                scan_abs.display()
+            )
+        })?;
 
     let mut files = Vec::new();
     collect_asset_files(&scan_abs, &mut files)
@@ -101,6 +108,12 @@ pub fn compute_referenced_by(
                             Err(_) => continue,
                         };
                         let rel_key = rel.to_string_lossy().replace('\\', "/");
+                        let Some(package_path) =
+                            package_path_from_relative_with_mounts(&rel_key, mount_map_ref)
+                        else {
+                            p.skipped += 1;
+                            continue;
+                        };
                         let meta = match fs::metadata(path) {
                             Ok(m) => m,
                             Err(_) => {
@@ -155,10 +168,7 @@ pub fn compute_referenced_by(
                                 .iter()
                                 .any(|r| r.eq_ignore_ascii_case(self_pkg_ref))
                         {
-                            p.referencers.push(package_path_from_relative_with_mounts(
-                                &rel_key,
-                                mount_map_ref,
-                            ));
+                            p.referencers.push(package_path);
                         }
                         if cache_enabled {
                             p.entries.push((rel_key, entry));

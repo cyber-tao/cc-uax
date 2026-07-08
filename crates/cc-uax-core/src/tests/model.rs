@@ -156,7 +156,7 @@ fn mount_map_maps_game_plugin_and_engine_roots() {
 
     assert_eq!(
         package_path_from_relative_with_mounts("Content/COP/Maps/Lobby.umap", &mounts),
-        "/Game/COP/Maps/Lobby"
+        Some("/Game/COP/Maps/Lobby".to_string())
     );
 
     assert_eq!(
@@ -164,7 +164,7 @@ fn mount_map_maps_game_plugin_and_engine_roots() {
             "Plugins/MyPlugin/Content/Widgets/W_HUD.uasset",
             &mounts
         ),
-        "/MyPlugin/Widgets/W_HUD"
+        Some("/MyPlugin/Widgets/W_HUD".to_string())
     );
 
     assert_eq!(
@@ -172,7 +172,12 @@ fn mount_map_maps_game_plugin_and_engine_roots() {
             "Engine/Content/EngineMaterials/M_Default.uasset",
             &mounts
         ),
-        "/Engine/EngineMaterials/M_Default"
+        Some("/Engine/EngineMaterials/M_Default".to_string())
+    );
+
+    assert_eq!(
+        package_path_from_relative_with_mounts("Unmapped/Thing.uasset", &mounts),
+        None
     );
 }
 

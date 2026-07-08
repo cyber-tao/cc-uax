@@ -105,20 +105,19 @@ impl MountMap {
         Self::parse(mount)
     }
 
-    pub fn map_relative(&self, rel: &str) -> String {
+    pub fn map_relative(&self, rel: &str) -> Option<String> {
         let normalized = normalize_relative_path(rel);
-        let entry = self
+        let explicit = self
             .entries
             .iter()
-            .find(|entry| relative_matches_prefix(&normalized, &entry.disk_prefix))
-            .unwrap_or_else(|| {
-                self.entries
-                    .iter()
-                    .find(|entry| entry.disk_prefix.is_empty())
-                    .unwrap_or(&self.entries[0])
-            });
+            .find(|entry| relative_matches_prefix(&normalized, &entry.disk_prefix));
+        let fallback = self
+            .entries
+            .iter()
+            .find(|entry| entry.disk_prefix.is_empty());
+        let entry = explicit.or(fallback)?;
         let mapped = strip_disk_prefix(&normalized, &entry.disk_prefix);
-        join_mount_path(&entry.mount, mapped)
+        Some(join_mount_path(&entry.mount, mapped))
     }
 }
 
@@ -129,10 +128,19 @@ pub fn package_path_from_relative(rel: &str, mount: &str) -> String {
             disk_prefix: String::new(),
         }],
     });
-    package_path_from_relative_with_mounts(rel, &mounts)
+    mounts.map_relative(rel).unwrap_or_else(|| {
+        join_mount_path(
+            mounts
+                .entries
+                .first()
+                .map(|entry| entry.mount.as_str())
+                .unwrap_or("/Game"),
+            rel,
+        )
+    })
 }
 
-pub fn package_path_from_relative_with_mounts(rel: &str, mounts: &MountMap) -> String {
+pub fn package_path_from_relative_with_mounts(rel: &str, mounts: &MountMap) -> Option<String> {
     mounts.map_relative(rel)
 }
 

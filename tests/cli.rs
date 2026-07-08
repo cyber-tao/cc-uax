@@ -181,3 +181,29 @@ fn cli_invalid_mount_errors() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn cli_unmapped_input_mount_errors() {
+    let path = write_temp_package();
+    let dir = path.parent().unwrap().to_owned();
+    let out = bin()
+        .args([
+            "-S",
+            "refs",
+            "-d",
+            dir.to_str().unwrap(),
+            "-m",
+            "/Game=Content",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("not covered by --mount mapping"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
