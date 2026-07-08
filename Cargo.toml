@@ -6,26 +6,20 @@ rust-version = "1.88"
 description = "Parse Unreal Engine 5 .uasset/.umap packages to JSON — header, tagged properties, Blueprint node graph, and forward/reverse asset references."
 license = "MIT"
 
+[workspace]
+members = ["crates/cc-uax-core"]
+resolver = "3"
+
 [[bin]]
 name = "cc-uax"
 path = "src/main.rs"
-required-features = ["cli"]
-
-[lib]
-name = "cc_uax"
-path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1"
-byteorder = "1"
-clap = { version = "4", features = ["derive"], optional = true }
-rusqlite = { version = "0.38", features = ["bundled"], optional = true }
-serde = { version = "1", features = ["derive"] }
+cc-uax-core = { path = "crates/cc-uax-core" }
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.38", features = ["bundled"] }
 serde_json = "1"
-
-[features]
-default = ["cli"]
-cli = ["dep:clap", "dep:rusqlite"]
 
 [profile.release]
 opt-level = 3

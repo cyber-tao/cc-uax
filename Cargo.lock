@@ -91,9 +91,18 @@ name = "cc-uax"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "byteorder",
+ "cc-uax-core",
  "clap",
  "rusqlite",
+ "serde_json",
+]
+
+[[package]]
+name = "cc-uax-core"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "byteorder",
  "serde",
  "serde_json",
 ]

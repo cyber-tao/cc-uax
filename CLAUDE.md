@@ -22,48 +22,49 @@ cargo clippy --all-targets
 
 No benchmarks, no separate lint config. CI is whatever runs these locally.
 
-## Dual-target layout (important)
+## Workspace layout (important)
 
-`Cargo.toml` defines both a `lib` (`cc_uax`) and a `bin` (`cc-uax`):
+`Cargo.toml` defines a CLI package at the repository root and a parser crate under
+`crates/cc-uax-core`:
 
-- **lib** (`src/lib.rs`): the parser and report model. It re-exports the stable surface (`Package`, `DecodeOptions`, `DecodeReport`, diagnostics, `OutputSections` / `SectionSet`, and reference helpers). Internal parser modules remain available for tests but should not be treated as the external API.
-- **bin** (`src/main.rs` + `src/cli/`): the CLI. `main.rs` declares `mod cli`, whose submodules are `args` / `cache` / `reverse_refs`; the binary pulls in `rusqlite`.
+- **core lib** (`crates/cc-uax-core/src/lib.rs`, crate name `cc_uax`): the parser and report model. It re-exports the stable surface (`Package`, `DecodeOptions`, `DecodeReport`, diagnostics, `OutputSections`, and reference helpers). Internal parser modules remain available for tests but should not be treated as the external API.
+- **CLI bin** (`src/main.rs` + `src/cli/`): the `cc-uax` binary. `main.rs` declares `mod cli`, whose submodules are `args` / `cache` / `reverse_refs`; the binary pulls in `clap` and `rusqlite`.
 
-`src/cli/cache.rs` is **only** included by the binary, never by the lib. Keep the SQLite reverse-scan cache out of the parser crate; `rusqlite` is a bin-side concern. When changing the parser, do not reach into `cli/cache.rs` or add parser deps through it.
+`src/cli/cache.rs` is **only** included by the binary, never by the core lib. Keep the SQLite reverse-scan cache out of the parser crate; `rusqlite` is a bin-side concern. When changing the parser, do not reach into `cli/cache.rs` or add parser deps through it.
 
 ## Parsing pipeline
 
-The central entry point is `Package::parse` in [src/package.rs](src/package.rs). The flow is strictly ordered because each stage's offsets come from the previous one:
+The central entry point is `Package::parse` in [package.rs](crates/cc-uax-core/src/package.rs). The flow is strictly ordered because each stage's offsets come from the previous one:
 
-1. **`Reader`** ([src/reader.rs](src/reader.rs)) — little-endian byte-stream primitives (`u8/u16/u32/i32/u64/f32/f64`, `FString`, `FName`, `Guid`). All file I/O goes through this; the format is LE-only.
-2. **`PackageFileSummary::parse`** ([src/summary.rs](src/summary.rs)) — package header. Validates the `PACKAGE_FILE_TAG` (`0x9E2A83C1`) magic and detects byte order via `PACKAGE_FILE_TAG_SWAPPED`; reads engine/file versions, `CustomVersion`s, and the offset+count of every downstream table. `is_unversioned()` and `filter_editor_only()` gate later behavior.
-3. **`NameMap`** ([src/name.rs](src/name.rs)) — the name table. `resolve` returns a `String` (`<invalid_name#N>` on a bad index) with number-suffix semantics (e.g. `Foo_3`).
-4. **Import / Export tables** ([src/object.rs](src/object.rs)) — `PackageIndex` encodes the table: **positive = export, negative = import**. `ObjectExport` carries `serial_offset` / `serial_size`, which delimit each object's serialized property region.
-5. **Decode report** ([src/decode/](src/decode/)) — per-export decode orchestration. It builds serial windows, calls property parsing, consumes known UObject / metadata tails, retries pin candidates, distills graph members, and accumulates structured diagnostics.
-6. **Per-export property region** ([src/property/](src/property/)) — for each export, property parsing seeks to the `ScriptSerialization` window and recursively decodes legacy UE5 property tags and complete-type-name tags (`FPropertyTag` + `FPropertyTypeName` when present).
-7. **Per-node pin region** ([src/pin.rs](src/pin.rs)) — for graph-node exports, `parse_node_pins_report` decodes the pin array that follows the property window (`ScriptSerializationEndOffset` → `serial_size`), yielding pins, pin types, defaults, and `LinkedTo` edges. Decode report member distillation lifts `MemberReference` into `member` / `member_from`.
-8. **Output serializers** ([src/output/](src/output/)) — serialize the completed `DecodeReport` to JSON; output code must not drive parsing decisions.
+1. **`Reader`** ([reader.rs](crates/cc-uax-core/src/reader.rs)) — little-endian byte-stream primitives (`u8/u16/u32/i32/u64/f32/f64`, `FString`, `FName`, `Guid`). All file I/O goes through this; the format is LE-only.
+2. **`PackageFileSummary::parse`** ([summary.rs](crates/cc-uax-core/src/summary.rs)) — package header. Validates the `PACKAGE_FILE_TAG` (`0x9E2A83C1`) magic and detects byte order via `PACKAGE_FILE_TAG_SWAPPED`; reads engine/file versions, `CustomVersion`s, and the offset+count of every downstream table. `is_unversioned()` and `filter_editor_only()` gate later behavior.
+3. **`NameMap`** ([name.rs](crates/cc-uax-core/src/name.rs)) — the name table. `resolve` returns a `String` (`<invalid_name#N>` on a bad index) with number-suffix semantics (e.g. `Foo_3`).
+4. **Import / Export tables** ([object.rs](crates/cc-uax-core/src/object.rs)) — `PackageIndex` encodes the table: **positive = export, negative = import**. `ObjectExport` carries `serial_offset` / `serial_size`, which delimit each object's serialized property region.
+5. **Decode report** ([decode/](crates/cc-uax-core/src/decode/)) — per-export decode orchestration. It builds serial windows, calls property parsing, consumes known UObject / metadata tails, retries pin candidates, distills graph members, and accumulates structured diagnostics.
+6. **Per-export property region** ([property/](crates/cc-uax-core/src/property/)) — for each export, property parsing seeks to the `ScriptSerialization` window and recursively decodes legacy UE5 property tags and complete-type-name tags (`FPropertyTag` + `FPropertyTypeName` when present).
+7. **Per-node pin region** ([pin.rs](crates/cc-uax-core/src/pin.rs)) — for graph-node exports, `parse_node_pins_report` decodes the pin array that follows the property window (`ScriptSerializationEndOffset` → `serial_size`), yielding pins, pin types, defaults, and `LinkedTo` edges. Decode report member distillation lifts `MemberReference` into `member` / `member_from`.
+8. **Output serializers** ([output/](crates/cc-uax-core/src/output/)) — serialize the completed `DecodeReport` to JSON; output code must not drive parsing decisions.
 
 The per-export `serial_offset`/`serial_size` windowing is what guarantees byte alignment across objects — never parse properties outside their window, and if you add a value decoder, it must consume exactly its bytes or fall back to hex preview (see below).
 
 ## Diagnostics
 
-Diagnostics are structured values from [src/diagnostic.rs](src/diagnostic.rs): `severity`, `code`, `path`, `message`, optional byte `offset`, and optional JSON `context`. Byte previews use `ByteRangePreview { start, end, size, preview }`. Do not add ad-hoc diagnostic strings in output serializers; parsing and decode layers should create `Diagnostic` values and `output/` should only serialize them.
+Diagnostics are structured values from [diagnostic.rs](crates/cc-uax-core/src/diagnostic.rs): `severity`, `code`, `path`, `message`, optional byte `offset`, and optional JSON `context`. Byte previews use `ByteRangePreview { start, end, size, preview }`. Do not add ad-hoc diagnostic strings in output serializers; parsing and decode layers should create `Diagnostic` values and `output/` should only serialize them.
 
 ## Version gating
 
-[src/version.rs](src/version.rs) holds the UE5 `CORE_UOBJECT` file-version constants (e.g. `INITIAL_VERSION = 1000`, `SCRIPT_SERIALIZATION_OFFSET = 1010`, `PROPERTY_TAG_COMPLETE_TYPE_NAME = 1012`) and the UE4 legacy ladder. Behavior branches on `FileVersionUE5` against these constants. When adding support keyed to a UE version, add the constant here and gate on it — do not hardcode magic version numbers at call sites. Plugin/module custom-version GUIDs and their thresholds also live in `version.rs::custom` (e.g. `NIAGARA_OBJECT_VERSION` + `NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY`).
+[version.rs](crates/cc-uax-core/src/version.rs) holds the UE5 `CORE_UOBJECT` file-version constants (e.g. `INITIAL_VERSION = 1000`, `SCRIPT_SERIALIZATION_OFFSET = 1010`, `PROPERTY_TAG_COMPLETE_TYPE_NAME = 1012`) and the UE4 legacy ladder. Behavior branches on `FileVersionUE5` against these constants. When adding support keyed to a UE version, add the constant here and gate on it — do not hardcode magic version numbers at call sites. Plugin/module custom-version GUIDs and their thresholds also live in `version.rs::custom` (e.g. `NIAGARA_OBJECT_VERSION` + `NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY`).
 
-## Property decoding ([src/property/](src/property/))
+## Property decoding ([property/](crates/cc-uax-core/src/property/))
 
 - `TypeName` — UE5.7 `FPropertyTypeName` (nested type name with parameters).
 - `ParseCtx` — carries name/object resolution + the soft-object path list, plus the package's `FNiagaraCustomVersion` (`niagara_version`, gating the Niagara decoders) and `FFortniteMainBranchObjectVersion` (`fortnite_main_version`, gating the MovieScene channel `bShowCurve` tail).
 - `parse_value` dispatches into `parse_collection` / `parse_map` / `parse_element` / `parse_struct` / `parse_native_struct` / `parse_soft_object` / `parse_text`, plus `OptionalProperty` (a 4-byte presence flag followed by the inner value when set). `LazyObjectProperty` is a 16-byte `FUniqueObjectGuid`, not an object index. Set/Map values start with `NumToRemove` followed by that many serialized keys (delta saves) — they are read and discarded before the live elements.
-- `parse_native_struct` (in [src/property/native/](src/property/native/)) dispatches by struct category (math / scalar / material / sequencer / graph-pin / gameplay / mesh-cloth / niagara) and decodes the common math / curve / material / Sequencer structs plus `GameplayTagContainer`, `Spline` (the `FSpline` int8 impl tag; non-empty payloads still hex), `GameplayEffectVersion`, and the Niagara core variable types (`NiagaraVariable` / `…Base` / `…WithOffset`; the nested `FNiagaraTypeDefinition` is itself tagged properties). Niagara decoders gate on `version::custom::NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY` and fall back to hex below it. **Only add a struct here if UE5.7 really serializes it natively** (`immutable` core structs or `WithSerializer`/`WithStructuredSerializer` traits whose `Serialize` returns `true`): `FrameRate` and `Vector_NetQuantize*` look native but are tagged-property payloads in 5.7 and must stay out of this list.
+- `parse_native_struct` (in [property/native/](crates/cc-uax-core/src/property/native/)) dispatches by struct category (math / scalar / material / sequencer / graph-pin / gameplay / mesh-cloth / niagara) and decodes the common math / curve / material / Sequencer structs plus `GameplayTagContainer`, `Spline` (the `FSpline` int8 impl tag; non-empty payloads still hex), `GameplayEffectVersion`, and the Niagara core variable types (`NiagaraVariable` / `…Base` / `…WithOffset`; the nested `FNiagaraTypeDefinition` is itself tagged properties). Niagara decoders gate on `version::custom::NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY` and fall back to hex below it. **Only add a struct here if UE5.7 really serializes it natively** (`immutable` core structs or `WithSerializer`/`WithStructuredSerializer` traits whose `Serialize` returns `true`): `FrameRate` and `Vector_NetQuantize*` look native but are tagged-property payloads in 5.7 and must stay out of this list.
 - `is_tagged_fallback_struct` lists structs that declare `WithSerializer` but whose `Serialize` returns `false` (payload is still tagged properties) — e.g. `AlphaBlend`, `FloatCurve` / `TransformCurve` / `VectorCurve`, `GameplayEffectModifierMagnitude`, `LandscapeLayerComponentData`.
 - **Hex fallback**: types with custom binary serialization that are not yet structured (a few specialized non-core Niagara VM/GPU and mesh/cloth structs) are emitted as a hex preview capped by `PREVIEW_MAX`, preserving `type` and `size`. The hex path exists specifically to keep byte alignment intact — any new unknown struct should go through `to_hex` rather than guessing fields.
 
-## Blueprint pin decoding ([src/pin.rs](src/pin.rs))
+## Blueprint pin decoding ([pin.rs](crates/cc-uax-core/src/pin.rs))
 
 `UEdGraphNode` serializes its pins *after* the tagged-property window, so `pin.rs` runs once the property decoder has consumed the `ScriptSerialization` region. The byte layout mirrors UE5.7 `UEdGraphPin::Serialize` / `SerializePinArray` / `FEdGraphPinType::Serialize`:
 
@@ -75,13 +76,13 @@ Diagnostics are structured values from [src/diagnostic.rs](src/diagnostic.rs): `
 
 ## Reference analysis
 
-- **Forward references** (`collect_package_references` in [src/references.rs](src/references.rs)): reads the import table and partitions external packages into `assets` vs `scripts` by the `/Script/` prefix (`SCRIPT_PATH_PREFIX`). The header's `SoftPackageReferences` table (one FName package per entry) is parsed too and emitted as `soft`. Output keys: `assets`, `scripts`, `soft`.
+- **Forward references** (`collect_package_references` in [references.rs](crates/cc-uax-core/src/references.rs)): reads the import table and partitions external packages into `assets` vs `scripts` by the `/Script/` prefix (`SCRIPT_PATH_PREFIX`). The header's `SoftPackageReferences` table (one FName package per entry) is parsed too and emitted as `soft`. Output keys: `assets`, `scripts`, `soft`.
 - **Reverse references** (CLI only, [src/cli/reverse_refs.rs](src/cli/reverse_refs.rs)): `--scan-dir <DIR>` walks the directory (`collect_asset_files`), maps disk paths to package paths via `--mount` using `MountMap` (default `/Game`; explicit mappings such as `/Game=Content,/Plugin=Plugins/Plugin/Content,/Engine=Engine/Content` are supported), parses every asset (imports + soft references, via `referenced_packages_from_bytes`), and computes `referenced_by`.
 - **Cache** (`RefCache` in [src/cli/cache.rs](src/cli/cache.rs)): the reverse scan writes `.cc-uax-cache.sqlite` at the scan-dir root, keyed by file path + mtime + size; unparseable files are cached as negative results (`parse_ok = false`) so they are not re-read every scan. Bump `CACHE_SCHEMA_VERSION` whenever the reference-extraction logic changes — existing caches auto-invalidate on schema mismatch. `--no-cache` disables it.
 
 ## CLI surface
 
-`Args` (clap derive) in [src/cli/args.rs](src/cli/args.rs). `OutputSections` (in [src/output/sections.rs](src/output/sections.rs)) is the set of section flags — `summary` / `imports` / `names` / `references` / `exports` / `pins` / `properties` / `layout` — and the **only** content selector:
+`Args` (clap derive) in [src/cli/args.rs](src/cli/args.rs). `OutputSections` (in [output/sections.rs](crates/cc-uax-core/src/output/sections.rs)) is the set of section flags — `summary` / `imports` / `names` / `references` / `exports` / `pins` / `properties` / `layout` — and the **only** content selector:
 
 - `--sections` / `-S` (comma-separated) selects sections; it accepts section keys (with aliases `references`≡`refs`, `exports`≡`identity`, `properties`≡`props`) and the multi-section presets `logic` / `debug` / `dump` / `all` (`OutputSections::parse`). Default (no flag) is `dump`.
 - There are no separate `-s` / `-P` / `-r` / `-n` flags — every content choice goes through `-S` (e.g. `-S summary`, `-S dump,names`).

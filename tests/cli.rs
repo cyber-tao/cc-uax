@@ -1,6 +1,5 @@
 //! CLI integration tests: spawn the built `cc-uax` binary and assert on exit
-//! status and stderr/stdout. Gated on the `cli` feature so the binary exists.
-#![cfg(feature = "cli")]
+//! status and stderr/stdout.
 
 mod common;
 
