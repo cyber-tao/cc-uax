@@ -11,10 +11,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```pwsh
 cargo build --release                    # binary at target/release/cc-uax
 cargo run --release -- <file.uasset>     # dev run
-cargo test                               # full test suite (tests/*.rs)
+cargo test --workspace                   # full workspace suite
 cargo test --test reader fstring_ansi    # single integration test in one file
 cargo fmt
-cargo clippy --all-targets
+cargo clippy --workspace --all-targets
+.\scripts\validate-real-assets.ps1       # real UE asset validation (Windows)
 # rebuild from source + refresh the Claude Code / Codex skill locally (dev only)
 ./dev-install.sh          # Linux / macOS / Git Bash
 .\dev-install.ps1         # Windows PowerShell

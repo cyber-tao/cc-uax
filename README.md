@@ -252,30 +252,28 @@ For a single block just name it: `-S summary` (header only), or `-S refs` (forwa
 
 ```
 cc-uax/
+├── crates/
+│   └── cc-uax-core/
+│       └── src/
+│           ├── lib.rs      # Core parser crate root — Package, DecodeReport, diagnostics, sections, references
+│           ├── package.rs  # Core package parser
+│           ├── decode/     # Export decode report, property/pin/member orchestration
+│           ├── output/     # Pure JSON serializers for reports, exports, properties, pins
+│           ├── property/   # Tagged-property parser + native struct decoders
+│           ├── pin.rs      # EdGraphNode pin decoder — pins, pin types, LinkedTo edges
+│           ├── summary.rs  # FPackageFileSummary (magic, versions, table offsets)
+│           ├── name.rs     # NameMap — name table parse & resolve
+│           ├── object.rs   # PackageIndex (+/- ⇒ export/import), Import, Export
+│           ├── version.rs  # UE5/UE4 file-version constants + custom-version GUIDs
+│           ├── diagnostic.rs
+│           └── reader.rs   # Little-endian byte-stream primitives
 ├── src/
-│   ├── lib.rs          # Library root — exports Package, DecodeReport, diagnostics, sections, references
 │   ├── main.rs         # CLI entry orchestration
 │   ├── cli/
 │   │   ├── mod.rs
 │   │   ├── args.rs     # Clap arguments and section parsing
 │   │   ├── reverse_refs.rs # Reverse-reference scan and worker coordination
 │   │   └── cache.rs    # SQLite reverse-ref cache (binary-only)
-│   ├── package.rs      # Core package parser
-│   ├── decode/         # Export decode report, structured diagnostics, property/pin/member orchestration
-│   ├── diagnostic.rs   # Stable diagnostic model
-│   ├── output/         # Pure JSON serializers for reports, exports, properties, pins
-│   ├── summary.rs      # FPackageFileSummary (magic, versions, table offsets)
-│   ├── name.rs         # NameMap — name table parse & resolve
-│   ├── object.rs       # PackageIndex (+/- ⇒ export/import), Import, Export
-│   ├── property/
-│   │   ├── mod.rs      # Property parser entry points and shared types
-│   │   ├── tag.rs      # Legacy and complete-type-name FPropertyTag layouts
-│   │   ├── value.rs    # Recursive tagged-property value decoder
-│   │   ├── native/     # Native struct decoders by category + alignment fallbacks
-│   │   └── text.rs     # FText parsing
-│   ├── pin.rs          # EdGraphNode pin decoder — pins, pin types, LinkedTo edges
-│   ├── version.rs      # UE5/UE4 file-version constants + custom-version GUIDs
-│   └── reader.rs       # Little-endian byte-stream primitives
 ├── tests/
 │   ├── common/         # Shared byte-vector builders
 │   ├── model.rs
@@ -283,6 +281,9 @@ cc-uax/
 │   ├── pin.rs
 │   ├── property.rs
 │   └── reader.rs       # Hand-built byte-vector integration tests by module
+├── scripts/
+│   ├── validate-real-assets.ps1 # Real UE asset validation (PowerShell)
+│   └── validate-real-assets.sh  # Real UE asset validation (Bash)
 ├── skills/
 │   └── cc-uax/
 │       └── SKILL.md    # Agent skill (Claude Code + Codex compatible)
@@ -292,7 +293,7 @@ cc-uax/
 ├── install.ps1         # One-line installer (Windows)
 ├── dev-install.sh      # Dev: rebuild from source + refresh skills (Linux / macOS)
 ├── dev-install.ps1     # Dev: rebuild from source + refresh skills (Windows)
-├── Cargo.toml          # lib + bin dual targets
+├── Cargo.toml          # Workspace root + CLI package
 ├── CLAUDE.md           # Architecture guide for Claude Code
 └── README.md
 ```
@@ -311,7 +312,7 @@ cc-uax/
 
 ## ⚠️ Scope & Limitations
 
-- ✅ **Validated** on **2,096 `.uasset` / `.umap` files** from a UE5.7 project — failed = 0, diagnostics = 0, `@unparsed` = 0.
+- ✅ **Validated** on **2,096 `.uasset` / `.umap` files** from a UE5.7 project — failed = 0, diagnostics = 0, `@unparsed` = 0. Re-run with `.\scripts\validate-real-assets.ps1` or `./scripts/validate-real-assets.sh`; override paths with `CC_UAX_CONTENT_DIR` and `CC_UAX_UE_SOURCE_DIR`.
 - ❌ Cooked packages (unversioned / package compression) and UE4 legacy formats are **not** supported.
 - 🔧 Native-binary structs used by the current UE5.7 validation set — including Niagara, GPU binding, groom dataflow, skeletal-mesh sampling, and cloth LOD payloads — are decoded structurally; unknown future custom payloads still use the alignment-preserving `@unparsed` preview.
 - 🔧 `referenced_by` derives package paths from disk — the input file must live under `--scan-dir` mapped by `--mount`. A single `/Game` maps the whole scan root; explicit mappings such as `/Game=Content,/MyPlugin=Plugins/MyPlugin/Content,/Engine=Engine/Content` support project-root scans with plugins or Engine content. Both hard references (imports) and soft references (`TSoftObjectPtr`/`TSoftClassPtr`) are counted.
@@ -319,7 +320,7 @@ cc-uax/
 
 ## 🤝 Contributing
 
-This is a focused single-purpose tool. If you extend a decoder, add a hand-built byte-vector test under [tests/](tests/) and ensure the export's property window stays byte-aligned. Run `cargo fmt -- --check`, `cargo clippy --all-targets`, `cargo test`, and `cargo test --no-default-features` before submitting.
+This is a focused single-purpose tool. If you extend a decoder, add a hand-built byte-vector test under [tests/](tests/) and ensure the export's property window stays byte-aligned. Run `cargo fmt -- --check`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`, `cargo test --no-default-features`, and the real-asset validation script when UE assets are available.
 
 ## 📄 License
 

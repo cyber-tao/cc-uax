@@ -252,30 +252,28 @@ cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
 
 ```
 cc-uax/
+├── crates/
+│   └── cc-uax-core/
+│       └── src/
+│           ├── lib.rs      # 核心解析库入口 —— Package、DecodeReport、诊断、区块和引用 helpers
+│           ├── package.rs  # 核心 package 解析器
+│           ├── decode/     # Export 解码报告、property/pin/member 编排
+│           ├── output/     # 纯 JSON serializer：report/export/property/pin
+│           ├── property/   # Tagged property 解析 + 原生结构体解码
+│           ├── pin.rs      # EdGraphNode pin 解码器 —— pins、pin 类型、LinkedTo 连线
+│           ├── summary.rs  # FPackageFileSummary（魔数、版本、表偏移）
+│           ├── name.rs     # NameMap —— Name 表解析与解析
+│           ├── object.rs   # PackageIndex（+/- ⇒ export/import）、Import、Export
+│           ├── version.rs  # UE5/UE4 文件版本常量 + 自定义版本 GUID
+│           ├── diagnostic.rs
+│           └── reader.rs   # 小端字节流读取原语
 ├── src/
-│   ├── lib.rs          # 库入口 —— 导出 Package、DecodeReport、诊断、区块和引用 helpers
 │   ├── main.rs         # CLI 入口编排
 │   ├── cli/
 │   │   ├── mod.rs
 │   │   ├── args.rs     # Clap 参数与区块解析
 │   │   ├── reverse_refs.rs # 反向引用扫描与 worker 协调
 │   │   └── cache.rs    # SQLite 反向引用缓存（仅二进制侧）
-│   ├── package.rs      # 核心 package 解析器
-│   ├── decode/         # Export 解码报告、结构化诊断、property/pin/member 编排
-│   ├── diagnostic.rs   # 稳定诊断模型
-│   ├── output/         # 纯 JSON serializer：report/export/property/pin
-│   ├── summary.rs      # FPackageFileSummary（魔数、版本、表偏移）
-│   ├── name.rs         # NameMap —— Name 表解析与解析
-│   ├── object.rs       # PackageIndex（+/- ⇒ export/import）、Import、Export
-│   ├── property/
-│   │   ├── mod.rs      # Property 解析入口与共享类型
-│   │   ├── tag.rs      # Legacy 与完整类型名 FPropertyTag 布局
-│   │   ├── value.rs    # 递归 tagged property 值解码
-│   │   ├── native/     # 按类别拆分的原生结构体解码与对齐回退
-│   │   └── text.rs     # FText 解析
-│   ├── pin.rs          # EdGraphNode pin 解码器 —— pins、pin 类型、LinkedTo 连线
-│   ├── version.rs      # UE5/UE4 文件版本常量 + 自定义版本 GUID
-│   └── reader.rs       # 小端字节流读取原语
 ├── tests/
 │   ├── common/         # 共享字节向量构造器
 │   ├── model.rs
@@ -283,6 +281,9 @@ cc-uax/
 │   ├── pin.rs
 │   ├── property.rs
 │   └── reader.rs       # 按模块组织的手写字节向量集成测试
+├── scripts/
+│   ├── validate-real-assets.ps1 # 真实 UE 资产验证（PowerShell）
+│   └── validate-real-assets.sh  # 真实 UE 资产验证（Bash）
 ├── skills/
 │   └── cc-uax/
 │       └── SKILL.md    # Agent skill（Claude Code + Codex 兼容）
@@ -292,7 +293,7 @@ cc-uax/
 ├── install.ps1         # 一键安装（Windows）
 ├── dev-install.sh      # 开发：从源码重编译 + 刷新 skill（Linux / macOS）
 ├── dev-install.ps1     # 开发：从源码重编译 + 刷新 skill（Windows）
-├── Cargo.toml          # lib + bin 双 target
+├── Cargo.toml          # Workspace 根 + CLI 包
 ├── CLAUDE.md           # 给 Claude Code 的架构指引
 └── README.md
 ```
@@ -310,7 +311,7 @@ cc-uax/
 
 ## ⚠️ 支持范围与限制
 
-- ✅ **已验证** 某 UE5.7 项目的 **2,096 个 `.uasset` / `.umap` 文件** —— failed = 0，diagnostics = 0，`@unparsed` = 0。
+- ✅ **已验证** 某 UE5.7 项目的 **2,096 个 `.uasset` / `.umap` 文件** —— failed = 0，diagnostics = 0，`@unparsed` = 0。可用 `.\scripts\validate-real-assets.ps1` 或 `./scripts/validate-real-assets.sh` 复跑；用 `CC_UAX_CONTENT_DIR` 和 `CC_UAX_UE_SOURCE_DIR` 覆盖路径。
 - ❌ Cooked 包（unversioned / 包级压缩）与 UE4 旧格式**不支持**。
 - 🔧 当前 UE5.7 验证集用到的原生二进制结构体（含 Niagara、GPU binding、groom dataflow、skeletal-mesh sampling、cloth LOD payload）已结构化解码；未来未知自定义 payload 仍会使用保持对齐的 `@unparsed` 预览。
 - 🔧 `referenced_by` 从磁盘推导包路径 —— 输入文件必须位于由 `--mount` 映射的 `--scan-dir` 内。单个 `/Game` 会把整个扫描根目录映射为 `/Game`；显式映射如 `/Game=Content,/MyPlugin=Plugins/MyPlugin/Content,/Engine=Engine/Content` 可覆盖项目根、插件和 Engine 内容。硬引用（import）与软引用（`TSoftObjectPtr`/`TSoftClassPtr`）均计入统计。
@@ -318,7 +319,7 @@ cc-uax/
 
 ## 🤝 贡献
 
-这是一个聚焦单一用途的工具。如扩展解码器，请在 [tests/](tests/) 下添加手写字节向量测试，并确保 export 的属性区间保持字节对齐。提交前运行 `cargo fmt -- --check`、`cargo clippy --all-targets`、`cargo test` 和 `cargo test --no-default-features`。
+这是一个聚焦单一用途的工具。如扩展解码器，请在 [tests/](tests/) 下添加手写字节向量测试，并确保 export 的属性区间保持字节对齐。提交前运行 `cargo fmt -- --check`、`cargo clippy --workspace --all-targets`、`cargo test --workspace`、`cargo test --no-default-features`；有 UE 资产时再运行真实资产验证脚本。
 
 ## 📄 许可
 
