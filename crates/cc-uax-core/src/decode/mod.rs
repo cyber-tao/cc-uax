@@ -7,7 +7,7 @@ use crate::diagnostic::{ByteRangePreview, Diagnostic};
 use crate::output::sections::OutputSections;
 use crate::package::Package;
 use crate::pin::{Pin, PinSerCtx};
-use crate::property::{ParseCtx, PropertyEntry};
+use crate::property::{ParseCtx, PropertyEntry, PropertyParseStatus};
 use crate::reader::Reader;
 use crate::version::{custom, ue5};
 use serde_json::{Value, json};
@@ -29,6 +29,7 @@ pub(crate) struct DecodedExport {
     pub(crate) identity: DecodedExportIdentity,
     pub(crate) layout: Option<DecodedExportLayout>,
     pub(crate) properties: Option<Vec<PropertyEntry>>,
+    pub(crate) property_status: Option<PropertyParseStatus>,
     pub(crate) post_property_tail: Option<ByteRangePreview>,
     pub(crate) object_guid: Option<String>,
     pub(crate) metadata: Option<Value>,
@@ -162,6 +163,7 @@ impl Package {
                         .then_some(exp.script_serialization_end_offset),
                 }),
                 properties: None,
+                property_status: None,
                 post_property_tail: None,
                 object_guid: None,
                 metadata: None,

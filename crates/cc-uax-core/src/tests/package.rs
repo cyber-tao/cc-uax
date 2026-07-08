@@ -251,6 +251,44 @@ fn post_property_tail_is_reported_on_export() {
 }
 
 #[test]
+fn non_tagged_property_payload_is_reported_as_status() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut data = Vec::new();
+    data.push(0); // object serialization control byte
+    data.extend_from_slice(&[1, 2, 3, 4]); // not enough bytes for a tagged property name
+
+    let pkg = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec!["Obj".to_string()],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+    let mut sections = OutputSections::none();
+    sections.exports = true;
+    sections.properties = true;
+
+    let json = pkg.to_json(&data, &sections);
+
+    assert_eq!(
+        json["exports"][0]["property_parse_status"].as_str(),
+        Some("non_tagged_payload")
+    );
+    assert!(
+        json["exports"][0]["properties"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(json["diagnostics"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn soft_package_references_parse_and_merge() {
     // Append a name table and a SoftPackageReferences table to the minimal package,
     // then patch the summary offsets (name_count@68/name_offset@72,

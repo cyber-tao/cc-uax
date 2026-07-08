@@ -48,6 +48,34 @@ pub struct PropertyEntry {
 pub struct PropertyParse {
     pub entries: Vec<PropertyEntry>,
     pub diagnostics: Vec<Diagnostic>,
+    pub status: PropertyParseStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum PropertyParseStatus {
+    #[default]
+    Complete,
+    Empty,
+    NonTaggedPayload,
+    FailedAfterEntries,
+}
+
+impl PropertyParseStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            PropertyParseStatus::Complete => "complete",
+            PropertyParseStatus::Empty => "empty",
+            PropertyParseStatus::NonTaggedPayload => "non_tagged_payload",
+            PropertyParseStatus::FailedAfterEntries => "failed_after_entries",
+        }
+    }
+
+    pub(crate) fn is_output_relevant(self) -> bool {
+        matches!(
+            self,
+            PropertyParseStatus::NonTaggedPayload | PropertyParseStatus::FailedAfterEntries
+        )
+    }
 }
 
 pub fn entries_to_json(props: &[PropertyEntry]) -> Value {
@@ -104,6 +132,7 @@ pub fn parse_object_properties_report(
                         )
                         .with_offset(r.pos()),
                     ],
+                    status: PropertyParseStatus::FailedAfterEntries,
                 };
             }
         };
@@ -120,6 +149,7 @@ pub fn parse_object_properties_report(
                     )
                     .with_offset(r.pos()),
                 ],
+                status: PropertyParseStatus::FailedAfterEntries,
             };
         }
     }

@@ -12,7 +12,7 @@ impl Guid {
         self.0 == [0, 0, 0, 0]
     }
 
-    pub fn to_hex(&self) -> String {
+    pub fn to_hex(self) -> String {
         format!(
             "{:08X}{:08X}{:08X}{:08X}",
             self.0[0], self.0[1], self.0[2], self.0[3]

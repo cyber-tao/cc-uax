@@ -1,6 +1,7 @@
 use super::value::parse_value;
 use super::{
-    OVERRIDABLE_SERIALIZATION_BIT, PREVIEW_MAX, ParseCtx, PropertyEntry, PropertyParse, to_hex,
+    OVERRIDABLE_SERIALIZATION_BIT, PREVIEW_MAX, ParseCtx, PropertyEntry, PropertyParse,
+    PropertyParseStatus, to_hex,
 };
 use crate::diagnostic::Diagnostic;
 use crate::name::NameMap;
@@ -106,10 +107,12 @@ pub(crate) fn parse_properties_report(
 ) -> PropertyParse {
     let mut entries = Vec::new();
     let mut diagnostics = Vec::new();
+    let mut status = PropertyParseStatus::Complete;
     let mut guard = 0usize;
     loop {
         guard += 1;
         if guard > 1_000_000 {
+            status = PropertyParseStatus::FailedAfterEntries;
             diagnostics.push(
                 Diagnostic::warning(
                     "property_guard_limit_reached",
@@ -121,18 +124,43 @@ pub(crate) fn parse_properties_report(
             break;
         }
         if r.pos() + 8 > end_limit {
+            status = if entries.is_empty() {
+                if r.pos() >= end_limit {
+                    PropertyParseStatus::Empty
+                } else {
+                    PropertyParseStatus::NonTaggedPayload
+                }
+            } else {
+                diagnostics.push(
+                    Diagnostic::warning(
+                        "property_tag_terminator_missing",
+                        path,
+                        "property list ended before a complete None tag could be read",
+                    )
+                    .with_offset(r.pos()),
+                );
+                PropertyParseStatus::FailedAfterEntries
+            };
+            let _ = r.seek(end_limit);
             break;
         }
         let tag_start = r.pos();
         let prop_index_path = format!("{path}/{}", entries.len());
         let tag = match read_property_tag(r, ctx, end_limit) {
             Ok(Some(tag)) => tag,
-            Ok(None) => break,
+            Ok(None) => {
+                if entries.is_empty() {
+                    status = PropertyParseStatus::Empty;
+                }
+                break;
+            }
             Err(err) => {
                 if entries.is_empty() {
+                    status = PropertyParseStatus::NonTaggedPayload;
                     let _ = r.seek(end_limit);
                     break;
                 }
+                status = PropertyParseStatus::FailedAfterEntries;
                 diagnostics.push(
                     Diagnostic::warning(
                         "property_tag_parse_failed",
@@ -147,6 +175,7 @@ pub(crate) fn parse_properties_report(
         let prop_path = format!("{path}/{}", tag.name);
 
         if tag.size < 0 {
+            status = PropertyParseStatus::FailedAfterEntries;
             diagnostics.push(
                 Diagnostic::warning(
                     "property_negative_size",
@@ -161,9 +190,11 @@ pub(crate) fn parse_properties_report(
         let aligned = value_start.saturating_add(tag.size as u64);
         if aligned > end_limit {
             if entries.is_empty() {
+                status = PropertyParseStatus::NonTaggedPayload;
                 let _ = r.seek(end_limit);
                 break;
             }
+            status = PropertyParseStatus::FailedAfterEntries;
             diagnostics.push(
                 Diagnostic::warning(
                     "property_value_overruns_window",
@@ -263,6 +294,7 @@ pub(crate) fn parse_properties_report(
     PropertyParse {
         entries,
         diagnostics,
+        status,
     }
 }
 

@@ -77,6 +77,12 @@ fn export_to_json(
     if let Some(props) = &export.properties {
         obj.insert("properties".into(), entries_to_json(props));
     }
+    if report.sections.properties
+        && let Some(status) = export.property_status
+        && status.is_output_relevant()
+    {
+        obj.insert("property_parse_status".into(), json!(status.as_str()));
+    }
     if let Some(metadata) = &export.metadata {
         obj.insert("metadata".into(), metadata.clone());
     }

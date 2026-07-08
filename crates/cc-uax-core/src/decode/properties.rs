@@ -4,7 +4,8 @@ use super::window::{ExportSerialWindow, preview_range};
 use crate::diagnostic::Diagnostic;
 use crate::output::sections::OutputSections;
 use crate::property::{
-    ParseCtx, PropertyParse, parse_object_properties_report, read_soft_object_path,
+    ParseCtx, PropertyParse, PropertyParseStatus, parse_object_properties_report,
+    read_soft_object_path,
 };
 use crate::reader::Reader;
 use serde_json::{Value, json};
@@ -26,6 +27,7 @@ pub(super) fn decode_properties_for_export(
     if end == start {
         if sections.properties {
             export.properties = Some(Vec::new());
+            export.property_status = Some(PropertyParseStatus::Empty);
         }
         return;
     }
@@ -38,7 +40,9 @@ pub(super) fn decode_properties_for_export(
     let PropertyParse {
         entries,
         diagnostics: prop_diags,
+        status,
     } = parsed;
+    export.property_status = Some(status);
     diagnostics.extend(prop_diags);
 
     if let Some(member) = distill_member(&entries) {

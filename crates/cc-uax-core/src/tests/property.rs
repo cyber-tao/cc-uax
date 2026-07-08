@@ -2,7 +2,8 @@ use super::common::*;
 use crate::name::NameMap;
 use crate::pin::PinSerCtx;
 use crate::property::{
-    ParseCtx, parse_object_properties, parse_properties, parse_properties_report,
+    ParseCtx, PropertyParseStatus, parse_object_properties, parse_properties,
+    parse_properties_report,
 };
 use crate::reader::Reader;
 
@@ -98,6 +99,49 @@ fn truncated_property_array_index_stops_parse() {
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
     assert!(entries.is_empty());
+
+    let mut r = Reader::new(&d);
+    let parsed = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+    assert!(parsed.entries.is_empty());
+    assert!(parsed.diagnostics.is_empty());
+    assert_eq!(parsed.status, PropertyParseStatus::NonTaggedPayload);
+}
+
+#[test]
+fn failed_property_after_entries_reports_status_and_diagnostic() {
+    let names = NameMap {
+        names: vec![
+            "Broken".to_string(),
+            "IntProperty".to_string(),
+            "Value".to_string(),
+        ],
+    };
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 2); // Value
+    push_raw_name(&mut d, 1); // IntProperty
+    push_i32(&mut d, 0);
+    push_i32(&mut d, 4);
+    d.push(0);
+    push_i32(&mut d, 7);
+    push_raw_name(&mut d, 0); // Broken tag with no type payload after it
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        niagara_version: -1,
+        fortnite_main_version: -1,
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let parsed = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert_eq!(parsed.entries.len(), 1);
+    assert_eq!(parsed.status, PropertyParseStatus::FailedAfterEntries);
+    assert_eq!(parsed.diagnostics.len(), 1);
+    assert_eq!(parsed.diagnostics[0].code, "property_tag_parse_failed");
 }
 
 #[test]
