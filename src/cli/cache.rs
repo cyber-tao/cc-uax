@@ -3,9 +3,9 @@ use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::path::Path;
 
-// v2: soft package references included in extraction; parse_ok column caches
-// unparseable files (negative results).
-const CACHE_SCHEMA_VERSION: i64 = 2;
+// v3: reference extraction treats malformed soft-package-reference tables as
+// parse failures, avoiding cached partial reverse-reference results.
+const CACHE_SCHEMA_VERSION: i64 = 3;
 
 #[derive(Clone)]
 pub struct CacheEntry {

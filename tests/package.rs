@@ -288,3 +288,21 @@ fn soft_package_references_parse_and_merge() {
     let refs = referenced_packages_from_bytes(&data).unwrap();
     assert_eq!(refs, vec!["/Game/Foo/SoftDep"]);
 }
+
+#[test]
+fn fast_reference_extraction_rejects_soft_package_table_errors() {
+    let mut data = build_minimal_package();
+    put_i32(&mut data, 132, 1); // soft_package_references_count
+    put_i32(&mut data, 136, 999_999); // soft_package_references_offset
+
+    let pkg = Package::parse(&data).expect("package with broken soft ref table should parse");
+    assert!(pkg.soft_package_reference_error.is_some());
+
+    let json = pkg.to_json(&data, &OutputSections::parse("refs").unwrap());
+    let diag = diagnostic_with_code(&json, "soft_package_reference_table_error");
+    assert_eq!(diag["severity"].as_str(), Some("warning"));
+
+    let err = referenced_packages_from_bytes(&data).unwrap_err().to_string();
+    assert!(err.contains("soft package reference table failed"));
+    assert!(err.contains("soft package reference table seek failed"));
+}

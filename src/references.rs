@@ -232,12 +232,15 @@ pub fn referenced_packages_from_bytes(data: &[u8]) -> Result<Vec<String>> {
         ue5,
         filter_editor,
     )?;
-    let (soft, _soft_err) = parse_soft_package_references(
+    let (soft, soft_err) = parse_soft_package_references(
         &mut r,
         &names,
         summary.soft_package_references_offset,
         summary.soft_package_references_count,
     );
+    if let Some(err) = soft_err {
+        anyhow::bail!("soft package reference table failed: {err}");
+    }
     Ok(sorted_referenced_packages(
         imports.iter().map(|imp| {
             (
