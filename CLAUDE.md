@@ -11,11 +11,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```pwsh
 cargo build --release                    # binary at target/release/cc-uax
 cargo run --release -- <file.uasset>     # dev run
-cargo test --workspace                   # full workspace suite
-cargo test --test reader fstring_ansi    # single integration test in one file
+cargo test --workspace --locked          # full workspace suite
+cargo test -p cc-uax-core tests::reader::fstring_ansi
 cargo fmt
-cargo clippy --workspace --all-targets
-.\scripts\validate-real-assets.ps1       # real UE asset validation (Windows)
+cargo clippy --workspace --all-targets --all-features --locked
+.\scripts\validate-real-assets.ps1 -ExpectedCount 2096 # real UE asset validation (Windows)
 # rebuild from source + refresh the Claude Code / Codex skill locally (dev only)
 ./dev-install.sh          # Linux / macOS / Git Bash
 .\dev-install.ps1         # Windows PowerShell
@@ -28,7 +28,7 @@ No benchmarks, no separate lint config. CI is whatever runs these locally.
 `Cargo.toml` defines a CLI package at the repository root and a parser crate under
 `crates/cc-uax-core`:
 
-- **core lib** (`crates/cc-uax-core/src/lib.rs`, crate name `cc_uax`): the parser and report model. It re-exports the stable surface (`Package`, `DecodeOptions`, `DecodeReport`, diagnostics, `OutputSections`, and reference helpers). Internal parser modules remain available for tests but should not be treated as the external API.
+- **core lib** (`crates/cc-uax-core/src/lib.rs`, crate name `cc_uax`): the parser and report model. It re-exports the stable surface (`Package`, `DecodeReport`, diagnostics, `OutputSections`, `MountMap`, and reference helpers). Internal parser modules are crate-private and are not external API.
 - **CLI bin** (`src/main.rs` + `src/cli/`): the `cc-uax` binary. `main.rs` declares `mod cli`, whose submodules are `args` / `cache` / `reverse_refs`; the binary pulls in `clap` and `rusqlite`.
 
 `src/cli/cache.rs` is **only** included by the binary, never by the core lib. Keep the SQLite reverse-scan cache out of the parser crate; `rusqlite` is a bin-side concern. When changing the parser, do not reach into `cli/cache.rs` or add parser deps through it.
@@ -93,6 +93,6 @@ Diagnostics are structured values from [diagnostic.rs](crates/cc-uax-core/src/di
 ## Conventions
 
 - **Endianness**: LE everywhere, via `byteorder`. Never use native/host byte order.
-- **Minimal deps in the parser**: `byteorder` / `serde` / `serde_json` / `clap` / `anyhow`. `rusqlite` is bin-only. Do not add a new dependency to the lib without explicit reason — a from-scratch parser is a project goal, not an accident.
-- **Testing**: integration tests live under [tests/](tests/) — split into `model` / `package` / `pin` / `property` / `reader` / `cli`, with shared byte-vector builders in [tests/common/mod.rs](tests/common/mod.rs). They exercise `Reader` primitives, `NameMap` resolution (including number suffixes), `PackageIndex` semantics, `TypeName` display, the reference partition + path-mapping helpers, and the built CLI binary. They construct byte vectors by hand — when adding a decoder, add a matching hand-built vector test.
-- **No inline `#[cfg(test)]` modules** except `src/cli/cache.rs` and `src/cli/reverse_refs.rs`.
+- **Minimal deps in the parser**: `byteorder` / `serde` / `serde_json` / `anyhow`. `clap` and `rusqlite` are bin-only. Do not add a new dependency to the lib without explicit reason — a from-scratch parser is a project goal, not an accident.
+- **Testing**: core parser tests live under [crates/cc-uax-core/src/tests/](crates/cc-uax-core/src/tests/) — split into `model` / `package` / `pin` / `property` / `reader`, with shared byte-vector builders in `common`. Root [tests/](tests/) is reserved for CLI black-box coverage. They exercise `Reader` primitives, `NameMap` resolution (including number suffixes), `PackageIndex` semantics, `TypeName` display, the reference partition + path-mapping helpers, and the built CLI binary. They construct byte vectors by hand — when adding a decoder, add a matching hand-built vector test.
+- **No ad-hoc inline `#[cfg(test)]` modules** except the CLI internals (`src/cli/cache.rs`, `src/cli/reverse_refs.rs`) and the core crate's `src/tests` harness.

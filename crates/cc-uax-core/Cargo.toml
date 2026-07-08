@@ -1,10 +1,10 @@
 [package]
 name = "cc-uax-core"
-version = "0.7.0"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Core parser library for Unreal Engine 5 .uasset/.umap packages."
-license = "MIT"
+license.workspace = true
 
 [lib]
 name = "cc_uax"

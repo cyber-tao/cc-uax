@@ -6,12 +6,12 @@ use std::path::PathBuf;
 #[command(
     name = "cc-uax",
     version,
-    about = "Parse UE5 Blueprint (.uasset) files into JSON",
+    about = "Parse .uasset/.umap UE5 editor packages into JSON",
     arg_required_else_help = true,
     after_help = r#"EXAMPLES:
-  cc-uax asset.uasset                     Dump JSON (summary + imports + exports)
+  cc-uax asset.uasset                     Dump JSON (summary + imports + exports with pins/properties/layout)
   cc-uax asset.uasset -S logic            Graph nodes + pin connectivity only
-  cc-uax asset.uasset -S debug            Summary + imports + properties + layout
+  cc-uax asset.uasset -S debug            Summary + imports + exports with properties/layout
   cc-uax asset.uasset -S all              Dump plus names and references
   cc-uax asset.uasset -S exports,pins     Pick sections explicitly
   cc-uax asset.uasset -c -o out.json      Write compact JSON to a file"#
@@ -19,7 +19,7 @@ use std::path::PathBuf;
 pub struct Args {
     #[arg(
         value_name = "INPUT",
-        help = "Path to the UE5 Blueprint (.uasset) file to parse"
+        help = "Path to the .uasset/.umap UE5 editor package to parse"
     )]
     pub input: PathBuf,
 

@@ -7,6 +7,9 @@ CONTENT_DIR="${CC_UAX_CONTENT_DIR:-D:/WorkDir/ClashOfPets/Content}"
 UE_SOURCE_DIR="${CC_UAX_UE_SOURCE_DIR:-E:/UnrealEngine_5.7}"
 EXE="${CC_UAX_EXE:-${REPO_ROOT}/target/release/cc-uax}"
 LIMIT="${1:-${CC_UAX_VALIDATE_LIMIT:-0}}"
+EXPECTED_COUNT="${CC_UAX_EXPECTED_COUNT:-0}"
+REVERSE_REF_INPUT="${CC_UAX_REVERSE_REF_INPUT:-}"
+EXPECTED_REFERENCER="${CC_UAX_EXPECTED_REFERENCER:-}"
 
 windows_path_to_wsl() {
     local path="$1"
@@ -36,7 +39,7 @@ if [ ! -x "$EXE" ] && [ -x "${EXE}.exe" ]; then
 fi
 
 if [ ! -x "$EXE" ]; then
-    (cd "$REPO_ROOT" && cargo build --release)
+    (cd "$REPO_ROOT" && cargo build --release --locked)
 fi
 if [ ! -x "$EXE" ] && [ -x "${EXE}.exe" ]; then
     EXE="${EXE}.exe"
@@ -66,6 +69,10 @@ if [ "$LIMIT" -gt 0 ] 2>/dev/null; then
 fi
 if [ "${#files[@]}" -eq 0 ]; then
     printf 'no .uasset/.umap files found under %s\n' "$CONTENT_DIR" >&2
+    exit 1
+fi
+if [ "$EXPECTED_COUNT" -gt 0 ] 2>/dev/null && [ "${#files[@]}" -ne "$EXPECTED_COUNT" ]; then
+    printf 'expected %s .uasset/.umap files under %s, found %s\n' "$EXPECTED_COUNT" "$CONTENT_DIR" "${#files[@]}" >&2
     exit 1
 fi
 
@@ -114,8 +121,26 @@ run_section() {
 run_section debug
 run_section all
 
-sample="${files[0]}"
+if [ -n "$REVERSE_REF_INPUT" ]; then
+    sample="$REVERSE_REF_INPUT"
+    if [ ! -f "$sample" ]; then
+        alt_sample="$(windows_path_to_wsl "$sample")"
+        if [ -f "$alt_sample" ]; then
+            sample="$alt_sample"
+        fi
+    fi
+    if [ ! -f "$sample" ]; then
+        printf 'reverse-reference input not found: %s\n' "$REVERSE_REF_INPUT" >&2
+        exit 1
+    fi
+else
+    sample="${files[0]}"
+fi
 refs_out="$("$EXE" -S refs --scan-dir "$(to_exe_path "$CONTENT_DIR")" --no-cache --compact "$(to_exe_path "$sample")" 2>&1)"
+if [ -n "$EXPECTED_REFERENCER" ] && [[ "$refs_out" != *"\"$EXPECTED_REFERENCER\""* ]]; then
+    printf 'expected reverse referencer not found for %s: %s\n' "$sample" "$EXPECTED_REFERENCER" >&2
+    exit 1
+fi
 printf 'reverse reference sample: %s\n' "$sample"
 printf '%s\n' "$refs_out" | tail -n 1
 

@@ -145,7 +145,7 @@ The one-line installer configures the skill for both agents. To set it up manual
 ## 🚀 Usage
 
 ```text
-cc-uax <input.uasset> [options]
+cc-uax <input.uasset|input.umap> [options]
 
   -o, --output <FILE>   Write JSON to a file (default: stdout)
   -c, --compact         Compact JSON (default: pretty-printed)
@@ -160,7 +160,7 @@ cc-uax <input.uasset> [options]
 **Examples**
 
 ```pwsh
-# Parse a blueprint, pretty-print to a file
+# Parse an editor asset, pretty-print to a file
 cc-uax BP_MyActor.uasset -o out.json
 
 # Graph logic only — nodes + pin connectivity (lean view for framework analysis)
@@ -266,7 +266,8 @@ cc-uax/
 │           ├── object.rs   # PackageIndex (+/- ⇒ export/import), Import, Export
 │           ├── version.rs  # UE5/UE4 file-version constants + custom-version GUIDs
 │           ├── diagnostic.rs
-│           └── reader.rs   # Little-endian byte-stream primitives
+│           ├── reader.rs   # Little-endian byte-stream primitives
+│           └── tests/      # Core crate byte-vector tests by module
 ├── src/
 │   ├── main.rs         # CLI entry orchestration
 │   ├── cli/
@@ -275,12 +276,7 @@ cc-uax/
 │   │   ├── reverse_refs.rs # Reverse-reference scan and worker coordination
 │   │   └── cache.rs    # SQLite reverse-ref cache (binary-only)
 ├── tests/
-│   ├── common/         # Shared byte-vector builders
-│   ├── model.rs
-│   ├── package.rs
-│   ├── pin.rs
-│   ├── property.rs
-│   └── reader.rs       # Hand-built byte-vector integration tests by module
+│   └── cli.rs          # CLI black-box integration tests
 ├── scripts/
 │   ├── validate-real-assets.ps1 # Real UE asset validation (PowerShell)
 │   └── validate-real-assets.sh  # Real UE asset validation (Bash)
@@ -312,7 +308,7 @@ cc-uax/
 
 ## ⚠️ Scope & Limitations
 
-- ✅ **Validated** on **2,096 `.uasset` / `.umap` files** from a UE5.7 project — failed = 0, diagnostics = 0, `@unparsed` = 0. Re-run with `.\scripts\validate-real-assets.ps1` or `./scripts/validate-real-assets.sh`; override paths with `CC_UAX_CONTENT_DIR` and `CC_UAX_UE_SOURCE_DIR`.
+- ✅ **Validated** on **2,096 `.uasset` / `.umap` files** from a UE5.7 project — failed = 0, diagnostics = 0, `@unparsed` = 0. Re-run with `.\scripts\validate-real-assets.ps1 -ExpectedCount 2096` or `CC_UAX_EXPECTED_COUNT=2096 ./scripts/validate-real-assets.sh`; override paths with `CC_UAX_CONTENT_DIR` and `CC_UAX_UE_SOURCE_DIR`. To pin the reverse-reference fixture, add `-ReverseRefInput D:/WorkDir/ClashOfPets/Content/COP/Art/Dusktram/Block_size/SM_Dusktram_all.uasset -ExpectedReferencer /Game/COP/Map/Dusktram/Map_Dusktram_land`.
 - ❌ Cooked packages (unversioned / package compression) and UE4 legacy formats are **not** supported.
 - 🔧 Native-binary structs used by the current UE5.7 validation set — including Niagara, GPU binding, groom dataflow, skeletal-mesh sampling, and cloth LOD payloads — are decoded structurally; unknown future custom payloads still use the alignment-preserving `@unparsed` preview.
 - 🔧 `referenced_by` derives package paths from disk — the input file must live under `--scan-dir` mapped by `--mount`. A single `/Game` maps the whole scan root; explicit mappings such as `/Game=Content,/MyPlugin=Plugins/MyPlugin/Content,/Engine=Engine/Content` support project-root scans with plugins or Engine content. Both hard references (imports) and soft references (`TSoftObjectPtr`/`TSoftClassPtr`) are counted.
@@ -320,7 +316,7 @@ cc-uax/
 
 ## 🤝 Contributing
 
-This is a focused single-purpose tool. If you extend a decoder, add a hand-built byte-vector test under [tests/](tests/) and ensure the export's property window stays byte-aligned. Run `cargo fmt -- --check`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`, `cargo test --no-default-features`, and the real-asset validation script when UE assets are available.
+This is a focused single-purpose tool. If you extend a decoder, add a hand-built byte-vector test under [crates/cc-uax-core/src/tests/](crates/cc-uax-core/src/tests/) and ensure the export's property window stays byte-aligned. Keep [tests/](tests/) for CLI black-box coverage. Run `cargo fmt -- --check`, `cargo clippy --workspace --all-targets --all-features --locked`, `cargo test --workspace --locked`, and the real-asset validation script when UE assets are available.
 
 ## 📄 License
 

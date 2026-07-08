@@ -3,7 +3,7 @@ name: cc-uax
 description: Parse and inspect Unreal Engine 5 .uasset/.umap package files, and query forward/reverse asset references. Use whenever you need to READ a UE5 asset (.uasset/.umap), extract its imports/exports/properties, find what packages an asset references, or find which assets reference a given package — invoke the cc-uax CLI instead of hand-reading the binary.
 ---
 
-`cc-uax` is a from-scratch Rust reader for UE5 Blueprint/package files (`.uasset`, `.umap`). It parses the `CoreUObject` binary format and emits JSON — header, name table, import/export tables, tagged properties, and Blueprint graph-node pins with their `LinkedTo` connectivity. It also computes forward references (what this asset depends on) and, by scanning a directory, reverse references (who depends on this asset).
+`cc-uax` is a from-scratch Rust reader for UE5 editor package files (`.uasset`, `.umap`). It parses the `CoreUObject` binary format and emits JSON — header, name table, import/export tables, tagged properties, and Blueprint graph-node pins with their `LinkedTo` connectivity. It also computes forward references (what this asset depends on) and, by scanning a directory, reverse references (who depends on this asset).
 
 It is a **system-installed CLI tool** — `cc-uax` lives on `PATH` and behaves identically on Windows, Linux, and macOS. All commands below are plain `cc-uax` invocations.
 
@@ -96,7 +96,7 @@ cc-uax --help
 
 ### Reverse-reference scanning
 
-`-S refs -d <Content-dir>` recursively scans `<Content-dir>` for `.uasset`/`.umap`, parses each, and reports which ones import `<file>`'s package path. The on-disk cache (`.cc-uax-cache.sqlite`) is written at the scan-dir root to speed up repeat runs; pass `--no-cache` to disable. Output adds `self` (the input's package path) and `referenced_by` under `references`.
+`-S refs -d <Content-dir>` recursively scans `<Content-dir>` for `.uasset`/`.umap`, parses each mapped package, and reports which ones import `<file>`'s package path. The on-disk cache (`.cc-uax-cache.sqlite`) is written at the scan-dir root to speed up repeat runs; pass `--no-cache` to disable. Output adds `self` (the input's package path) and `referenced_by` under `references`. With explicit `--mount` mappings, the input file must be covered by a mount entry; scanned files outside all mount entries are skipped rather than assigned a guessed package path.
 
 ## Gotchas
 
@@ -104,7 +104,7 @@ cc-uax --help
 - **`-d` writes `.cc-uax-cache.sqlite` into the scan-dir.** When scanning a UE5 project you do not own, pass `--no-cache` or delete the file afterwards. The cache key is path+mtime+size; malformed soft-reference tables are treated as parse failures so partial reference results are not cached as successful scans.
 - **Git Bash / MSYS2 mangles `-m /Game`.** A leading-slash argument like `-m /Game` gets path-converted to `C:/Program Files/Git/Game`, corrupting the mount prefix (symptom: `self` starts with `/C:/Program Files/Git/Game/...`). Use a double slash — `-m //Game` — which MSYS2 restores to `/Game`; or run from PowerShell/cmd. Native Linux/macOS shells are unaffected.
 - **Cooked / unversioned / big-endian packages are rejected by design.** cc-uax targets editor-saved versioned assets only. These are hard limits, not bugs — see Troubleshooting for the exact messages.
-- **`@unparsed` means an unknown future custom payload, not normal UE5.7 coverage.** The current UE5.7 validation set has zero `@unparsed` fallbacks. In the repo, re-run that check with `scripts/validate-real-assets.ps1` or `scripts/validate-real-assets.sh` when the UE source and Content paths are available. If one appears on a new project, cc-uax still preserves the struct `type`, byte `size`, and hex preview so alignment is not lost and the next property can decode. Blueprint graph-node pins are decoded structurally — use `-S logic` for the pins.
+- **`@unparsed` means an unknown future custom payload, not normal UE5.7 coverage.** The current UE5.7 validation set has zero `@unparsed` fallbacks. In the repo, re-run that check with `scripts/validate-real-assets.ps1 -ExpectedCount 2096` or `CC_UAX_EXPECTED_COUNT=2096 scripts/validate-real-assets.sh` when the UE source and Content paths are available. If one appears on a new project, cc-uax still preserves the struct `type`, byte `size`, and hex preview so alignment is not lost and the next property can decode. Blueprint graph-node pins are decoded structurally — use `-S logic` for the pins.
 - **Only `.uasset` and `.umap` are package files.** Companion files (`.uexp`, `.ubulk`, `.ini`) are not UE5 package summaries — don't pass them.
 
 ## Troubleshooting

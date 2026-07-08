@@ -3,6 +3,9 @@ param(
     [string]$EngineSourceDir = $(if ($env:CC_UAX_UE_SOURCE_DIR) { $env:CC_UAX_UE_SOURCE_DIR } else { 'E:/UnrealEngine_5.7' }),
     [string]$Exe = $env:CC_UAX_EXE,
     [int]$Limit = 0,
+    [int]$ExpectedCount = $(if ($env:CC_UAX_EXPECTED_COUNT) { [int]$env:CC_UAX_EXPECTED_COUNT } else { 0 }),
+    [string]$ReverseRefInput = $(if ($env:CC_UAX_REVERSE_REF_INPUT) { $env:CC_UAX_REVERSE_REF_INPUT } else { '' }),
+    [string]$ExpectedReferencer = $(if ($env:CC_UAX_EXPECTED_REFERENCER) { $env:CC_UAX_EXPECTED_REFERENCER } else { '' }),
     [switch]$SkipBuild
 )
 
@@ -17,7 +20,7 @@ if (-not $Exe) {
 if (-not $SkipBuild -and -not (Test-Path $Exe)) {
     Push-Location $RepoRoot
     try {
-        cargo build --release
+        cargo build --release --locked
     } finally {
         Pop-Location
     }
@@ -49,6 +52,9 @@ if ($Limit -gt 0) {
 $files = @($files)
 if ($files.Count -eq 0) {
     throw "no .uasset/.umap files found under $ContentDir"
+}
+if ($ExpectedCount -gt 0 -and $files.Count -ne $ExpectedCount) {
+    throw "expected $ExpectedCount .uasset/.umap files under $ContentDir, found $($files.Count)"
 }
 
 function Invoke-CcUaxJson {
@@ -101,7 +107,11 @@ function Test-Section {
 $debug = Test-Section 'debug'
 $all = Test-Section 'all'
 
-$sample = $files[0].FullName
+if ($ReverseRefInput) {
+    $sample = (Resolve-Path $ReverseRefInput).Path
+} else {
+    $sample = $files[0].FullName
+}
 $refs = Invoke-CcUaxJson -CliArgs @(
     '-S', 'refs',
     '--scan-dir', (Resolve-Path $ContentDir).Path,
@@ -110,7 +120,11 @@ $refs = Invoke-CcUaxJson -CliArgs @(
     $sample
 )
 
-$referencedBy = @($refs.Json.references.referenced_by).Count
+$referencedByList = @($refs.Json.references.referenced_by)
+$referencedBy = $referencedByList.Count
+if ($ExpectedReferencer -and -not ($referencedByList -contains $ExpectedReferencer)) {
+    throw "expected reverse referencer '$ExpectedReferencer' was not found for $sample"
+}
 Write-Host "Reverse reference sample: $sample -> $referencedBy referencer(s)"
 $debug
 $all
