@@ -8,7 +8,7 @@ use super::export_json::exports_to_json;
 use super::property_json::name_or_null;
 
 impl DecodeReport<'_> {
-    pub fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         let mut root = serde_json::Map::new();
         if self.sections.summary {
             root.insert("summary".into(), summary_json(self.package));

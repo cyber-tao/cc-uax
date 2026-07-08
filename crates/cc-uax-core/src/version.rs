@@ -1,5 +1,6 @@
-#![allow(dead_code)]
-
+// Keep the engine file-version ladders aligned with UE source names even when a
+// given threshold is not currently used by the parser.
+#[allow(dead_code)]
 pub mod ue5 {
     pub const INITIAL_VERSION: i32 = 1000;
     pub const NAMES_REFERENCED_FROM_EXPORT_DATA: i32 = 1001;
@@ -22,6 +23,9 @@ pub mod ue5 {
     pub const IMPORT_TYPE_HIERARCHIES: i32 = 1018;
 }
 
+// Keep UE4 thresholds available for older UE5 package fields that still gate on
+// the UE4 package version number.
+#[allow(dead_code)]
 pub mod ue4 {
     pub const WORLD_LEVEL_INFO: i32 = 224;
     pub const ADDED_CHUNKID_TO_ASSETDATA_AND_UPACKAGE: i32 = 278;
@@ -52,10 +56,6 @@ pub mod ue4 {
 pub mod custom {
     use crate::reader::Guid;
 
-    pub const FRAMEWORK_OBJECT_VERSION: Guid =
-        Guid([0xCFFC_743F, 0x43B0_4480, 0x9391_14DF, 0x171D_2073]);
-    pub const BLUEPRINTS_OBJECT_VERSION: Guid =
-        Guid([0xB0D8_32E4, 0x1F89_4F0D, 0xACCF_7EB7, 0x36FD_4AA2]);
     pub const RELEASE_OBJECT_VERSION: Guid =
         Guid([0x9C54_D522, 0xA826_4FBE, 0x9421_0746, 0x61B4_82D0]);
     pub const UE5_MAIN_STREAM_OBJECT_VERSION: Guid =

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use cc_uax::{OutputSections, Package};
+use cc_uax::{OutputSections, parse_to_json};
 use clap::Parser;
 use cli::args::Args;
 use cli::reverse_refs::compute_referenced_by;
@@ -15,16 +15,14 @@ fn main() -> Result<()> {
     let data = fs::read(&args.input)
         .with_context(|| format!("Failed to read file: {}", args.input.display()))?;
 
-    let package = Package::parse(&data)
-        .with_context(|| format!("Failed to parse: {}", args.input.display()))?;
-
     let sections = match args.sections.as_deref() {
         Some(spec) => OutputSections::parse(spec)
             .with_context(|| format!("Invalid --sections value: '{spec}'"))?,
         None => OutputSections::dump(),
     };
 
-    let mut json = package.to_json(&data, &sections);
+    let mut json = parse_to_json(&data, &sections)
+        .with_context(|| format!("Failed to parse: {}", args.input.display()))?;
 
     if sections.references() {
         if let Some(scan_dir) = args.scan_dir.as_deref() {

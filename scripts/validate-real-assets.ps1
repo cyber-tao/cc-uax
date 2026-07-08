@@ -33,6 +33,23 @@ if (-not (Test-Path $ContentDir)) {
     throw "content directory not found: $ContentDir"
 }
 
+$DefaultContentDir = 'D:/WorkDir/ClashOfPets/Content'
+$DefaultReverseRefFixture = 'COP/Art/Dusktram/Block_size/SM_Dusktram_all.uasset'
+$DefaultExpectedReferencer = '/Game/COP/Map/Dusktram/Map_Dusktram_land'
+$usesDefaultContent = $false
+if (Test-Path $DefaultContentDir) {
+    $usesDefaultContent = ((Resolve-Path $ContentDir).Path -eq (Resolve-Path $DefaultContentDir).Path)
+}
+if (-not $ReverseRefInput -and $usesDefaultContent) {
+    $fixture = Join-Path $ContentDir $DefaultReverseRefFixture
+    if (Test-Path $fixture) {
+        $ReverseRefInput = $fixture
+        if (-not $ExpectedReferencer) {
+            $ExpectedReferencer = $DefaultExpectedReferencer
+        }
+    }
+}
+
 $sourceChecks = @(
     'Engine/Source/Runtime/CoreUObject/Private/UObject/PropertyTag.cpp',
     'Engine/Source/Runtime/Engine/Private/EdGraph/EdGraphPin.cpp'
@@ -122,18 +139,27 @@ $refs = Invoke-CcUaxJson -CliArgs @(
 
 $referencedByList = @($refs.Json.references.referenced_by)
 $referencedBy = $referencedByList.Count
-if ($ExpectedReferencer -and -not ($referencedByList -contains $ExpectedReferencer)) {
-    throw "expected reverse referencer '$ExpectedReferencer' was not found for $sample"
-}
+$reverseRefFixtureFailed = if ($ExpectedReferencer -and -not ($referencedByList -contains $ExpectedReferencer)) { 1 } else { 0 }
 Write-Host "Reverse reference sample: $sample -> $referencedBy referencer(s)"
 $debug
 $all
+[pscustomobject]@{
+    Section = 'refs'
+    Total = 1
+    Failed = 0
+    Diagnostics = 0
+    UnparsedFiles = 0
+    ReverseRefFixtureFailed = $reverseRefFixtureFailed
+}
 
 if ($debug.Failed -ne 0 -or $debug.Diagnostics -ne 0 -or $debug.UnparsedFiles -ne 0) {
     throw "debug validation failed"
 }
 if ($all.Failed -ne 0 -or $all.Diagnostics -ne 0 -or $all.UnparsedFiles -ne 0) {
     throw "all validation failed"
+}
+if ($reverseRefFixtureFailed -ne 0) {
+    throw "expected reverse referencer '$ExpectedReferencer' was not found for $sample"
 }
 
 Write-Host "Real asset validation passed."

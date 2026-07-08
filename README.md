@@ -255,7 +255,7 @@ cc-uax/
 ├── crates/
 │   └── cc-uax-core/
 │       └── src/
-│           ├── lib.rs      # Core parser crate root — Package, DecodeReport, diagnostics, sections, references
+│           ├── lib.rs      # Core parser crate root — Package, parse_to_json, diagnostics, sections, references
 │           ├── package.rs  # Core package parser
 │           ├── decode/     # Export decode report, property/pin/member orchestration
 │           ├── output/     # Pure JSON serializers for reports, exports, properties, pins
@@ -273,7 +273,7 @@ cc-uax/
 │   ├── cli/
 │   │   ├── mod.rs
 │   │   ├── args.rs     # Clap arguments and section parsing
-│   │   ├── reverse_refs.rs # Reverse-reference scan and worker coordination
+│   │   ├── reverse_refs/   # Reverse-reference scan discovery and worker coordination
 │   │   └── cache.rs    # SQLite reverse-ref cache (binary-only)
 ├── tests/
 │   └── cli.rs          # CLI black-box integration tests
@@ -316,7 +316,7 @@ cc-uax/
 
 ## 🤝 Contributing
 
-This is a focused single-purpose tool. If you extend a decoder, add a hand-built byte-vector test under [crates/cc-uax-core/src/tests/](crates/cc-uax-core/src/tests/) and ensure the export's property window stays byte-aligned. Keep [tests/](tests/) for CLI black-box coverage. Run `cargo fmt -- --check`, `cargo clippy --workspace --all-targets --all-features --locked`, `cargo test --workspace --locked`, and the real-asset validation script when UE assets are available.
+This is a focused single-purpose tool. If you extend a decoder, add a hand-built byte-vector test under [crates/cc-uax-core/src/tests/](crates/cc-uax-core/src/tests/) and ensure the export's property window stays byte-aligned. Keep [tests/](tests/) for CLI black-box coverage. Run `cargo fmt -- --check`, `cargo clippy --workspace --all-targets --all-features --locked`, `cargo test --workspace --locked`, `cargo test --workspace --no-default-features --locked`, and the real-asset validation script when UE assets are available.
 
 ## 📄 License
 

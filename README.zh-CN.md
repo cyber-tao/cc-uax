@@ -74,7 +74,7 @@
 
 ### 一键安装（推荐）
 
-自动下载当前平台最新的预编译二进制，把 `cc-uax` 装到 `PATH`，并为 Claude Code 与 Codex 同时配置好 [agent skill](#-作为-agent-skill 使用)。
+自动下载当前平台最新的预编译二进制，把 `cc-uax` 装到 `PATH`，并为 Claude Code 与 Codex 同时配置好 [agent skill](#-作为-agent-skill-使用)。
 
 **Linux / macOS**
 
@@ -255,14 +255,14 @@ cc-uax/
 ├── crates/
 │   └── cc-uax-core/
 │       └── src/
-│           ├── lib.rs      # 核心解析库入口 —— Package、DecodeReport、诊断、区块和引用 helpers
+│           ├── lib.rs      # 核心解析库入口 —— Package、parse_to_json、诊断、区块和引用 helpers
 │           ├── package.rs  # 核心 package 解析器
 │           ├── decode/     # Export 解码报告、property/pin/member 编排
 │           ├── output/     # 纯 JSON serializer：report/export/property/pin
 │           ├── property/   # Tagged property 解析 + 原生结构体解码
 │           ├── pin.rs      # EdGraphNode pin 解码器 —— pins、pin 类型、LinkedTo 连线
 │           ├── summary.rs  # FPackageFileSummary（魔数、版本、表偏移）
-│           ├── name.rs     # NameMap —— Name 表解析与解析
+│           ├── name.rs     # NameMap —— Name 表解析与名称解析
 │           ├── object.rs   # PackageIndex（+/- ⇒ export/import）、Import、Export
 │           ├── version.rs  # UE5/UE4 文件版本常量 + 自定义版本 GUID
 │           ├── diagnostic.rs
@@ -273,7 +273,7 @@ cc-uax/
 │   ├── cli/
 │   │   ├── mod.rs
 │   │   ├── args.rs     # Clap 参数与区块解析
-│   │   ├── reverse_refs.rs # 反向引用扫描与 worker 协调
+│   │   ├── reverse_refs/   # 反向引用扫描发现与 worker 协调
 │   │   └── cache.rs    # SQLite 反向引用缓存（仅二进制侧）
 ├── tests/
 │   └── cli.rs          # CLI 黑盒集成测试
@@ -302,6 +302,7 @@ cc-uax/
 4. Import / Export 表 —— `PackageIndex` 正负号选择表。
 5. 每个 export 的 `ScriptSerialization` 窗口 → `property/` 递归解码 legacy 与完整类型名 property tag；未来未知结构体回退到十六进制，对齐永不破坏。
 6. 图节点 —— 属性窗口之后，`pin.rs` 解码 `UEdGraphNode` 的 pin 区域（`pins` + `LinkedTo`），并把节点身份蒸馏为 `member` / `member_from`。
+7. `output/` 将已完成的内部解码报告序列化为 JSON；输出层不驱动解析决策。
 
 > 完整架构指引见 [CLAUDE.md](CLAUDE.md)。
 
@@ -315,7 +316,7 @@ cc-uax/
 
 ## 🤝 贡献
 
-这是一个聚焦单一用途的工具。如扩展解码器，请在 [crates/cc-uax-core/src/tests/](crates/cc-uax-core/src/tests/) 下添加手写字节向量测试，并确保 export 的属性区间保持字节对齐；[tests/](tests/) 只保留 CLI 黑盒覆盖。提交前运行 `cargo fmt -- --check`、`cargo clippy --workspace --all-targets --all-features --locked`、`cargo test --workspace --locked`；有 UE 资产时再运行真实资产验证脚本。
+这是一个聚焦单一用途的工具。如扩展解码器，请在 [crates/cc-uax-core/src/tests/](crates/cc-uax-core/src/tests/) 下添加手写字节向量测试，并确保 export 的属性区间保持字节对齐；[tests/](tests/) 只保留 CLI 黑盒覆盖。提交前运行 `cargo fmt -- --check`、`cargo clippy --workspace --all-targets --all-features --locked`、`cargo test --workspace --locked`、`cargo test --workspace --no-default-features --locked`；有 UE 资产时再运行真实资产验证脚本。
 
 ## 📄 许可
 

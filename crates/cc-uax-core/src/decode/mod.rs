@@ -17,7 +17,7 @@ use pins::{decode_pins_for_export, is_graph_node_class};
 use properties::decode_properties_for_export;
 use window::export_serial_window;
 
-pub struct DecodeReport<'a> {
+pub(crate) struct DecodeReport<'a> {
     pub(crate) package: &'a Package,
     pub(crate) sections: OutputSections,
     pub(crate) exports: Vec<DecodedExport>,
@@ -65,7 +65,7 @@ pub(crate) struct MemberRef {
 }
 
 impl Package {
-    pub fn decode<'a>(&'a self, data: &[u8], sections: &OutputSections) -> DecodeReport<'a> {
+    pub(crate) fn decode<'a>(&'a self, data: &[u8], sections: &OutputSections) -> DecodeReport<'a> {
         let mut diagnostics = self.table_diagnostics();
         let exports = if sections.exports {
             self.decode_exports(data, sections, &mut diagnostics)

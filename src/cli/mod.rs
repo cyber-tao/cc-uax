@@ -1,3 +1,3 @@
-pub mod args;
-pub mod cache;
-pub mod reverse_refs;
+pub(crate) mod args;
+pub(crate) mod cache;
+pub(crate) mod reverse_refs;

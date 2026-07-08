@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::reader::{Guid, Reader};
 use crate::version::{PACKAGE_FILE_TAG, PACKAGE_FILE_TAG_SWAPPED, ue4, ue5};
 use anyhow::{Result, bail};
@@ -50,7 +48,6 @@ pub struct PackageFileSummary {
     pub file_version_ue5: i32,
     pub file_version_licensee_ue: i32,
     pub custom_versions: Vec<CustomVersion>,
-    pub saved_hash: Option<[u8; 20]>,
     pub total_header_size: i32,
     pub package_name: String,
     pub package_flags: u32,
@@ -58,46 +55,18 @@ pub struct PackageFileSummary {
     pub name_offset: i32,
     pub soft_object_paths_count: i32,
     pub soft_object_paths_offset: i32,
-    pub localization_id: String,
-    pub gatherable_text_data_count: i32,
-    pub gatherable_text_data_offset: i32,
     pub export_count: i32,
     pub export_offset: i32,
     pub import_count: i32,
     pub import_offset: i32,
-    pub cell_export_count: i32,
-    pub cell_export_offset: i32,
-    pub cell_import_count: i32,
-    pub cell_import_offset: i32,
-    pub metadata_offset: i32,
-    pub depends_offset: i32,
     pub soft_package_references_count: i32,
     pub soft_package_references_offset: i32,
-    pub searchable_names_offset: i32,
-    pub thumbnail_table_offset: i32,
-    pub import_type_hierarchies_count: i32,
-    pub import_type_hierarchies_offset: i32,
     pub engine_version: EngineVersion,
     pub compatible_engine_version: EngineVersion,
-    pub compression_flags: u32,
-    pub package_source: u32,
-    pub asset_registry_data_offset: i32,
     pub bulk_data_start_offset: i64,
-    pub world_tile_info_data_offset: i32,
-    pub preload_dependency_count: i32,
-    pub preload_dependency_offset: i32,
-    pub names_referenced_from_export_data_count: i32,
-    pub payload_toc_offset: i64,
-    pub data_resource_offset: i32,
 }
 
 impl PackageFileSummary {
-    pub fn is_unversioned(&self) -> bool {
-        self.file_version_ue4 == 0
-            && self.file_version_ue5 == 0
-            && self.file_version_licensee_ue == 0
-    }
-
     pub fn filter_editor_only(&self) -> bool {
         self.package_flags & PKG_FILTER_EDITOR_ONLY != 0
     }
@@ -163,10 +132,9 @@ impl PackageFileSummary {
         let ue4v = file_version_ue4;
         let ue5v = file_version_ue5;
 
-        let mut saved_hash = None;
         let mut total_header_size = 0i32;
         if ue5v >= ue5::PACKAGE_SAVED_HASH {
-            saved_hash = Some(r.read_io_hash()?);
+            let _saved_hash = r.read_io_hash()?;
             total_header_size = r.read_i32()?;
         }
 
@@ -202,15 +170,13 @@ impl PackageFileSummary {
             soft_object_paths_offset = r.read_i32()?;
         }
 
-        let mut localization_id = String::new();
         if !filter_editor_only && ue4v >= ue4::ADDED_PACKAGE_SUMMARY_LOCALIZATION_ID {
-            localization_id = r.read_fstring()?;
+            let _localization_id = r.read_fstring()?;
         }
 
-        let (mut gatherable_text_data_count, mut gatherable_text_data_offset) = (0, 0);
         if ue4v >= ue4::SERIALIZE_TEXT_IN_PACKAGES {
-            gatherable_text_data_count = r.read_i32()?;
-            gatherable_text_data_offset = r.read_i32()?;
+            let _gatherable_text_data_count = r.read_i32()?;
+            let _gatherable_text_data_offset = r.read_i32()?;
         }
 
         let export_count = r.read_i32()?;
@@ -218,21 +184,18 @@ impl PackageFileSummary {
         let import_count = r.read_i32()?;
         let import_offset = r.read_i32()?;
 
-        let (mut cell_export_count, mut cell_export_offset) = (0, 0);
-        let (mut cell_import_count, mut cell_import_offset) = (0, 0);
         if ue5v >= ue5::VERSE_CELLS {
-            cell_export_count = r.read_i32()?;
-            cell_export_offset = r.read_i32()?;
-            cell_import_count = r.read_i32()?;
-            cell_import_offset = r.read_i32()?;
+            let _cell_export_count = r.read_i32()?;
+            let _cell_export_offset = r.read_i32()?;
+            let _cell_import_count = r.read_i32()?;
+            let _cell_import_offset = r.read_i32()?;
         }
 
-        let mut metadata_offset = 0;
         if ue5v >= ue5::METADATA_SERIALIZATION_OFFSET {
-            metadata_offset = r.read_i32()?;
+            let _metadata_offset = r.read_i32()?;
         }
 
-        let depends_offset = r.read_i32()?;
+        let _depends_offset = r.read_i32()?;
 
         let (mut soft_package_references_count, mut soft_package_references_offset) = (0, 0);
         if ue4v >= ue4::ADD_STRING_ASSET_REFERENCES_MAP {
@@ -240,17 +203,15 @@ impl PackageFileSummary {
             soft_package_references_offset = r.read_i32()?;
         }
 
-        let mut searchable_names_offset = 0;
         if ue4v >= ue4::ADDED_SEARCHABLE_NAMES {
-            searchable_names_offset = r.read_i32()?;
+            let _searchable_names_offset = r.read_i32()?;
         }
 
-        let thumbnail_table_offset = r.read_i32()?;
+        let _thumbnail_table_offset = r.read_i32()?;
 
-        let (mut import_type_hierarchies_count, mut import_type_hierarchies_offset) = (0, 0);
         if ue5v >= ue5::IMPORT_TYPE_HIERARCHIES {
-            import_type_hierarchies_count = r.read_i32()?;
-            import_type_hierarchies_offset = r.read_i32()?;
+            let _import_type_hierarchies_count = r.read_i32()?;
+            let _import_type_hierarchies_offset = r.read_i32()?;
         }
 
         if ue5v < ue5::PACKAGE_SAVED_HASH {
@@ -289,7 +250,7 @@ impl PackageFileSummary {
                 engine_version.clone()
             };
 
-        let compression_flags = r.read_u32()?;
+        let _compression_flags = r.read_u32()?;
 
         let compressed_chunks_count = r.read_i32()?;
         if compressed_chunks_count != 0 {
@@ -298,7 +259,7 @@ impl PackageFileSummary {
             );
         }
 
-        let package_source = r.read_u32()?;
+        let _package_source = r.read_u32()?;
 
         let additional_count = r.read_i32()?;
         if additional_count < 0 || additional_count as u64 > r.remaining() {
@@ -312,12 +273,11 @@ impl PackageFileSummary {
             let _num_texture_allocations = r.read_i32()?;
         }
 
-        let asset_registry_data_offset = r.read_i32()?;
+        let _asset_registry_data_offset = r.read_i32()?;
         let bulk_data_start_offset = r.read_i64()?;
 
-        let mut world_tile_info_data_offset = 0;
         if ue4v >= ue4::WORLD_LEVEL_INFO {
-            world_tile_info_data_offset = r.read_i32()?;
+            let _world_tile_info_data_offset = r.read_i32()?;
         }
 
         if ue4v >= ue4::CHANGED_CHUNKID_TO_BE_AN_ARRAY_OF_CHUNKIDS {
@@ -332,25 +292,21 @@ impl PackageFileSummary {
             let _chunk_id = r.read_i32()?;
         }
 
-        let (mut preload_dependency_count, mut preload_dependency_offset) = (-1, 0);
         if ue4v >= ue4::PRELOAD_DEPENDENCIES_IN_COOKED_EXPORTS {
-            preload_dependency_count = r.read_i32()?;
-            preload_dependency_offset = r.read_i32()?;
+            let _preload_dependency_count = r.read_i32()?;
+            let _preload_dependency_offset = r.read_i32()?;
         }
 
-        let mut names_referenced_from_export_data_count = name_count;
         if ue5v >= ue5::NAMES_REFERENCED_FROM_EXPORT_DATA {
-            names_referenced_from_export_data_count = r.read_i32()?;
+            let _names_referenced_from_export_data_count = r.read_i32()?;
         }
 
-        let mut payload_toc_offset = -1i64;
         if ue5v >= ue5::PAYLOAD_TOC {
-            payload_toc_offset = r.read_i64()?;
+            let _payload_toc_offset = r.read_i64()?;
         }
 
-        let mut data_resource_offset = -1i32;
         if ue5v >= ue5::DATA_RESOURCES {
-            data_resource_offset = r.read_i32()?;
+            let _data_resource_offset = r.read_i32()?;
         }
 
         Ok(PackageFileSummary {
@@ -360,7 +316,6 @@ impl PackageFileSummary {
             file_version_ue5,
             file_version_licensee_ue,
             custom_versions,
-            saved_hash,
             total_header_size,
             package_name,
             package_flags,
@@ -368,37 +323,15 @@ impl PackageFileSummary {
             name_offset,
             soft_object_paths_count,
             soft_object_paths_offset,
-            localization_id,
-            gatherable_text_data_count,
-            gatherable_text_data_offset,
             export_count,
             export_offset,
             import_count,
             import_offset,
-            cell_export_count,
-            cell_export_offset,
-            cell_import_count,
-            cell_import_offset,
-            metadata_offset,
-            depends_offset,
             soft_package_references_count,
             soft_package_references_offset,
-            searchable_names_offset,
-            thumbnail_table_offset,
-            import_type_hierarchies_count,
-            import_type_hierarchies_offset,
             engine_version,
             compatible_engine_version,
-            compression_flags,
-            package_source,
-            asset_registry_data_offset,
             bulk_data_start_offset,
-            world_tile_info_data_offset,
-            preload_dependency_count,
-            preload_dependency_offset,
-            names_referenced_from_export_data_count,
-            payload_toc_offset,
-            data_resource_offset,
         })
     }
 }

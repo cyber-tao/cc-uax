@@ -8,6 +8,7 @@ license.workspace = true
 
 [workspace]
 members = ["crates/cc-uax-core"]
+default-members = [".", "crates/cc-uax-core"]
 resolver = "3"
 
 [workspace.package]

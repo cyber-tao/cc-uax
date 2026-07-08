@@ -12,6 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo build --release                    # binary at target/release/cc-uax
 cargo run --release -- <file.uasset>     # dev run
 cargo test --workspace --locked          # full workspace suite
+cargo test --workspace --no-default-features --locked
 cargo test -p cc-uax-core tests::reader::fstring_ansi
 cargo fmt
 cargo clippy --workspace --all-targets --all-features --locked
@@ -28,7 +29,7 @@ No benchmarks, no separate lint config. CI is whatever runs these locally.
 `Cargo.toml` defines a CLI package at the repository root and a parser crate under
 `crates/cc-uax-core`:
 
-- **core lib** (`crates/cc-uax-core/src/lib.rs`, crate name `cc_uax`): the parser and report model. It re-exports the stable surface (`Package`, `DecodeReport`, diagnostics, `OutputSections`, `MountMap`, and reference helpers). Internal parser modules are crate-private and are not external API.
+- **core lib** (`crates/cc-uax-core/src/lib.rs`, crate name `cc_uax`): the parser and JSON/report helpers. It re-exports the stable surface (`Package`, `parse_to_json`, diagnostics, `OutputSections`, `MountMap`, and reference helpers). Internal decode report modules are crate-private and are not external API.
 - **CLI bin** (`src/main.rs` + `src/cli/`): the `cc-uax` binary. `main.rs` declares `mod cli`, whose submodules are `args` / `cache` / `reverse_refs`; the binary pulls in `clap` and `rusqlite`.
 
 `src/cli/cache.rs` is **only** included by the binary, never by the core lib. Keep the SQLite reverse-scan cache out of the parser crate; `rusqlite` is a bin-side concern. When changing the parser, do not reach into `cli/cache.rs` or add parser deps through it.
@@ -38,13 +39,13 @@ No benchmarks, no separate lint config. CI is whatever runs these locally.
 The central entry point is `Package::parse` in [package.rs](crates/cc-uax-core/src/package.rs). The flow is strictly ordered because each stage's offsets come from the previous one:
 
 1. **`Reader`** ([reader.rs](crates/cc-uax-core/src/reader.rs)) — little-endian byte-stream primitives (`u8/u16/u32/i32/u64/f32/f64`, `FString`, `FName`, `Guid`). All file I/O goes through this; the format is LE-only.
-2. **`PackageFileSummary::parse`** ([summary.rs](crates/cc-uax-core/src/summary.rs)) — package header. Validates the `PACKAGE_FILE_TAG` (`0x9E2A83C1`) magic and detects byte order via `PACKAGE_FILE_TAG_SWAPPED`; reads engine/file versions, `CustomVersion`s, and the offset+count of every downstream table. `is_unversioned()` and `filter_editor_only()` gate later behavior.
+2. **`PackageFileSummary::parse`** ([summary.rs](crates/cc-uax-core/src/summary.rs)) — package header. Validates the `PACKAGE_FILE_TAG` (`0x9E2A83C1`) magic and detects byte order via `PACKAGE_FILE_TAG_SWAPPED`; reads engine/file versions, `CustomVersion`s, and the offset+count of every downstream table. Unversioned packages are rejected during parse; `filter_editor_only()` gates later behavior.
 3. **`NameMap`** ([name.rs](crates/cc-uax-core/src/name.rs)) — the name table. `resolve` returns a `String` (`<invalid_name#N>` on a bad index) with number-suffix semantics (e.g. `Foo_3`).
 4. **Import / Export tables** ([object.rs](crates/cc-uax-core/src/object.rs)) — `PackageIndex` encodes the table: **positive = export, negative = import**. `ObjectExport` carries `serial_offset` / `serial_size`, which delimit each object's serialized property region.
 5. **Decode report** ([decode/](crates/cc-uax-core/src/decode/)) — per-export decode orchestration. It builds serial windows, calls property parsing, consumes known UObject / metadata tails, retries pin candidates, distills graph members, and accumulates structured diagnostics.
 6. **Per-export property region** ([property/](crates/cc-uax-core/src/property/)) — for each export, property parsing seeks to the `ScriptSerialization` window and recursively decodes legacy UE5 property tags and complete-type-name tags (`FPropertyTag` + `FPropertyTypeName` when present).
 7. **Per-node pin region** ([pin.rs](crates/cc-uax-core/src/pin.rs)) — for graph-node exports, `parse_node_pins_report` decodes the pin array that follows the property window (`ScriptSerializationEndOffset` → `serial_size`), yielding pins, pin types, defaults, and `LinkedTo` edges. Decode report member distillation lifts `MemberReference` into `member` / `member_from`.
-8. **Output serializers** ([output/](crates/cc-uax-core/src/output/)) — serialize the completed `DecodeReport` to JSON; output code must not drive parsing decisions.
+8. **Output serializers** ([output/](crates/cc-uax-core/src/output/)) — serialize the completed internal decode report to JSON; output code must not drive parsing decisions.
 
 The per-export `serial_offset`/`serial_size` windowing is what guarantees byte alignment across objects — never parse properties outside their window, and if you add a value decoder, it must consume exactly its bytes or fall back to hex preview (see below).
 
@@ -78,7 +79,7 @@ Diagnostics are structured values from [diagnostic.rs](crates/cc-uax-core/src/di
 ## Reference analysis
 
 - **Forward references** (`collect_package_references` in [references.rs](crates/cc-uax-core/src/references.rs)): reads the import table and partitions external packages into `assets` vs `scripts` by the `/Script/` prefix (`SCRIPT_PATH_PREFIX`). The header's `SoftPackageReferences` table (one FName package per entry) is parsed too and emitted as `soft`. Output keys: `assets`, `scripts`, `soft`.
-- **Reverse references** (CLI only, [src/cli/reverse_refs.rs](src/cli/reverse_refs.rs)): `--scan-dir <DIR>` walks the directory (`collect_asset_files`), maps disk paths to package paths via `--mount` using `MountMap` (default `/Game`; explicit mappings such as `/Game=Content,/Plugin=Plugins/Plugin/Content,/Engine=Engine/Content` are supported), parses every asset (imports + soft references, via `referenced_packages_from_bytes`), and computes `referenced_by`.
+- **Reverse references** (CLI only, [src/cli/reverse_refs/](src/cli/reverse_refs/)): `--scan-dir <DIR>` walks the directory, maps disk paths to package paths via `--mount` using `MountMap` (default `/Game`; explicit mappings such as `/Game=Content,/Plugin=Plugins/Plugin/Content,/Engine=Engine/Content` are supported), parses every asset (imports + soft references, via `referenced_packages_from_bytes`), and computes `referenced_by`.
 - **Cache** (`RefCache` in [src/cli/cache.rs](src/cli/cache.rs)): the reverse scan writes `.cc-uax-cache.sqlite` at the scan-dir root, keyed by file path + mtime + size; unparseable files are cached as negative results (`parse_ok = false`) so they are not re-read every scan. Bump `CACHE_SCHEMA_VERSION` whenever the reference-extraction logic changes — existing caches auto-invalidate on schema mismatch. `--no-cache` disables it.
 
 ## CLI surface
@@ -95,4 +96,4 @@ Diagnostics are structured values from [diagnostic.rs](crates/cc-uax-core/src/di
 - **Endianness**: LE everywhere, via `byteorder`. Never use native/host byte order.
 - **Minimal deps in the parser**: `byteorder` / `serde` / `serde_json` / `anyhow`. `clap` and `rusqlite` are bin-only. Do not add a new dependency to the lib without explicit reason — a from-scratch parser is a project goal, not an accident.
 - **Testing**: core parser tests live under [crates/cc-uax-core/src/tests/](crates/cc-uax-core/src/tests/) — split into `model` / `package` / `pin` / `property` / `reader`, with shared byte-vector builders in `common`. Root [tests/](tests/) is reserved for CLI black-box coverage. They exercise `Reader` primitives, `NameMap` resolution (including number suffixes), `PackageIndex` semantics, `TypeName` display, the reference partition + path-mapping helpers, and the built CLI binary. They construct byte vectors by hand — when adding a decoder, add a matching hand-built vector test.
-- **No ad-hoc inline `#[cfg(test)]` modules** except the CLI internals (`src/cli/cache.rs`, `src/cli/reverse_refs.rs`) and the core crate's `src/tests` harness.
+- **No ad-hoc inline `#[cfg(test)]` modules** except focused CLI internals and the core crate's `src/tests` harness.

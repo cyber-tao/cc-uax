@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::reader::{RawName, Reader};
 use crate::version::{ue4, ue5};
 use anyhow::{Result, bail};
@@ -7,15 +5,10 @@ use anyhow::{Result, bail};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackageIndex(pub i32);
 
+#[cfg(test)]
 impl PackageIndex {
     pub fn is_null(&self) -> bool {
         self.0 == 0
-    }
-    pub fn is_export(&self) -> bool {
-        self.0 > 0
-    }
-    pub fn is_import(&self) -> bool {
-        self.0 < 0
     }
     pub fn export_index(&self) -> Option<usize> {
         if self.0 > 0 {
@@ -40,7 +33,6 @@ pub struct ObjectImport {
     pub outer_index: PackageIndex,
     pub object_name: RawName,
     pub package_name: Option<RawName>,
-    pub is_optional: bool,
 }
 
 /// Minimum bytes for one import-table entry before version-gated extras:
@@ -91,18 +83,15 @@ impl ObjectImport {
             } else {
                 None
             };
-            let is_optional = if ue5v >= ue5::OPTIONAL_RESOURCES {
-                r.read_bool32()?
-            } else {
-                false
-            };
+            if ue5v >= ue5::OPTIONAL_RESOURCES {
+                let _is_optional = r.read_bool32()?;
+            }
             out.push(ObjectImport {
                 class_package,
                 class_name,
                 outer_index,
                 object_name,
                 package_name,
-                is_optional,
             });
         }
         Ok(out)
@@ -119,19 +108,7 @@ pub struct ObjectExport {
     pub object_flags: u32,
     pub serial_size: i64,
     pub serial_offset: i64,
-    pub forced_export: bool,
-    pub not_for_client: bool,
-    pub not_for_server: bool,
-    pub is_inherited_instance: bool,
-    pub package_flags: u32,
-    pub not_always_loaded_for_editor_game: bool,
     pub is_asset: bool,
-    pub generate_public_hash: bool,
-    pub first_export_dependency: i32,
-    pub serialization_before_serialization_deps: i32,
-    pub create_before_serialization_deps: i32,
-    pub serialization_before_create_deps: i32,
-    pub create_before_create_deps: i32,
     pub script_serialization_start_offset: i64,
     pub script_serialization_end_offset: i64,
 }
@@ -175,40 +152,33 @@ impl ObjectExport {
             } else {
                 (r.read_i32()? as i64, r.read_i32()? as i64)
             };
-            let forced_export = r.read_bool32()?;
-            let not_for_client = r.read_bool32()?;
-            let not_for_server = r.read_bool32()?;
+            let _forced_export = r.read_bool32()?;
+            let _not_for_client = r.read_bool32()?;
+            let _not_for_server = r.read_bool32()?;
             if ue5v < ue5::REMOVE_OBJECT_EXPORT_PACKAGE_GUID {
                 let _package_guid = r.read_guid()?;
             }
-            let is_inherited_instance = if ue5v >= ue5::TRACK_OBJECT_EXPORT_IS_INHERITED {
-                r.read_bool32()?
-            } else {
-                false
-            };
-            let package_flags = r.read_u32()?;
-            let not_always_loaded_for_editor_game = if ue4v >= ue4::LOAD_FOR_EDITOR_GAME {
-                r.read_bool32()?
-            } else {
-                false
-            };
+            if ue5v >= ue5::TRACK_OBJECT_EXPORT_IS_INHERITED {
+                let _is_inherited_instance = r.read_bool32()?;
+            }
+            let _package_flags = r.read_u32()?;
+            if ue4v >= ue4::LOAD_FOR_EDITOR_GAME {
+                let _not_always_loaded_for_editor_game = r.read_bool32()?;
+            }
             let is_asset = if ue4v >= ue4::COOKED_ASSETS_IN_EDITOR_SUPPORT {
                 r.read_bool32()?
             } else {
                 false
             };
-            let generate_public_hash = if ue5v >= ue5::OPTIONAL_RESOURCES {
-                r.read_bool32()?
-            } else {
-                false
-            };
-            let (mut fed, mut bss, mut cbs, mut sbc, mut cbc) = (-1, -1, -1, -1, -1);
+            if ue5v >= ue5::OPTIONAL_RESOURCES {
+                let _generate_public_hash = r.read_bool32()?;
+            }
             if ue4v >= ue4::PRELOAD_DEPENDENCIES_IN_COOKED_EXPORTS {
-                fed = r.read_i32()?;
-                bss = r.read_i32()?;
-                cbs = r.read_i32()?;
-                sbc = r.read_i32()?;
-                cbc = r.read_i32()?;
+                let _first_export_dependency = r.read_i32()?;
+                let _serialization_before_serialization_deps = r.read_i32()?;
+                let _create_before_serialization_deps = r.read_i32()?;
+                let _serialization_before_create_deps = r.read_i32()?;
+                let _create_before_create_deps = r.read_i32()?;
             }
             let (mut ss_start, mut ss_end) = (0i64, 0i64);
             if ue5v >= ue5::SCRIPT_SERIALIZATION_OFFSET {
@@ -224,19 +194,7 @@ impl ObjectExport {
                 object_flags,
                 serial_size,
                 serial_offset,
-                forced_export,
-                not_for_client,
-                not_for_server,
-                is_inherited_instance,
-                package_flags,
-                not_always_loaded_for_editor_game,
                 is_asset,
-                generate_public_hash,
-                first_export_dependency: fed,
-                serialization_before_serialization_deps: bss,
-                create_before_serialization_deps: cbs,
-                serialization_before_create_deps: sbc,
-                create_before_create_deps: cbc,
                 script_serialization_start_offset: ss_start,
                 script_serialization_end_offset: ss_end,
             });

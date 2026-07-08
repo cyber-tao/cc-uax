@@ -1,7 +1,7 @@
 use super::common::*;
 use crate::name::NameMap;
 use crate::reader::Reader;
-use crate::{OutputSections, Package, referenced_packages_from_bytes};
+use crate::{OutputSections, Package, parse_to_json, referenced_packages_from_bytes};
 
 #[test]
 fn package_rejects_pre_ue5_version() {
@@ -41,11 +41,24 @@ fn package_parse_minimal_header() {
     assert!(pkg.imports.is_empty());
     assert!(pkg.exports.is_empty());
 
-    let json = pkg.to_json(&data, &OutputSections::dump());
+    let json = pkg.decode_to_json(&data, &OutputSections::dump());
     assert_eq!(json["summary"]["package_name"], "TestPkg");
     assert_eq!(json["summary"]["file_version_ue5"], 1018);
     assert!(json["imports"].as_array().unwrap().is_empty());
     assert!(json["exports"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn parse_to_json_matches_package_decode_to_json() {
+    let data = build_minimal_package();
+    let sections = OutputSections::parse("summary").unwrap();
+    let direct = parse_to_json(&data, &sections).expect("minimal package should parse to json");
+    let pkg = Package::parse(&data).expect("minimal package should parse");
+    let staged = pkg.decode_to_json(&data, &sections);
+
+    assert_eq!(direct, staged);
+    assert_eq!(direct["summary"]["package_name"], "TestPkg");
+    assert!(direct.get("exports").is_none());
 }
 
 #[test]
@@ -58,7 +71,7 @@ fn soft_object_path_table_error_is_reported() {
     let err = pkg.soft_object_path_error.as_deref().unwrap();
     assert!(err.contains("soft object path table seek failed"));
 
-    let json = pkg.to_json(&data, &OutputSections::dump());
+    let json = pkg.decode_to_json(&data, &OutputSections::dump());
     let diag = diagnostic_with_code(&json, "soft_object_path_table_error");
     assert_eq!(diag["severity"].as_str(), Some("warning"));
     assert_eq!(diag["path"].as_str(), Some("/summary/soft_object_paths"));
@@ -91,7 +104,7 @@ fn invalid_script_window_is_reported_in_layout() {
     sections.layout = true;
     sections.properties = true;
 
-    let json = pkg.to_json(&[0; 4], &sections);
+    let json = pkg.decode_to_json(&[0; 4], &sections);
     let diag = diagnostic_with_code(&json, "serial_window_invalid");
     assert_eq!(diag["severity"].as_str(), Some("error"));
     assert_eq!(diag["path"].as_str(), Some("/exports/0"));
@@ -140,7 +153,7 @@ fn zero_script_window_uses_serial_range() {
     sections.layout = true;
     sections.properties = true;
 
-    let json = pkg.to_json(&data, &sections);
+    let json = pkg.decode_to_json(&data, &sections);
     let props = json["exports"][0]["properties"].as_array().unwrap();
     assert_eq!(props.len(), 1);
     assert_eq!(props[0]["name"].as_str(), Some("Value"));
@@ -179,7 +192,7 @@ fn pre_complete_typename_version_decodes_legacy_properties() {
     sections.exports = true;
     sections.properties = true;
 
-    let json = pkg.to_json(&data, &sections);
+    let json = pkg.decode_to_json(&data, &sections);
     let props = json["exports"][0]["properties"].as_array().unwrap();
     assert_eq!(props.len(), 1);
     assert_eq!(props[0]["name"].as_str(), Some("Value"));
@@ -229,7 +242,7 @@ fn post_property_tail_is_reported_on_export() {
     sections.exports = true;
     sections.properties = true;
 
-    let json = pkg.to_json(&data, &sections);
+    let json = pkg.decode_to_json(&data, &sections);
     assert_eq!(
         json["exports"][0]["post_property_tail"]["size"].as_u64(),
         Some(4)
@@ -273,7 +286,7 @@ fn non_tagged_property_payload_is_reported_as_status() {
     sections.exports = true;
     sections.properties = true;
 
-    let json = pkg.to_json(&data, &sections);
+    let json = pkg.decode_to_json(&data, &sections);
 
     assert_eq!(
         json["exports"][0]["property_parse_status"].as_str(),
@@ -316,7 +329,7 @@ fn soft_package_references_parse_and_merge() {
     assert_eq!(pkg.referenced_packages(), vec!["/Game/Foo/SoftDep"]);
     assert!(pkg.references_package("/game/foo/softdep"));
 
-    let json = pkg.to_json(&data, &OutputSections::parse("refs").unwrap());
+    let json = pkg.decode_to_json(&data, &OutputSections::parse("refs").unwrap());
     let soft = json["references"]["soft"].as_array().unwrap();
     assert_eq!(soft.len(), 1);
     assert_eq!(soft[0].as_str(), Some("/Game/Foo/SoftDep"));
@@ -334,7 +347,7 @@ fn fast_reference_extraction_rejects_soft_package_table_errors() {
     let pkg = Package::parse(&data).expect("package with broken soft ref table should parse");
     assert!(pkg.soft_package_reference_error.is_some());
 
-    let json = pkg.to_json(&data, &OutputSections::parse("refs").unwrap());
+    let json = pkg.decode_to_json(&data, &OutputSections::parse("refs").unwrap());
     let diag = diagnostic_with_code(&json, "soft_package_reference_table_error");
     assert_eq!(diag["severity"].as_str(), Some("warning"));
 

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::{Result, bail};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Cursor, Read, Seek, SeekFrom};
@@ -47,11 +45,6 @@ impl<'a> Reader<'a> {
     #[inline]
     pub fn len(&self) -> u64 {
         self.len
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     #[inline]

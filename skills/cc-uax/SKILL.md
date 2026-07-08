@@ -52,25 +52,28 @@ To uninstall (remove the binary, PATH entry, and skills): `bash install.sh unins
 
 `-S`/`--sections` is the single content selector — presets `logic` (graph nodes + pins), `debug` (properties + layout), `dump` (default: summary + imports + exports with pins/properties/layout; excludes `names` and `references` unless requested), and `all` (`dump` + `names` + `references`); or comma-separate section keys `summary,imports,exports`/`identity`, `pins,properties,layout,names,references` (`refs` aliases `references`). Omitting `-S` yields `dump`.
 
-### Verified examples (real UE5.6 asset, `FileVersionUE5 = 1017`)
+### Verified examples (UE5.7 validation corpus)
 
 ```bash
+CONTENT="D:/WorkDir/ClashOfPets/Content"
+TARGET="$CONTENT/COP/Art/Dusktram/Block_size/SM_Dusktram_all.uasset"
+
 # Header — versions and package name
-cc-uax -c -S summary MM_Death_Back_01.uasset
-# → "file_version_ue5": 1017, "package_name": "/Game/.../MM_Death_Back_01"
+cc-uax -c -S summary "$TARGET"
+# → "summary": {"package_name": "/Game/..."}
 
 # Blueprint graph logic — node members + pin LinkedTo edges (lean, no full properties)
-cc-uax -c -S logic BP_CombatDamageableBox.uasset
+cc-uax -c -S logic "<Blueprint.uasset>"
 # → exports[].member ("SetMaterial"), member_from ("/Script/Engine.PrimitiveComponent"),
 #   pins[].linked_to[] ({node, pin}) — the reconstructable node-to-node graph
 
 # Forward references — assets/scripts this file imports
-cc-uax -c -S refs MM_Death_Back_01.uasset
-# → "references": {"assets": ["/Game/.../SK_Mannequin", ...], "scripts": ["/Script/Engine", ...]}
+cc-uax -c -S refs "$TARGET"
+# → "references": {"assets": ["/Game/...", ...], "scripts": ["/Script/Engine", ...]}
 
 # Reverse references — scan the project's Content/ to find dependents
-cc-uax -c -S refs -d /proj/Content SK_Mannequin.uasset
-# → "referenced_by": ["/Game/.../MM_Death_Back_01", ... 110 entries]
+cc-uax -c -S refs -d "$CONTENT" --no-cache "$TARGET"
+# → "referenced_by" includes "/Game/COP/Map/Dusktram/Map_Dusktram_land"
 ```
 
 `-c` / `--compact` emits compact single-line JSON; `-o <FILE>` writes to a file instead of stdout.
@@ -78,7 +81,7 @@ cc-uax -c -S refs -d /proj/Content SK_Mannequin.uasset
 > **Default to `-c` whenever the JSON goes back into your context.** Compact output trims roughly 15-30% of the tokens (indentation + newlines) at zero information loss — the model parses it just as easily. Omit `-c` (pretty-print) only when writing to a file for a human to read.
 
 ```bash
-cc-uax -o out.json MM_Death_Back_01.uasset    # pretty JSON to a file (for humans)
+cc-uax -o out.json "<file.uasset>"    # pretty JSON to a file (for humans)
 ```
 
 `.umap` (level) files use the exact same commands — they share the UE5 package format:

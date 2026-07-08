@@ -10,6 +10,9 @@ LIMIT="${1:-${CC_UAX_VALIDATE_LIMIT:-0}}"
 EXPECTED_COUNT="${CC_UAX_EXPECTED_COUNT:-0}"
 REVERSE_REF_INPUT="${CC_UAX_REVERSE_REF_INPUT:-}"
 EXPECTED_REFERENCER="${CC_UAX_EXPECTED_REFERENCER:-}"
+DEFAULT_CONTENT_DIR="D:/WorkDir/ClashOfPets/Content"
+DEFAULT_REVERSE_REF_FIXTURE="COP/Art/Dusktram/Block_size/SM_Dusktram_all.uasset"
+DEFAULT_EXPECTED_REFERENCER="/Game/COP/Map/Dusktram/Map_Dusktram_land"
 
 windows_path_to_wsl() {
     local path="$1"
@@ -52,6 +55,24 @@ fi
 if [ ! -d "$CONTENT_DIR" ]; then
     printf 'content directory not found: %s\n' "$CONTENT_DIR" >&2
     exit 1
+fi
+
+default_content_resolved="$DEFAULT_CONTENT_DIR"
+if [ ! -d "$default_content_resolved" ]; then
+    alt_default_content="$(windows_path_to_wsl "$DEFAULT_CONTENT_DIR")"
+    if [ -d "$alt_default_content" ]; then
+        default_content_resolved="$alt_default_content"
+    fi
+fi
+if [ -z "$REVERSE_REF_INPUT" ] && [ -d "$default_content_resolved" ] && \
+    [ "$(cd "$CONTENT_DIR" && pwd -P)" = "$(cd "$default_content_resolved" && pwd -P)" ]; then
+    fixture="${CONTENT_DIR}/${DEFAULT_REVERSE_REF_FIXTURE}"
+    if [ -f "$fixture" ]; then
+        REVERSE_REF_INPUT="$fixture"
+        if [ -z "$EXPECTED_REFERENCER" ]; then
+            EXPECTED_REFERENCER="$DEFAULT_EXPECTED_REFERENCER"
+        fi
+    fi
 fi
 
 for rel in \
@@ -111,7 +132,7 @@ run_section() {
             unparsed=$((unparsed + 1))
         fi
     done
-    printf '%s: total=%s failed=%s diagnostic_files=%s unparsed_files=%s\n' \
+    printf '%s: total=%s failed=%s diagnostics=%s unparsed=%s reverse_ref_fixture_failed=0\n' \
         "$section" "${#files[@]}" "$failed" "$diagnostics" "$unparsed"
     if [ "$failed" -ne 0 ] || [ "$diagnostics" -ne 0 ] || [ "$unparsed" -ne 0 ]; then
         return 1
@@ -137,11 +158,16 @@ else
     sample="${files[0]}"
 fi
 refs_out="$("$EXE" -S refs --scan-dir "$(to_exe_path "$CONTENT_DIR")" --no-cache --compact "$(to_exe_path "$sample")" 2>&1)"
+reverse_ref_fixture_failed=0
 if [ -n "$EXPECTED_REFERENCER" ] && [[ "$refs_out" != *"\"$EXPECTED_REFERENCER\""* ]]; then
-    printf 'expected reverse referencer not found for %s: %s\n' "$sample" "$EXPECTED_REFERENCER" >&2
-    exit 1
+    reverse_ref_fixture_failed=1
 fi
 printf 'reverse reference sample: %s\n' "$sample"
 printf '%s\n' "$refs_out" | tail -n 1
+printf 'refs: total=1 failed=0 diagnostics=0 unparsed=0 reverse_ref_fixture_failed=%s\n' "$reverse_ref_fixture_failed"
+if [ "$reverse_ref_fixture_failed" -ne 0 ]; then
+    printf 'expected reverse referencer not found for %s: %s\n' "$sample" "$EXPECTED_REFERENCER" >&2
+    exit 1
+fi
 
 printf 'Real asset validation passed.\n'

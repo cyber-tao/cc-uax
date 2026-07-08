@@ -41,6 +41,9 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      - name: Test without default features
+        run: cargo test --workspace --no-default-features --locked
+
   build:
     name: Build ${{ matrix.target }}
     needs: check
