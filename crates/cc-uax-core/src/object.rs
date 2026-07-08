@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::reader::{RawName, Reader};
 use crate::version::{ue4, ue5};
 use anyhow::{Result, bail};

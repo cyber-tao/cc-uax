@@ -5,14 +5,14 @@ use anyhow::{Result, bail};
 
 #[derive(Debug, Clone)]
 pub struct OutputSections {
-    pub summary: bool,
-    pub imports: bool,
-    pub names: bool,
-    pub references: bool,
-    pub exports: bool,
-    pub pins: bool,
-    pub properties: bool,
-    pub layout: bool,
+    pub(crate) summary: bool,
+    pub(crate) imports: bool,
+    pub(crate) names: bool,
+    pub(crate) references: bool,
+    pub(crate) exports: bool,
+    pub(crate) pins: bool,
+    pub(crate) properties: bool,
+    pub(crate) layout: bool,
 }
 
 impl Default for OutputSections {
@@ -22,7 +22,7 @@ impl Default for OutputSections {
 }
 
 impl OutputSections {
-    pub fn none() -> Self {
+    pub(crate) fn none() -> Self {
         Self {
             summary: false,
             imports: false,
@@ -53,6 +53,38 @@ impl OutputSections {
         sections.names = true;
         sections.references = true;
         sections
+    }
+
+    pub fn summary(&self) -> bool {
+        self.summary
+    }
+
+    pub fn imports(&self) -> bool {
+        self.imports
+    }
+
+    pub fn names(&self) -> bool {
+        self.names
+    }
+
+    pub fn references(&self) -> bool {
+        self.references
+    }
+
+    pub fn exports(&self) -> bool {
+        self.exports
+    }
+
+    pub fn pins(&self) -> bool {
+        self.pins
+    }
+
+    pub fn properties(&self) -> bool {
+        self.properties
+    }
+
+    pub fn layout(&self) -> bool {
+        self.layout
     }
 
     pub fn parse(spec: &str) -> Result<Self> {

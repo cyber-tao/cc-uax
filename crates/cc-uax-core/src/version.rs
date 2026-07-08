@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod ue5 {
     pub const INITIAL_VERSION: i32 = 1000;
     pub const NAMES_REFERENCED_FROM_EXPORT_DATA: i32 = 1001;

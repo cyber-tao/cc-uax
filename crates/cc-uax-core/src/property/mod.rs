@@ -70,7 +70,8 @@ pub fn entries_to_json(props: &[PropertyEntry]) -> Value {
     Value::Array(arr)
 }
 
-pub fn parse_object_properties(
+#[cfg(test)]
+pub(crate) fn parse_object_properties(
     r: &mut Reader,
     ctx: &ParseCtx,
     end_limit: u64,
@@ -125,7 +126,11 @@ pub fn parse_object_properties_report(
     parse_properties_report(r, ctx, end_limit, path)
 }
 
-pub fn parse_properties(r: &mut Reader, ctx: &ParseCtx, end_limit: u64) -> Vec<PropertyEntry> {
+pub(crate) fn parse_properties(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    end_limit: u64,
+) -> Vec<PropertyEntry> {
     parse_properties_report(r, ctx, end_limit, "/properties").entries
 }
 

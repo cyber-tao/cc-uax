@@ -1,8 +1,8 @@
-use cc_uax::collect_package_references;
-use cc_uax::name::NameMap;
-use cc_uax::object::PackageIndex;
-use cc_uax::property::TypeName;
-use cc_uax::{
+use crate::collect_package_references;
+use crate::name::NameMap;
+use crate::object::PackageIndex;
+use crate::property::TypeName;
+use crate::{
     ByteRangePreview, Diagnostic, MountMap, OutputSections, Severity, package_path_from_relative,
     package_path_from_relative_with_mounts,
 };

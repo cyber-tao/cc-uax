@@ -16,14 +16,14 @@ use serde_json::{Value, json};
 const MAX_RESOLVE_DEPTH: u32 = 64;
 
 pub struct Package {
-    pub summary: PackageFileSummary,
-    pub names: NameMap,
-    pub imports: Vec<ObjectImport>,
-    pub exports: Vec<ObjectExport>,
-    pub soft_object_paths: Vec<Value>,
-    pub soft_object_path_error: Option<String>,
-    pub soft_package_references: Vec<String>,
-    pub soft_package_reference_error: Option<String>,
+    pub(crate) summary: PackageFileSummary,
+    pub(crate) names: NameMap,
+    pub(crate) imports: Vec<ObjectImport>,
+    pub(crate) exports: Vec<ObjectExport>,
+    pub(crate) soft_object_paths: Vec<Value>,
+    pub(crate) soft_object_path_error: Option<String>,
+    pub(crate) soft_package_references: Vec<String>,
+    pub(crate) soft_package_reference_error: Option<String>,
 }
 
 impl Package {

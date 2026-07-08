@@ -1,12 +1,10 @@
-mod common;
-
-use cc_uax::name::NameMap;
-use cc_uax::pin::{
+use super::common::*;
+use crate::name::NameMap;
+use crate::pin::{
     PinSerCtx, container_type_label, direction_label, parse_node_pins, parse_node_pins_report,
 };
-use cc_uax::property::{ParseCtx, parse_properties};
-use cc_uax::reader::Reader;
-use common::*;
+use crate::property::{ParseCtx, parse_properties};
+use crate::reader::Reader;
 
 #[test]
 fn node_pin_array_decodes() {
@@ -114,9 +112,9 @@ fn node_pin_array_decodes() {
 
         fortnite_main_version: -1,
 
-        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue4: crate::version::ue4::HIGHEST,
 
-        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
 
     let vc = PinSerCtx {
@@ -216,8 +214,8 @@ fn node_pin_parse_failure_reports_diagnostic() {
         soft_object_paths: &[],
         niagara_version: -1,
         fortnite_main_version: -1,
-        file_version_ue4: cc_uax::version::ue4::HIGHEST,
-        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
 
     let mut r = Reader::new(&d);
@@ -315,9 +313,9 @@ fn edgraph_pin_type_map_container_decodes() {
 
         fortnite_main_version: -1,
 
-        file_version_ue4: cc_uax::version::ue4::HIGHEST,
+        file_version_ue4: crate::version::ue4::HIGHEST,
 
-        file_version_ue5: cc_uax::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
 
     let mut r = Reader::new(&d);

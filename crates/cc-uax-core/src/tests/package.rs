@@ -1,9 +1,7 @@
-mod common;
-
-use cc_uax::name::NameMap;
-use cc_uax::reader::Reader;
-use cc_uax::{OutputSections, Package, referenced_packages_from_bytes};
-use common::*;
+use super::common::*;
+use crate::name::NameMap;
+use crate::reader::Reader;
+use crate::{OutputSections, Package, referenced_packages_from_bytes};
 
 #[test]
 fn package_rejects_pre_ue5_version() {

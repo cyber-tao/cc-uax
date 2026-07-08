@@ -1,4 +1,4 @@
-use cc_uax::reader::Reader;
+use crate::reader::Reader;
 
 #[test]
 fn fstring_ansi() {

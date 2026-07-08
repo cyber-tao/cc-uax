@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::reader::{Guid, Reader};
 use crate::version::{PACKAGE_FILE_TAG, PACKAGE_FILE_TAG_SWAPPED, ue4, ue5};
 use anyhow::{Result, bail};

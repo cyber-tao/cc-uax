@@ -26,7 +26,7 @@ fn main() -> Result<()> {
 
     let mut json = package.to_json(&data, &sections);
 
-    if sections.references {
+    if sections.references() {
         if let Some(scan_dir) = args.scan_dir.as_deref() {
             let (self_pkg, referenced_by) =
                 compute_referenced_by(&args.input, scan_dir, &args.mount, !args.no_cache)?;

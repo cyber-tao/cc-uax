@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use cc_uax::object::{ObjectExport, PackageIndex};
-use cc_uax::reader::RawName;
+use crate::object::{ObjectExport, PackageIndex};
+use crate::reader::RawName;
 
 pub fn diagnostic_with_code<'a>(json: &'a serde_json::Value, code: &str) -> &'a serde_json::Value {
     json["diagnostics"]

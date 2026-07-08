@@ -136,7 +136,8 @@ pub fn container_type_label(container_type: u8) -> &'static str {
     }
 }
 
-pub fn parse_node_pins(
+#[cfg(test)]
+pub(crate) fn parse_node_pins(
     r: &mut Reader,
     end: u64,
     ctx: &ParseCtx,

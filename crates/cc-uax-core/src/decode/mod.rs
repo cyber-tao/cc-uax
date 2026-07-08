@@ -17,88 +17,63 @@ use pins::{decode_pins_for_export, is_graph_node_class};
 use properties::decode_properties_for_export;
 use window::export_serial_window;
 
-#[derive(Debug, Clone, Default)]
-pub struct DecodeOptions {
-    pub sections: OutputSections,
-}
-
-impl DecodeOptions {
-    pub fn new(sections: OutputSections) -> Self {
-        Self { sections }
-    }
-}
-
-impl From<OutputSections> for DecodeOptions {
-    fn from(sections: OutputSections) -> Self {
-        Self { sections }
-    }
-}
-
-impl From<&OutputSections> for DecodeOptions {
-    fn from(sections: &OutputSections) -> Self {
-        Self {
-            sections: sections.clone(),
-        }
-    }
-}
-
 pub struct DecodeReport<'a> {
-    pub package: &'a Package,
-    pub sections: OutputSections,
-    pub exports: Vec<DecodedExport>,
-    pub diagnostics: Vec<Diagnostic>,
+    pub(crate) package: &'a Package,
+    pub(crate) sections: OutputSections,
+    pub(crate) exports: Vec<DecodedExport>,
+    pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone)]
-pub struct DecodedExport {
-    pub identity: DecodedExportIdentity,
-    pub layout: Option<DecodedExportLayout>,
-    pub properties: Option<Vec<PropertyEntry>>,
-    pub post_property_tail: Option<ByteRangePreview>,
-    pub object_guid: Option<String>,
-    pub metadata: Option<Value>,
-    pub pins: Option<Vec<Pin>>,
-    pub member: Option<MemberRef>,
+pub(crate) struct DecodedExport {
+    pub(crate) identity: DecodedExportIdentity,
+    pub(crate) layout: Option<DecodedExportLayout>,
+    pub(crate) properties: Option<Vec<PropertyEntry>>,
+    pub(crate) post_property_tail: Option<ByteRangePreview>,
+    pub(crate) object_guid: Option<String>,
+    pub(crate) metadata: Option<Value>,
+    pub(crate) pins: Option<Vec<Pin>>,
+    pub(crate) member: Option<MemberRef>,
 }
 
 #[derive(Debug, Clone)]
-pub struct DecodedExportIdentity {
-    pub index: i32,
-    pub name: String,
-    pub class: String,
-    pub is_asset: bool,
+pub(crate) struct DecodedExportIdentity {
+    pub(crate) index: i32,
+    pub(crate) name: String,
+    pub(crate) class: String,
+    pub(crate) is_asset: bool,
 }
 
 #[derive(Debug, Clone)]
-pub struct DecodedExportLayout {
-    pub super_name: String,
-    pub template_name: String,
-    pub outer_name: String,
-    pub full_name: String,
-    pub object_flags: u32,
-    pub serial_offset: i64,
-    pub serial_size: i64,
-    pub script_serialization_start: Option<i64>,
-    pub script_serialization_end: Option<i64>,
+pub(crate) struct DecodedExportLayout {
+    pub(crate) super_name: String,
+    pub(crate) template_name: String,
+    pub(crate) outer_name: String,
+    pub(crate) full_name: String,
+    pub(crate) object_flags: u32,
+    pub(crate) serial_offset: i64,
+    pub(crate) serial_size: i64,
+    pub(crate) script_serialization_start: Option<i64>,
+    pub(crate) script_serialization_end: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
-pub struct MemberRef {
-    pub name: String,
-    pub parent: Option<Value>,
+pub(crate) struct MemberRef {
+    pub(crate) name: String,
+    pub(crate) parent: Option<Value>,
 }
 
 impl Package {
-    pub fn decode<'a>(&'a self, data: &[u8], options: &DecodeOptions) -> DecodeReport<'a> {
+    pub fn decode<'a>(&'a self, data: &[u8], sections: &OutputSections) -> DecodeReport<'a> {
         let mut diagnostics = self.table_diagnostics();
-        let exports = if options.sections.exports {
-            self.decode_exports(data, &options.sections, &mut diagnostics)
+        let exports = if sections.exports {
+            self.decode_exports(data, sections, &mut diagnostics)
         } else {
             Vec::new()
         };
         DecodeReport {
             package: self,
-            sections: options.sections.clone(),
+            sections: sections.clone(),
             exports,
             diagnostics,
         }
