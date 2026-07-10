@@ -1,6 +1,7 @@
 mod member;
-mod pins;
+pub(crate) mod pins;
 mod properties;
+pub(crate) mod rigvm;
 mod window;
 
 use crate::diagnostic::{ByteRangePreview, Diagnostic};
@@ -15,8 +16,13 @@ use std::collections::HashMap;
 
 use pins::{decode_pins_for_export, is_graph_node_class};
 use properties::decode_properties_for_export;
+use rigvm::{
+    DecodedRigVmLink, decode_rigvm_link_for_export, is_rigvm_link_class,
+    is_rigvm_model_object_class,
+};
 use window::export_serial_window;
 
+#[allow(dead_code)]
 pub(crate) struct DecodeReport<'a> {
     pub(crate) package: &'a Package,
     pub(crate) sections: OutputSections,
@@ -24,6 +30,7 @@ pub(crate) struct DecodeReport<'a> {
     pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct DecodedExport {
     pub(crate) identity: DecodedExportIdentity,
@@ -36,6 +43,7 @@ pub(crate) struct DecodedExport {
     pub(crate) pins: Option<Vec<Pin>>,
     pub(crate) user_defined_pins: Option<Vec<UserDefinedPin>>,
     pub(crate) member: Option<MemberRef>,
+    pub(crate) rigvm_link: Option<DecodedRigVmLink>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +54,7 @@ pub(crate) struct DecodedExportIdentity {
     pub(crate) is_asset: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct DecodedExportLayout {
     pub(crate) super_name: String,
@@ -157,6 +166,11 @@ impl Package {
             let pkg_index = (i as i32) + 1;
             let class_full = self.resolve_full_name(exp.class_index.0);
             let is_node = is_graph_node_class(&class_full);
+            let is_rigvm_link = is_rigvm_link_class(&class_full);
+            let capture_adapter_properties = sections.pins
+                && ((is_rigvm_model_object_class(&class_full) && !is_rigvm_link)
+                    || is_pcg_model_object_class(&class_full)
+                    || is_state_tree_model_object_class(&class_full));
             let mut export = DecodedExport {
                 identity: DecodedExportIdentity {
                     index: pkg_index,
@@ -185,6 +199,7 @@ impl Package {
                 pins: None,
                 user_defined_pins: None,
                 member: None,
+                rigvm_link: None,
             };
 
             let serial_window = match export_serial_window(exp, has_script, file_len) {
@@ -203,7 +218,12 @@ impl Package {
                 }
             };
 
-            if (sections.properties || is_node)
+            if is_rigvm_link
+                && (sections.properties || sections.pins)
+                && let Some(window) = serial_window
+            {
+                decode_rigvm_link_for_export(&mut reader, window, i, diagnostics, &mut export);
+            } else if (sections.properties || is_node || capture_adapter_properties)
                 && let Some(window) = serial_window
             {
                 decode_properties_for_export(
@@ -213,7 +233,7 @@ impl Package {
                     window,
                     i,
                     &class_full,
-                    sections,
+                    sections.properties || capture_adapter_properties,
                     diagnostics,
                     &mut export,
                 );
@@ -240,4 +260,12 @@ impl Package {
         }
         decoded
     }
+}
+
+fn is_pcg_model_object_class(class: &str) -> bool {
+    class.starts_with("/Script/PCG.") || class.starts_with("/Script/PCGEditor.")
+}
+
+fn is_state_tree_model_object_class(class: &str) -> bool {
+    class.starts_with("/Script/StateTree")
 }

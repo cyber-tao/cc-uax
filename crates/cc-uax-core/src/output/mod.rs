@@ -9,4 +9,5 @@ mod property_json;
 mod report_json;
 pub mod sections;
 
-pub use sections::OutputSections;
+#[cfg(test)]
+pub(crate) use sections::OutputSections;

@@ -1,31 +1,29 @@
-[package]
-name = "cc-uax"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-description = "Parse Unreal Engine 5 .uasset/.umap packages to JSON — header, tagged properties, Blueprint node graph, and forward/reverse asset references."
-license.workspace = true
-
 [workspace]
-members = ["crates/cc-uax-core"]
-default-members = [".", "crates/cc-uax-core"]
+members = [
+    "crates/cc-uax-core",
+    "crates/cc-uax-project",
+    "crates/cc-uax-cli",
+    "validation/stackobot",
+]
+default-members = [
+    "crates/cc-uax-core",
+    "crates/cc-uax-project",
+    "crates/cc-uax-cli",
+    "validation/stackobot",
+]
 resolver = "3"
 
 [workspace.package]
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 
-[[bin]]
-name = "cc-uax"
-path = "src/main.rs"
-
-[dependencies]
+[workspace.dependencies]
 anyhow = "1"
-cc-uax-core = { path = "crates/cc-uax-core" }
 clap = { version = "4", features = ["derive"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [profile.release]

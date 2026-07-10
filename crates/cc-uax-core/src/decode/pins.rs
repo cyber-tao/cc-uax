@@ -107,6 +107,16 @@ pub(super) fn decode_pins_for_export(
                         );
                     }
                 }
+                if let Err(diagnostic) =
+                    consume_known_node_tail(reader, pin_end, ctx, class_full, &path)
+                {
+                    failures.push(diagnostic.with_context(json!({
+                        "has_source_index": candidate.has_source_index,
+                        "has_uobject_wrapper": candidate.has_uobject_wrapper,
+                        "has_single_precision_float": candidate.has_single_precision_float,
+                    })));
+                    continue;
+                }
                 let consumed_pos = reader.pos();
                 if consumed_pos < pin_end {
                     selected_diagnostics.push(
@@ -228,7 +238,7 @@ fn pin_parse_contexts(package: &Package, primary: PinSerCtx) -> Vec<PinSerCtx> {
     out
 }
 
-pub(super) fn is_graph_node_class(class_full: &str) -> bool {
+pub(crate) fn is_graph_node_class(class_full: &str) -> bool {
     let simple = class_full.rsplit(['.', '/']).next().unwrap_or(class_full);
     if simple.starts_with("K2Node") || simple.starts_with("EdGraphNode") {
         return true;
@@ -242,16 +252,54 @@ pub(super) fn is_graph_node_class(class_full: &str) -> bool {
     simple.contains("GraphNode")
 }
 
-fn is_editable_pin_class(class_full: &str) -> bool {
+const EDITABLE_PIN_CLASSES: &[&str] = &[
+    "K2Node_EditablePinBase",
+    "K2Node_FunctionTerminator",
+    "K2Node_FunctionEntry",
+    "K2Node_FunctionResult",
+    "K2Node_Event",
+    "K2Node_CustomEvent",
+    "K2Node_Tunnel",
+    "K2Node_MacroInstance",
+    "K2Node_Composite",
+    "K2Node_ComponentBoundEvent",
+    "K2Node_GeneratedBoundEvent",
+    "K2Node_ActorBoundEvent",
+    "K2Node_InputActionEvent",
+    "K2Node_InputAxisEvent",
+    "K2Node_InputAxisKeyEvent",
+    "K2Node_InputTouchEvent",
+    "K2Node_InputKeyEvent",
+    "K2Node_EnhancedInputActionEvent",
+    "K2Node_GameplayCueEvent",
+];
+
+pub(crate) fn is_editable_pin_class(class_full: &str) -> bool {
     let simple = class_full.rsplit(['.', '/']).next().unwrap_or(class_full);
-    matches!(
-        simple,
-        "K2Node_EditablePinBase"
-            | "K2Node_FunctionTerminator"
-            | "K2Node_FunctionEntry"
-            | "K2Node_FunctionResult"
-            | "K2Node_Event"
-            | "K2Node_CustomEvent"
-            | "K2Node_Tunnel"
-    )
+    EDITABLE_PIN_CLASSES.contains(&simple)
+}
+
+pub(crate) fn consume_known_node_tail(
+    reader: &mut Reader,
+    end: u64,
+    ctx: &ParseCtx,
+    class_full: &str,
+    path: &str,
+) -> Result<(), Diagnostic> {
+    let simple = class_full.rsplit(['.', '/']).next().unwrap_or(class_full);
+    if simple == "K2Node_DynamicCast"
+        && ctx.serialization.fortnite_main_version >= custom::DYNAMIC_CAST_NODES_USE_PURE_STATE_ENUM
+    {
+        let offset = reader.pos();
+        if offset >= end || reader.read_u8().is_err() || reader.pos() > end {
+            let _ = reader.seek(offset);
+            return Err(Diagnostic::warning(
+                "dynamic_cast_pure_state_truncated",
+                path,
+                "K2Node_DynamicCast PureState byte is missing or truncated",
+            )
+            .with_offset(offset));
+        }
+    }
+    Ok(())
 }

@@ -27,7 +27,7 @@ pub struct Package {
 }
 
 impl Package {
-    pub fn parse(data: &[u8]) -> Result<Package> {
+    pub(crate) fn parse(data: &[u8]) -> Result<Package> {
         let mut r = Reader::new(data);
         let summary = PackageFileSummary::parse(&mut r)?;
 

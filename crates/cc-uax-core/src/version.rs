@@ -111,6 +111,8 @@ pub mod custom {
     pub const NIAGARA_SERIALIZE_USAGE_BITMASK_TO_GPU_FUNCTION_INFO: i32 = 91;
     pub const PIN_TYPE_INCLUDES_UOBJECT_WRAPPER_FLAG: i32 = 32;
     pub const SERIALIZE_FLOAT_PIN_SINGLE_PRECISION: i32 = 36;
+    /// FFortniteMainBranchObjectVersion::DynamicCastNodesUsePureStateEnum.
+    pub const DYNAMIC_CAST_NODES_USE_PURE_STATE_ENUM: i32 = 85;
     /// FInstancedStructCustomVersion::CustomVersionAdded.
     pub const INSTANCED_STRUCT_CUSTOM_VERSION_ADDED: i32 = 0;
     /// FStateTreeInstanceStorageCustomVersion::AddedCustomSerialization.

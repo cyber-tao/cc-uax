@@ -173,6 +173,7 @@ fn parse_instanced_property_bag(r: &mut Reader, value_end: u64) -> Result<Value>
     let mut o = Map::new();
     o.insert("has_data".into(), json!(has_data));
     if r.pos() < value_end {
+        let payload_start = r.pos();
         let payload_size = value_end - r.pos();
         let preview_len = payload_size.min(PREVIEW_MAX as u64) as usize;
         let preview = r.read_bytes(preview_len)?;
@@ -181,7 +182,12 @@ fn parse_instanced_property_bag(r: &mut Reader, value_end: u64) -> Result<Value>
         }
         o.insert(
             "serialized_data".into(),
-            json!({ "size": payload_size, "preview": to_hex(&preview) }),
+            json!({
+                "start": payload_start,
+                "end": value_end,
+                "size": payload_size,
+                "preview": to_hex(&preview)
+            }),
         );
     }
     Ok(Value::Object(o))

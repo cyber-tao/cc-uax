@@ -2,7 +2,6 @@ use super::DecodedExport;
 use super::member::distill_member;
 use super::window::{ExportSerialWindow, preview_range};
 use crate::diagnostic::Diagnostic;
-use crate::output::sections::OutputSections;
 use crate::property::{
     ParseCtx, PropertyParse, PropertyParseStatus, parse_object_properties_report,
     read_soft_object_path,
@@ -18,14 +17,14 @@ pub(super) fn decode_properties_for_export(
     window: ExportSerialWindow,
     export_i: usize,
     class_full: &str,
-    sections: &OutputSections,
+    capture_properties: bool,
     diagnostics: &mut Vec<Diagnostic>,
     export: &mut DecodedExport,
 ) {
     let start = window.property_start;
     let end = window.property_end;
     if end == start {
-        if sections.properties {
+        if capture_properties {
             export.properties = Some(Vec::new());
             export.property_status = Some(PropertyParseStatus::Empty);
         }
@@ -48,7 +47,7 @@ pub(super) fn decode_properties_for_export(
     if let Some(member) = distill_member(&entries) {
         export.member = Some(member);
     }
-    if sections.properties {
+    if capture_properties {
         export.properties = Some(entries);
         consume_known_post_property_data(
             reader,

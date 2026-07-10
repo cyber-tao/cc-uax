@@ -87,22 +87,43 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc-uax"
-version = "0.8.0"
+name = "cc-uax-cli"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "cc-uax-core",
+ "cc-uax-project",
  "clap",
- "rusqlite",
+ "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "cc-uax-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "byteorder",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cc-uax-project"
+version = "0.9.0"
+dependencies = [
+ "cc-uax-core",
+ "rusqlite",
+ "serde",
+]
+
+[[package]]
+name = "cc-uax-stackobot-validation"
+version = "0.9.0"
+dependencies = [
+ "anyhow",
+ "cc-uax-core",
+ "cc-uax-project",
  "serde",
  "serde_json",
 ]

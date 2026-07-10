@@ -1,0 +1,16 @@
+[package]
+name = "cc-uax-project"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Project-wide indexing and reference analysis for cc-uax."
+license.workspace = true
+
+[lib]
+name = "cc_uax_project"
+path = "src/lib.rs"
+
+[dependencies]
+cc-uax-core = { path = "../cc-uax-core" }
+rusqlite.workspace = true
+serde.workspace = true

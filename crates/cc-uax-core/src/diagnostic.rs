@@ -62,6 +62,7 @@ impl Diagnostic {
         Self::new(Severity::Warning, code, path, message)
     }
 
+    #[allow(dead_code)]
     pub fn info(
         code: impl Into<String>,
         path: impl Into<String>,

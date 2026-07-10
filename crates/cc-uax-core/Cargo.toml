@@ -7,7 +7,7 @@ description = "Core parser library for Unreal Engine 5 .uasset/.umap packages."
 license.workspace = true
 
 [lib]
-name = "cc_uax"
+name = "cc_uax_core"
 path = "src/lib.rs"
 
 [dependencies]
