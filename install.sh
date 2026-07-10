@@ -11,7 +11,7 @@
 # What it does:
 #   1. Detects OS + arch and maps to a release target
 #   2. Fetches the latest release version from GitHub
-#   3. Downloads + validates the platform archive structure
+#   3. Downloads the platform archive and verifies its published SHA-256 checksum
 #   4. Installs the `cc-uax` binary (default: ~/.local/bin, override with INSTALL_DIR=...)
 #   5. Installs the cc-uax skill into Claude Code (~/.claude/skills),
 #      Codex (~/.codex/skills), and the legacy Agents path (~/.agents/skills)
@@ -89,6 +89,19 @@ need_cmd() {
 }
 need_cmd curl
 need_cmd tar
+need_cmd awk
+need_cmd sed
+need_cmd tr
+
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        die "required command not found: sha256sum or shasum"
+    fi
+}
 
 TMPDIR="$(mktemp -d 2>/dev/null || die "cannot create temp dir")"
 trap 'rm -rf "$TMPDIR"' EXIT
@@ -117,7 +130,10 @@ ok "OS=$os  arch=$arch  →  target=$TARGET"
 # ── [2/5] resolve version ───────────────────────────────────────────────────
 step 2 "Resolving latest version"
 if [ -n "${VERSION:-}" ]; then
-    TAG="$VERSION"
+    case "$VERSION" in
+        v*) TAG="$VERSION" ;;
+        *)  TAG="v${VERSION}" ;;
+    esac
 else
     api_url="https://api.github.com/repos/${REPO}/releases/latest"
     release_json="$(curl -fsSL "$api_url")" || die "cannot fetch latest release metadata"
@@ -131,17 +147,28 @@ ok "version=${VERSION_NUM} (${TAG})"
 step 3 "Downloading"
 ARCHIVE="cc-uax-${TARGET}-${VERSION_NUM}.tar.gz"
 URL="https://github.com/${REPO}/releases/download/${TAG}/${ARCHIVE}"
+CHECKSUM_URL="https://github.com/${REPO}/releases/download/${TAG}/SHA256SUMS"
 info "$URL"
 curl -fL --progress-bar -o "${TMPDIR}/${ARCHIVE}" "$URL" || die "download failed"
+curl -fsSL -o "${TMPDIR}/SHA256SUMS" "$CHECKSUM_URL" || die "checksum download failed"
+expected_sha="$(awk -v name="$ARCHIVE" '$2 == name || $2 == "*" name { print $1; exit }' "${TMPDIR}/SHA256SUMS")"
+[ "${#expected_sha}" -eq 64 ] || die "invalid checksum for ${ARCHIVE}"
+case "$expected_sha" in
+    *[!0-9A-Fa-f]*) die "invalid checksum for ${ARCHIVE}" ;;
+esac
+expected_sha="$(printf '%s' "$expected_sha" | tr 'A-F' 'a-f')"
+actual_sha="$(sha256_file "${TMPDIR}/${ARCHIVE}")"
+[ "$actual_sha" = "$expected_sha" ] || die "checksum mismatch for ${ARCHIVE}"
 # validate it's actually a gzip archive, not a 404 HTML page
 tar -tzf "${TMPDIR}/${ARCHIVE}" >/dev/null 2>&1 || die "archive is corrupt or target asset missing: $ARCHIVE"
-ok "downloaded ${ARCHIVE}"
+ok "downloaded and verified ${ARCHIVE}"
 
 # ── [4/5] install binary ────────────────────────────────────────────────────
 step 4 "Installing binary"
 STAGE="cc-uax-${TARGET}-${VERSION_NUM}"
 tar -xzf "${TMPDIR}/${ARCHIVE}" -C "$TMPDIR"
 [ -f "${TMPDIR}/${STAGE}/cc-uax" ] || die "cc-uax binary not found in archive"
+[ -f "${TMPDIR}/${STAGE}/LICENSE" ] || die "LICENSE missing in archive"
 
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "${TMPDIR}/${STAGE}/cc-uax" "${INSTALL_DIR}/cc-uax"
@@ -161,13 +188,14 @@ step 5 "Configuring agent skills"
 if [ "$NO_SKILL" = "1" ]; then
     warn "NO_SKILL=1 set — skipping skill configuration"
 else
-    SKILL_SRC="${TMPDIR}/${STAGE}/skills/cc-uax/SKILL.md"
-    [ -f "$SKILL_SRC" ] || die "SKILL.md missing in archive"
+    SKILL_SRC="${TMPDIR}/${STAGE}/skills/cc-uax"
+    [ -f "${SKILL_SRC}/SKILL.md" ] || die "SKILL.md missing in archive"
 
     for dest in "${HOME}/.claude/skills/cc-uax" "${HOME}/.codex/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
+        rm -rf "$dest"
         mkdir -p "$dest"
-        cp "$SKILL_SRC" "${dest}/SKILL.md"
-        ok "skill → ${dest}/SKILL.md"
+        cp -R "${SKILL_SRC}/." "$dest/"
+        ok "skill → ${dest}"
     done
 fi
 

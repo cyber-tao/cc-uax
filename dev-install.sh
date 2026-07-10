@@ -4,11 +4,11 @@
 #
 # Usage:
 #   ./dev-install.sh              build + install, refresh skills
-#   ./dev-install.sh uninstall    cargo-uninstall cc-uax and remove local skills
+#   ./dev-install.sh uninstall    cargo-uninstall cc-uax-cli and remove local skills
 #
 # What it does:
-#   1. cargo install --path . --force  →  builds and installs `cc-uax` into ~/.cargo/bin
-#   2. Copies skills/cc-uax/SKILL.md into Claude Code (~/.claude/skills/cc-uax),
+#   1. cargo install --path crates/cc-uax-cli --locked --force
+#   2. Copies the complete skills/cc-uax directory into Claude Code (~/.claude/skills/cc-uax),
 #      Codex (~/.codex/skills/cc-uax), and legacy Agents (~/.agents/skills/cc-uax),
 #      overwriting any existing copy.
 #
@@ -16,9 +16,9 @@
 #
 set -euo pipefail
 
-# Locate repo root from the script's own location, so it works from any cwd.
+# Resolve repository paths without changing the caller's working directory.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+CLI_DIR="${SCRIPT_DIR}/crates/cc-uax-cli"
 
 UNINSTALL="${UNINSTALL:-0}"
 case "${1:-}" in
@@ -43,8 +43,8 @@ if [ "$UNINSTALL" = "1" ]; then
     printf "\n${C_BLUE}cc-uax dev uninstall${C_NC}\n"
     removed=0
     if command -v cargo >/dev/null 2>&1; then
-        if cargo uninstall cc-uax >/dev/null 2>&1; then
-            ok "cargo uninstall cc-uax"
+        if cargo uninstall cc-uax-cli >/dev/null 2>&1; then
+            ok "cargo uninstall cc-uax-cli"
             removed=1
         else
             warn "cc-uax was not installed via cargo"
@@ -70,21 +70,23 @@ fi
 command -v cargo >/dev/null 2>&1 || die "cargo not found on PATH — install Rust first"
 
 CARGO_BIN="${CARGO_HOME:-${HOME}/.cargo}/bin"
-SKILL_SRC="${SCRIPT_DIR}/skills/cc-uax/SKILL.md"
-[ -f "$SKILL_SRC" ] || die "skill source not found: $SKILL_SRC"
+SKILL_SRC="${SCRIPT_DIR}/skills/cc-uax"
+[ -f "${SKILL_SRC}/SKILL.md" ] || die "skill source not found: ${SKILL_SRC}/SKILL.md"
+[ -f "${CLI_DIR}/Cargo.toml" ] || die "CLI package not found: ${CLI_DIR}/Cargo.toml"
 
 # ── [1/2] build + install binary ─────────────────────────────────────────────
 printf "\n${C_BLUE}[1/2]${C_NC} Build and install cc-uax\n"
-info "cargo install --path . --force"
-cargo install --path . --force
+info "cargo install --path ${CLI_DIR} --locked --force"
+cargo install --path "$CLI_DIR" --locked --force
 ok "cc-uax → ${CARGO_BIN}/cc-uax"
 
 # ── [2/2] refresh skills (overwrite) ─────────────────────────────────────────
 printf "\n${C_BLUE}[2/2]${C_NC} Refresh agent skills\n"
 for dest in "${HOME}/.claude/skills/cc-uax" "${HOME}/.codex/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
+    rm -rf "$dest"
     mkdir -p "$dest"
-    cp "$SKILL_SRC" "${dest}/SKILL.md"
-    ok "skill → ${dest}/SKILL.md"
+    cp -R "${SKILL_SRC}/." "$dest/"
+    ok "skill → ${dest}"
 done
 
 # ── summary ──────────────────────────────────────────────────────────────────

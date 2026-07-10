@@ -1,4 +1,4 @@
-#
+﻿#
 # cc-uax one-line installer for Windows (PowerShell).
 #
 #   irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
@@ -10,7 +10,7 @@
 # What it does:
 #   1. Resolves the latest release from GitHub
 #   2. Downloads the x86_64 Windows archive (also runs on Windows 11 ARM via x64 emulation)
-#   3. Installs cc-uax.exe (default: $env:LOCALAPPDATA\Programs\cc-uax, override with $env:INSTALL_DIR)
+#   3. Verifies the published SHA-256 checksum and installs cc-uax.exe
 #   4. Adds the install dir to the user PATH (idempotent)
 #   5. Installs the cc-uax skill into Claude Code (~\.claude\skills),
 #      Codex (~\.codex\skills), and the legacy Agents path (~\.agents\skills)
@@ -105,7 +105,7 @@ Write-Ok "target=$Target  arch=$arch"
 # ── [2/5] resolve version ───────────────────────────────────────────────────
 Write-Step 2 'Resolving latest version'
 if ($env:VERSION) {
-    $Tag = $env:VERSION
+    $Tag = if ($env:VERSION.StartsWith('v')) { $env:VERSION } else { "v$($env:VERSION)" }
 } else {
     $apiUrl = "https://api.github.com/repos/$Repo/releases/latest"
     try {
@@ -123,16 +123,29 @@ Write-Ok "version=$Version ($Tag)"
 Write-Step 3 'Downloading'
 $Archive = "cc-uax-${Target}-${Version}.zip"
 $Url = "https://github.com/$Repo/releases/download/$Tag/$Archive"
+$ChecksumUrl = "https://github.com/$Repo/releases/download/$Tag/SHA256SUMS"
 Write-Info $Url
 $Tmp = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "cc-uax-install-$(Get-Random)") -Force
 $ArchivePath = Join-Path $Tmp.FullName $Archive
+$ChecksumPath = Join-Path $Tmp.FullName 'SHA256SUMS'
 try {
     Invoke-WebRequest -Uri $Url -OutFile $ArchivePath -UseBasicParsing
+    Invoke-WebRequest -Uri $ChecksumUrl -OutFile $ChecksumPath -UseBasicParsing
 } catch {
-    Die "download failed: $($_.Exception.Message)"
+    Die "download or checksum fetch failed: $($_.Exception.Message)"
 }
 if (-not (Test-Path $ArchivePath)) { Die "archive not downloaded: $Archive" }
-Write-Ok "downloaded $Archive"
+$ChecksumText = Get-Content -Raw -LiteralPath $ChecksumPath
+$ArchivePattern = [regex]::Escape($Archive)
+$ChecksumMatch = [regex]::Match(
+    [string]$ChecksumText,
+    "(?m)^([0-9a-fA-F]{64})\s+\*?$ArchivePattern`r?$"
+)
+if (-not $ChecksumMatch.Success) { Die "checksum missing or invalid for $Archive" }
+$ExpectedHash = $ChecksumMatch.Groups[1].Value.ToLowerInvariant()
+$ActualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ArchivePath).Hash.ToLowerInvariant()
+if ($ActualHash -ne $ExpectedHash) { Die "checksum mismatch for $Archive" }
+Write-Ok "downloaded and verified $Archive"
 
 # ── [4/5] install binary ────────────────────────────────────────────────────
 Write-Step 4 'Installing binary'
@@ -140,6 +153,8 @@ $Extract = Join-Path $Tmp.FullName 'extract'
 Expand-Archive -Path $ArchivePath -DestinationPath $Extract -Force
 $StagedExe = Join-Path $Extract "cc-uax-${Target}-${Version}\cc-uax.exe"
 if (-not (Test-Path $StagedExe)) { Die "cc-uax.exe not found in archive" }
+$StagedLicense = Join-Path $Extract "cc-uax-${Target}-${Version}\LICENSE"
+if (-not (Test-Path $StagedLicense)) { Die "LICENSE missing in archive" }
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item $StagedExe (Join-Path $InstallDir 'cc-uax.exe') -Force
@@ -167,17 +182,18 @@ Write-Step 5 'Configuring agent skills'
 if ($NoSkill) {
     Write-WarnMsg 'NO_SKILL=1 — skipping skill configuration'
 } else {
-    $SkillSrc = Join-Path $Extract "cc-uax-${Target}-${Version}\skills\cc-uax\SKILL.md"
-    if (-not (Test-Path $SkillSrc)) { Die "SKILL.md missing in archive" }
+    $SkillSrc = Join-Path $Extract "cc-uax-${Target}-${Version}\skills\cc-uax"
+    if (-not (Test-Path (Join-Path $SkillSrc 'SKILL.md'))) { Die "SKILL.md missing in archive" }
 
     foreach ($dir in @(
             (Join-Path $env:USERPROFILE '.claude\skills\cc-uax'),
             (Join-Path $env:USERPROFILE '.codex\skills\cc-uax'),
             (Join-Path $env:USERPROFILE '.agents\skills\cc-uax')
         )) {
-        New-Item -ItemType Directory -Force -Path $dir | Out-Null
-        Copy-Item $SkillSrc (Join-Path $dir 'SKILL.md') -Force
-        Write-Ok "skill -> $dir\SKILL.md"
+        if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dir) | Out-Null
+        Copy-Item -LiteralPath $SkillSrc -Destination $dir -Recurse -Force
+        Write-Ok "skill -> $dir"
     }
 }
 

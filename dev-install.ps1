@@ -1,13 +1,13 @@
-#
+﻿#
 # cc-uax dev installer (Windows / PowerShell) — rebuild from source and refresh local skills.
 #
 # Usage:
 #   .\dev-install.ps1               build + install, refresh skills
-#   .\dev-install.ps1 -Uninstall    cargo-uninstall cc-uax and remove local skills
+#   .\dev-install.ps1 -Uninstall    cargo-uninstall cc-uax-cli and remove local skills
 #
 # What it does:
-#   1. cargo install --path . --force  →  builds and installs `cc-uax.exe` into ~\.cargo\bin
-#   2. Copies skills\cc-uax\SKILL.md into Claude Code (~\.claude\skills\cc-uax),
+#   1. cargo install --path crates\cc-uax-cli --locked --force
+#   2. Copies the complete skills\cc-uax directory into Claude Code (~\.claude\skills\cc-uax),
 #      Codex (~\.codex\skills\cc-uax), and legacy Agents (~\.agents\skills\cc-uax),
 #      overwriting any existing copy.
 #
@@ -15,9 +15,6 @@
 #
 param([switch]$Uninstall)
 $ErrorActionPreference = 'Stop'
-
-# Run from the script's own directory so cargo operates on the repo root.
-if ($PSScriptRoot) { Set-Location $PSScriptRoot }
 
 function Write-Step($n, $msg) { Write-Host "`n[$n/2] $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)      { Write-Host "[OK] $msg" -ForegroundColor Green }
@@ -30,9 +27,9 @@ if ($Uninstall -or ($env:UNINSTALL -eq '1')) {
     Write-Host "`ncc-uax dev uninstall" -ForegroundColor Cyan
     $removed = $false
     if (Get-Command cargo -ErrorAction SilentlyContinue) {
-        cargo uninstall cc-uax 2>$null
+        cargo uninstall cc-uax-cli 2>$null
         if ($LASTEXITCODE -eq 0) {
-            Write-Ok 'cargo uninstall cc-uax'
+            Write-Ok 'cargo uninstall cc-uax-cli'
             $removed = $true
         } else {
             Write-WarnMsg 'cc-uax was not installed via cargo'
@@ -63,14 +60,16 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 }
 
 $CargoBin = if ($env:CARGO_HOME) { Join-Path $env:CARGO_HOME 'bin' } else { Join-Path $env:USERPROFILE '.cargo\bin' }
-$SkillSrc = Join-Path $PSScriptRoot 'skills\cc-uax\SKILL.md'
-if (-not (Test-Path $SkillSrc)) { Die "skill source not found: $SkillSrc" }
+$SkillSrc = Join-Path $PSScriptRoot 'skills\cc-uax'
+$CliDir = Join-Path $PSScriptRoot 'crates\cc-uax-cli'
+if (-not (Test-Path (Join-Path $SkillSrc 'SKILL.md'))) { Die "skill source not found: $SkillSrc" }
+if (-not (Test-Path (Join-Path $CliDir 'Cargo.toml'))) { Die "CLI package not found: $CliDir\Cargo.toml" }
 
 # ── [1/2] build + install binary ─────────────────────────────────────────────
 Write-Step 1 'Build and install cc-uax'
-Write-Info 'cargo install --path . --force'
+Write-Info "cargo install --path $CliDir --locked --force"
 # $ErrorActionPreference = 'Stop' does not cover native-exe exit codes — check explicitly.
-cargo install --path . --force
+cargo install --path $CliDir --locked --force
 if ($LASTEXITCODE -ne 0) { Die "cargo install failed (exit $LASTEXITCODE)" }
 Write-Ok "cc-uax -> $CargoBin\cc-uax.exe"
 
@@ -81,9 +80,10 @@ foreach ($dir in @(
         (Join-Path $env:USERPROFILE '.codex\skills\cc-uax'),
         (Join-Path $env:USERPROFILE '.agents\skills\cc-uax')
     )) {
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    Copy-Item $SkillSrc (Join-Path $dir 'SKILL.md') -Force
-    Write-Ok "skill -> $dir\SKILL.md"
+    if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dir) | Out-Null
+    Copy-Item -LiteralPath $SkillSrc -Destination $dir -Recurse -Force
+    Write-Ok "skill -> $dir"
 }
 
 # ── summary ──────────────────────────────────────────────────────────────────

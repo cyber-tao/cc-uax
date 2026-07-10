@@ -5,48 +5,42 @@ name: release
 # Package layout inside each archive:
 #   cc-uax-<target>-<version>/
 #     cc-uax[.exe]
-#     skills/cc-uax/SKILL.md
+#     LICENSE
+#     skills/cc-uax/...
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   check:
     name: Check
+    uses: ./.github/workflows/ci.yml
+
+  version:
+    name: Validate tag version
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache cargo registry
-        uses: swatinem/rust-cache@v2
-
-      - name: Format check
-        run: cargo fmt -- --check
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked
-
-      - name: Test
-        run: cargo test --workspace --locked
-
-      - name: Test without default features
-        run: cargo test --workspace --no-default-features --locked
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compare tag with package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(cargo pkgid -p cc-uax-cli | sed -E 's/.*[@#]([^@#]+)$/\1/')
+          EXPECTED_TAG="v${VERSION}"
+          if [ "${GITHUB_REF_NAME}" != "${EXPECTED_TAG}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match cc-uax-cli ${VERSION}" >&2
+            exit 1
+          fi
 
   build:
     name: Build ${{ matrix.target }}
-    needs: check
+    needs: [check, version]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -95,20 +89,25 @@ jobs:
         shell: bash
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: cargo build --release --locked --target ${{ matrix.target }}
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+        run: cargo build -p cc-uax-cli --release --locked --target ${{ matrix.target }}
 
       - name: Stage package
         shell: bash
         run: |
           set -euo pipefail
-          VERSION=$(cargo pkgid | sed 's/.*#//')
+          VERSION=$(cargo pkgid -p cc-uax-cli | sed -E 's/.*[@#]([^@#]+)$/\1/')
           TARGET="${{ matrix.target }}"
           STAGE="cc-uax-${TARGET}-${VERSION}"
           mkdir -p "${STAGE}/skills/cc-uax"
           BIN_NAME="cc-uax"
           case "${TARGET}" in *-pc-windows-*) BIN_NAME="cc-uax.exe" ;; esac
           cp "target/${TARGET}/release/${BIN_NAME}" "${STAGE}/${BIN_NAME}"
-          cp skills/cc-uax/SKILL.md "${STAGE}/skills/cc-uax/SKILL.md"
+          cp -R skills/cc-uax/. "${STAGE}/skills/cc-uax/"
+          cp LICENSE "${STAGE}/LICENSE"
+          test -f "${STAGE}/skills/cc-uax/SKILL.md"
+          test -f "${STAGE}/LICENSE"
           ARCHIVE="${STAGE}.${{ matrix.archive }}"
           if [ "${{ matrix.archive }}" = "zip" ]; then
             7z a "${ARCHIVE}" "${STAGE}"
@@ -129,6 +128,8 @@ jobs:
     name: Publish release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout (full history for changelog generation)
         uses: actions/checkout@v4
@@ -143,6 +144,10 @@ jobs:
 
       - name: List artifacts
         run: ls -la artifacts/
+
+      - name: Generate SHA256 checksums
+        working-directory: artifacts
+        run: sha256sum cc-uax-* > SHA256SUMS
 
       - name: Generate changelog body
         id: git-cliff
