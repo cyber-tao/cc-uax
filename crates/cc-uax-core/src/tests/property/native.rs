@@ -1,8 +1,9 @@
 use super::super::common::*;
 use crate::name::NameMap;
 use crate::pin::PinSerCtx;
-use crate::property::{ParseCtx, parse_properties};
+use crate::property::{ParseCtx, PropertyParse, parse_properties, parse_properties_report};
 use crate::reader::Reader;
+use crate::version::SerializationPolicy;
 
 fn push_test_struct_property(v: &mut Vec<u8>, property_idx: i32, struct_idx: i32, value: &[u8]) {
     push_raw_name(v, property_idx);
@@ -13,6 +14,27 @@ fn push_test_struct_property(v: &mut Vec<u8>, property_idx: i32, struct_idx: i32
     push_i32(v, value.len() as i32);
     v.push(0x08); // HasBinaryOrNativeSerialize
     v.extend_from_slice(value);
+}
+
+fn parse_test_native_struct(
+    names: &NameMap,
+    struct_idx: i32,
+    none_idx: i32,
+    value: &[u8],
+    serialization: SerializationPolicy,
+) -> PropertyParse {
+    let data = build_struct_property(struct_idx, none_idx, value);
+    let ctx = ParseCtx {
+        names,
+        resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization,
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut reader = Reader::new(&data);
+    parse_properties_report(&mut reader, &ctx, data.len() as u64, "/test")
 }
 
 fn build_name_property_value(
@@ -108,8 +130,7 @@ fn native_struct_array_falls_back_to_hex() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -144,8 +165,7 @@ fn native_struct_box_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -181,8 +201,7 @@ fn native_struct_box2f_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -221,8 +240,7 @@ fn native_struct_gameplay_tag_container_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -258,8 +276,7 @@ fn native_struct_vector4f_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -294,8 +311,7 @@ fn native_struct_skeletal_mesh_sampling_lod_built_data_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -342,8 +358,10 @@ fn native_struct_niagara_variable_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: 0,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy {
+            niagara_version: 0,
+            ..Default::default()
+        },
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -352,7 +370,7 @@ fn native_struct_niagara_variable_decodes() {
     assert!(entries[0].value.get("@unparsed").is_some());
 
     // Modern Niagara version decodes Name + type definition + empty VarData.
-    ctx.niagara_version = 64;
+    ctx.serialization.niagara_version = 64;
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
     assert_eq!(entries.len(), 1);
@@ -404,9 +422,11 @@ fn native_struct_niagara_gpu_param_info_decodes() {
         resolve_object: &|idx: i32| serde_json::json!({ "idx": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version:
-            crate::version::custom::NIAGARA_SERIALIZE_USAGE_BITMASK_TO_GPU_FUNCTION_INFO,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy {
+            niagara_version:
+                crate::version::custom::NIAGARA_SERIALIZE_USAGE_BITMASK_TO_GPU_FUNCTION_INFO,
+            ..Default::default()
+        },
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -449,8 +469,7 @@ fn native_struct_spline_empty_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -479,8 +498,7 @@ fn native_struct_gameplay_effect_version_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -541,8 +559,7 @@ fn native_struct_rich_curve_key_array_keeps_stride() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -587,8 +604,7 @@ fn material_scalar_input_resolves_expression() {
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -632,8 +648,10 @@ fn material_color_input_uses_packed_color_before_linear_color_version() {
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: 76,
+        serialization: crate::version::SerializationPolicy {
+            fortnite_main_version: 76,
+            ..Default::default()
+        },
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -672,8 +690,7 @@ fn native_struct_per_platform_float_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -712,8 +729,7 @@ fn native_struct_movie_scene_frame_range_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -772,8 +788,10 @@ fn native_struct_movie_scene_float_channel_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: 53,
+        serialization: crate::version::SerializationPolicy {
+            fortnite_main_version: 53,
+            ..Default::default()
+        },
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -826,8 +844,10 @@ fn native_struct_instanced_struct_decodes() {
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy {
+            instanced_struct_version: crate::version::custom::INSTANCED_STRUCT_CUSTOM_VERSION_ADDED,
+            ..Default::default()
+        },
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -841,6 +861,76 @@ fn native_struct_instanced_struct_decodes() {
     assert_eq!(props.len(), 1);
     assert_eq!(props[0]["name"].as_str(), Some("Inner"));
     assert_eq!(props[0]["value"].as_i64(), Some(99));
+}
+
+#[test]
+fn native_struct_instanced_struct_missing_version_uses_legacy_prefix() {
+    let names = NameMap {
+        names: vec![
+            "Data".to_string(),
+            "StructProperty".to_string(),
+            "InstancedStruct".to_string(),
+            "None".to_string(),
+        ],
+    };
+
+    for (has_editor_header, legacy_version) in [(false, 3_u8), (true, 7_u8)] {
+        let mut value = Vec::new();
+        if has_editor_header {
+            value.extend_from_slice(&0xABAB_ABAB_u32.to_le_bytes());
+        }
+        value.push(legacy_version);
+        push_i32(&mut value, -7);
+        push_i32(&mut value, 0);
+
+        // Missing GUID is represented by -1, which is also threshold - 1 for
+        // FInstancedStructCustomVersion::CustomVersionAdded (0).
+        let parsed = parse_test_native_struct(&names, 2, 3, &value, SerializationPolicy::default());
+
+        assert!(parsed.diagnostics.is_empty());
+        let decoded = &parsed.entries[0].value;
+        assert_eq!(
+            decoded["legacy_version"].as_u64(),
+            Some(legacy_version as u64)
+        );
+        assert_eq!(
+            decoded["legacy_editor_header"].as_bool(),
+            Some(has_editor_header)
+        );
+        assert_eq!(decoded["script_struct"]["index"].as_i64(), Some(-7));
+    }
+}
+
+#[test]
+fn native_struct_instanced_struct_truncation_falls_back() {
+    let names = NameMap {
+        names: vec![
+            "Data".to_string(),
+            "StructProperty".to_string(),
+            "InstancedStruct".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, -7); // Missing serialized-size field.
+    let parsed = parse_test_native_struct(
+        &names,
+        2,
+        3,
+        &value,
+        SerializationPolicy {
+            instanced_struct_version: crate::version::custom::INSTANCED_STRUCT_CUSTOM_VERSION_ADDED,
+            ..Default::default()
+        },
+    );
+
+    assert!(parsed.entries[0].value["@unparsed"].is_string());
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_fallback")
+    );
 }
 
 #[test]
@@ -880,8 +970,7 @@ fn native_struct_instanced_struct_container_decodes_items() {
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -926,8 +1015,11 @@ fn native_struct_state_tree_instance_data_decodes_storage() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy {
+            state_tree_instance_storage_version:
+                crate::version::custom::STATE_TREE_INSTANCE_STORAGE_ADDED_CUSTOM_SERIALIZATION,
+            ..Default::default()
+        },
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -944,6 +1036,83 @@ fn native_struct_state_tree_instance_data_decodes_storage() {
     assert_eq!(props[0]["name"].as_str(), Some("InstanceStructs"));
     assert_eq!(props[0]["value"]["item_count"].as_i64(), Some(0));
     assert!(entries[0].value.get("@unparsed").is_none());
+}
+
+#[test]
+fn native_struct_state_tree_threshold_minus_one_and_missing_version_use_legacy() {
+    let names = NameMap {
+        names: vec![
+            "Data".to_string(),
+            "StructProperty".to_string(),
+            "StateTreeInstanceData".to_string(),
+            "InstanceStorage_DEPRECATED".to_string(),
+            "InstancedStruct".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut instanced_struct = Vec::new();
+    push_i32(&mut instanced_struct, 0); // null script struct
+    push_i32(&mut instanced_struct, 0); // empty payload
+    let mut legacy = Vec::new();
+    push_test_struct_property(&mut legacy, 3, 4, &instanced_struct);
+    push_raw_name(&mut legacy, 5);
+
+    for state_tree_version in [
+        crate::version::custom::STATE_TREE_INSTANCE_STORAGE_ADDED_CUSTOM_SERIALIZATION - 1,
+        -1,
+    ] {
+        let parsed = parse_test_native_struct(
+            &names,
+            2,
+            5,
+            &legacy,
+            SerializationPolicy {
+                instanced_struct_version:
+                    crate::version::custom::INSTANCED_STRUCT_CUSTOM_VERSION_ADDED,
+                state_tree_instance_storage_version: state_tree_version,
+                ..Default::default()
+            },
+        );
+
+        assert!(parsed.diagnostics.is_empty());
+        let decoded = &parsed.entries[0].value;
+        assert_eq!(decoded["serialization"].as_str(), Some("legacy_tagged"));
+        assert_eq!(
+            decoded["properties"][0]["name"].as_str(),
+            Some("InstanceStorage_DEPRECATED")
+        );
+    }
+}
+
+#[test]
+fn native_struct_state_tree_truncation_falls_back() {
+    let names = NameMap {
+        names: vec![
+            "Data".to_string(),
+            "StructProperty".to_string(),
+            "StateTreeInstanceData".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let parsed = parse_test_native_struct(
+        &names,
+        2,
+        3,
+        &[0xAA, 0xBB, 0xCC, 0xDD],
+        SerializationPolicy {
+            state_tree_instance_storage_version:
+                crate::version::custom::STATE_TREE_INSTANCE_STORAGE_ADDED_CUSTOM_SERIALIZATION,
+            ..Default::default()
+        },
+    );
+
+    assert!(parsed.entries[0].value["@unparsed"].is_string());
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("StateTreeInstanceStorage"))
+    );
 }
 
 #[test]
@@ -972,8 +1141,7 @@ fn pcg_input_and_output_selectors_parse_as_tagged_properties() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -1025,8 +1193,7 @@ fn native_struct_pcg_point_array_decodes_channels() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -1046,6 +1213,50 @@ fn native_struct_pcg_point_array_decodes_channels() {
     assert_eq!(v["metadata_entry"]["default"].as_i64(), Some(456));
     assert!(v.get("@unparsed").is_none());
     assert!(v.get("payload_tail").is_none());
+}
+
+#[test]
+fn native_struct_pcg_point_array_rejects_channel_count_mismatches() {
+    let names = NameMap {
+        names: vec![
+            "PointArray".to_string(),
+            "StructProperty".to_string(),
+            "PCGPointArray".to_string(),
+            "None".to_string(),
+        ],
+    };
+
+    let mut num_values_mismatch = Vec::new();
+    push_i32(&mut num_values_mismatch, 1); // NumPoints
+    push_i32(&mut num_values_mismatch, 2); // Transform.NumValues
+
+    let mut allocated_count_mismatch = Vec::new();
+    push_i32(&mut allocated_count_mismatch, 1); // NumPoints
+    push_pcg_point_array_property(&mut allocated_count_mismatch, PcgTestKind::Transform, 1, 2);
+    push_pcg_transform(&mut allocated_count_mismatch);
+    push_pcg_transform(&mut allocated_count_mismatch);
+
+    for (value, expected_message) in [
+        (
+            num_values_mismatch,
+            "NumValues 2 does not match NumPoints 1",
+        ),
+        (
+            allocated_count_mismatch,
+            "allocated value count 2 does not match NumValues 1",
+        ),
+    ] {
+        let parsed = parse_test_native_struct(&names, 2, 3, &value, SerializationPolicy::default());
+        assert!(parsed.entries[0].value["@unparsed"].is_string());
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains(expected_message)),
+            "missing diagnostic containing {expected_message:?}: {:?}",
+            parsed.diagnostics
+        );
+    }
 }
 
 #[test]
@@ -1069,8 +1280,10 @@ fn native_struct_pcg_point_decodes_structured_mask() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy {
+            fortnite_release_version: crate::version::custom::PCG_POINT_STRUCTURED_SERIALIZER,
+            ..Default::default()
+        },
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -1081,8 +1294,90 @@ fn native_struct_pcg_point_decodes_structured_mask() {
     let v = &entries[0].value;
     assert_eq!(v["serialize_mask"].as_u64(), Some(1 << 4));
     assert_eq!(v["transform"]["rotation"]["w"].as_f64(), Some(1.0));
+    assert_eq!(v["density"].as_f64(), Some(1.0));
+    assert_eq!(v["bounds_min"]["x"].as_f64(), Some(-1.0));
+    assert_eq!(v["bounds_max"]["x"].as_f64(), Some(1.0));
+    assert_eq!(v["color"]["w"].as_f64(), Some(1.0));
     assert_eq!(v["steepness"].as_f64(), Some(0.25));
+    assert_eq!(v["seed"].as_i64(), Some(0));
+    assert_eq!(v["metadata_entry"].as_i64(), Some(-1));
     assert!(v.get("@unparsed").is_none());
+}
+
+#[test]
+fn native_struct_pcg_point_threshold_minus_one_and_missing_version_use_legacy() {
+    let names = NameMap {
+        names: vec![
+            "Point".to_string(),
+            "StructProperty".to_string(),
+            "PCGPoint".to_string(),
+            "Density".to_string(),
+            "FloatProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut legacy = Vec::new();
+    push_raw_name(&mut legacy, 3); // Density
+    push_raw_name(&mut legacy, 4); // FloatProperty
+    push_i32(&mut legacy, 0); // no type parameters
+    push_i32(&mut legacy, 4); // value size
+    legacy.push(0); // tag flags
+    push_f32(&mut legacy, 0.75);
+    push_raw_name(&mut legacy, 5); // None
+
+    for fortnite_release_version in [
+        crate::version::custom::PCG_POINT_STRUCTURED_SERIALIZER - 1,
+        -1,
+    ] {
+        let parsed = parse_test_native_struct(
+            &names,
+            2,
+            5,
+            &legacy,
+            SerializationPolicy {
+                fortnite_release_version,
+                ..Default::default()
+            },
+        );
+
+        assert!(parsed.diagnostics.is_empty());
+        let decoded = &parsed.entries[0].value;
+        assert_eq!(decoded["serialization"].as_str(), Some("legacy_tagged"));
+        assert_eq!(decoded["properties"][0]["name"].as_str(), Some("Density"));
+        assert_eq!(decoded["properties"][0]["value"].as_f64(), Some(0.75));
+    }
+}
+
+#[test]
+fn native_struct_pcg_point_truncation_falls_back() {
+    let names = NameMap {
+        names: vec![
+            "Point".to_string(),
+            "StructProperty".to_string(),
+            "PCGPoint".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = vec![1]; // Density bit set.
+    push_pcg_transform(&mut value); // Density value is intentionally missing.
+    let parsed = parse_test_native_struct(
+        &names,
+        2,
+        3,
+        &value,
+        SerializationPolicy {
+            fortnite_release_version: crate::version::custom::PCG_POINT_STRUCTURED_SERIALIZER,
+            ..Default::default()
+        },
+    );
+
+    assert!(parsed.entries[0].value["@unparsed"].is_string());
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_fallback")
+    );
 }
 
 #[test]
@@ -1112,8 +1407,7 @@ fn niagara_variant_parses_as_tagged_properties() {
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -1155,8 +1449,7 @@ fn state_tree_reference_parses_as_tagged_properties() {
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -1211,8 +1504,7 @@ fn native_struct_edgraph_pin_type_decodes() {
             has_single_precision_float: true,
         },
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -1279,8 +1571,7 @@ fn frame_rate_struct_parses_as_tagged_properties() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -1328,8 +1619,7 @@ fn cloth_lod_data_common_decodes_transition_payloads() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -1377,8 +1667,7 @@ fn groom_dataflow_settings_keeps_named_tail_payload() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -1412,8 +1701,7 @@ fn instanced_property_bag_empty_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -1450,8 +1738,7 @@ fn cloth_tether_data_decodes_batches() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };

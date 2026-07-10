@@ -1,5 +1,6 @@
-use super::gameplay::preview_payload;
-use crate::property::{ParseCtx, validate_count};
+use crate::property::{
+    ParseCtx, PropertyParseStatus, entries_to_json, parse_properties_report, validate_count,
+};
 use crate::reader::Reader;
 use anyhow::{Result, bail};
 use serde_json::{Map, Value, json};
@@ -37,7 +38,7 @@ pub(super) fn parse_pcg_struct(
 ) -> Result<Option<Value>> {
     let v = match name {
         "PCGPointArray" => parse_pcg_point_array(r, value_end)?,
-        "PCGPoint" => parse_pcg_point(r, value_end)?,
+        "PCGPoint" => parse_pcg_point(r, ctx, value_end)?,
         "PCGDataPtrWrapper" => {
             let data = r.read_i32()?;
             json!({ "data": (ctx.resolve_object)(data) })
@@ -70,14 +71,14 @@ fn parse_pcg_point_array(r: &mut Reader, value_end: u64) -> Result<Value> {
     for (name, kind) in fields {
         o.insert(
             name.into(),
-            parse_pcg_point_array_property(r, value_end, kind, name)?,
+            parse_pcg_point_array_property(r, value_end, num_points, kind, name)?,
         );
     }
 
-    if r.pos() < value_end {
-        o.insert(
-            "payload_tail".into(),
-            preview_payload(r, r.pos(), value_end)?,
+    if r.pos() != value_end {
+        bail!(
+            "PCGPointArray ended at byte {}, expected {value_end}",
+            r.pos()
         );
     }
 
@@ -87,6 +88,7 @@ fn parse_pcg_point_array(r: &mut Reader, value_end: u64) -> Result<Value> {
 fn parse_pcg_point_array_property(
     r: &mut Reader,
     value_end: u64,
+    expected_num_values: i32,
     kind: PcgValueKind,
     label: &str,
 ) -> Result<Value> {
@@ -94,11 +96,21 @@ fn parse_pcg_point_array_property(
     if num_values < 0 {
         bail!("PCGPointArray {label} NumValues out of range: {num_values}");
     }
+    if num_values != expected_num_values {
+        bail!(
+            "PCGPointArray {label} NumValues {num_values} does not match NumPoints {expected_num_values}"
+        );
+    }
     let default = read_pcg_value(r, kind)?;
 
     let values_count = r.read_i32()?;
     let remaining = value_end.saturating_sub(r.pos());
     validate_count(values_count, remaining, kind.size_bytes(), label)?;
+    if values_count != 0 && values_count != num_values {
+        bail!(
+            "PCGPointArray {label} allocated value count {values_count} does not match NumValues {num_values}"
+        );
+    }
 
     let sample_count = values_count.min(POINT_ARRAY_SAMPLE_MAX);
     let mut sample = Vec::with_capacity(sample_count as usize);
@@ -120,7 +132,27 @@ fn parse_pcg_point_array_property(
     }))
 }
 
-fn parse_pcg_point(r: &mut Reader, value_end: u64) -> Result<Value> {
+fn parse_pcg_point(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Value> {
+    if ctx.serialization.fortnite_release_version
+        < crate::version::custom::PCG_POINT_STRUCTURED_SERIALIZER
+    {
+        // The structured serializer returns false before this custom version,
+        // so UScriptStruct falls back to ordinary tagged-property serialization.
+        let parsed = parse_properties_report(r, ctx, value_end, "/pcg_point");
+        ensure_complete_tagged_payload(r, value_end, &parsed.status, "PCGPoint")?;
+        let mut o = Map::new();
+        o.insert("@struct".into(), json!("PCGPoint"));
+        o.insert("serialization".into(), json!("legacy_tagged"));
+        o.insert("properties".into(), entries_to_json(&parsed.entries));
+        if parsed.status.is_output_relevant() {
+            o.insert("property_status".into(), json!(parsed.status.as_str()));
+        }
+        if !parsed.diagnostics.is_empty() {
+            o.insert("property_diagnostics".into(), json!(parsed.diagnostics));
+        }
+        return Ok(Value::Object(o));
+    }
+
     // FPCGPoint structured serializer writes a uint8 field mask, then the
     // transform, then only non-default fields indicated by the mask.
     let mask = r.read_u8()?;
@@ -134,6 +166,22 @@ fn parse_pcg_point(r: &mut Reader, value_end: u64) -> Result<Value> {
         "transform".into(),
         read_pcg_value(r, PcgValueKind::Transform)?,
     );
+    // FPCGPoint's structured format omits fields equal to the C++ defaults.
+    // Materialize those defaults so downstream consumers see one canonical
+    // shape regardless of the serialize mask.
+    o.insert("density".into(), json!(1.0));
+    o.insert(
+        "bounds_min".into(),
+        json!({ "x": -1.0, "y": -1.0, "z": -1.0 }),
+    );
+    o.insert("bounds_max".into(), json!({ "x": 1.0, "y": 1.0, "z": 1.0 }));
+    o.insert(
+        "color".into(),
+        json!({ "x": 1.0, "y": 1.0, "z": 1.0, "w": 1.0 }),
+    );
+    o.insert("steepness".into(), json!(0.5));
+    o.insert("seed".into(), json!(0));
+    o.insert("metadata_entry".into(), json!(-1));
     if mask & (1 << 0) != 0 {
         o.insert("density".into(), read_pcg_value(r, PcgValueKind::Float)?);
     }
@@ -165,13 +213,31 @@ fn parse_pcg_point(r: &mut Reader, value_end: u64) -> Result<Value> {
         );
     }
 
-    if r.pos() < value_end {
-        o.insert(
-            "payload_tail".into(),
-            preview_payload(r, r.pos(), value_end)?,
-        );
+    if r.pos() != value_end {
+        bail!("PCGPoint ended at byte {}, expected {value_end}", r.pos());
     }
     Ok(Value::Object(o))
+}
+
+fn ensure_complete_tagged_payload(
+    r: &Reader,
+    value_end: u64,
+    status: &PropertyParseStatus,
+    name: &str,
+) -> Result<()> {
+    if matches!(
+        status,
+        PropertyParseStatus::NonTaggedPayload | PropertyParseStatus::FailedAfterEntries
+    ) {
+        bail!("{name} tagged payload is malformed ({})", status.as_str());
+    }
+    if r.pos() != value_end {
+        bail!(
+            "{name} tagged payload ended at byte {}, expected {value_end}",
+            r.pos()
+        );
+    }
+    Ok(())
 }
 
 fn read_pcg_value(r: &mut Reader, kind: PcgValueKind) -> Result<Value> {

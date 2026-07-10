@@ -1,8 +1,11 @@
 use super::DecodedExport;
-use super::window::ExportSerialWindow;
+use super::window::{ExportSerialWindow, preview_range};
 use crate::diagnostic::Diagnostic;
 use crate::package::Package;
-use crate::pin::{PinSerCtx, parse_node_pins_report};
+use crate::pin::{
+    PinSerCtx, UserDefinedPin, framework_pin_version, is_supported_framework_pin_version,
+    locate_legacy_pin_start, parse_node_pins_report, parse_user_defined_pins_report,
+};
 use crate::property::ParseCtx;
 use crate::reader::Reader;
 use crate::version::custom;
@@ -21,15 +24,31 @@ pub(super) fn decode_pins_for_export(
     diagnostics: &mut Vec<Diagnostic>,
     export: &mut DecodedExport,
 ) {
-    if !has_script || !is_graph_node_class(class_full) {
+    if !is_graph_node_class(class_full) {
         return;
     }
-    let pin_start = window.property_end;
+    let path = format!("/exports/{export_i}/pins");
+    let pin_start = if has_script {
+        window.property_end
+    } else {
+        if reader.seek(window.property_start).is_err() {
+            return;
+        }
+        match locate_legacy_pin_start(reader, window.serial_end, ctx, &path) {
+            Ok(start) => start,
+            Err(diagnostic) => {
+                diagnostics.push(diagnostic);
+                return;
+            }
+        }
+    };
     let pin_end = window.serial_end;
     if pin_end <= pin_start || reader.seek(pin_start).is_err() {
         return;
     }
 
+    let editable_pin_class = is_editable_pin_class(class_full);
+    let framework_version = framework_pin_version(&package.summary);
     let candidates = pin_parse_contexts(package, *pin_ctx);
     let mut best = None;
     let mut best_pos = pin_start;
@@ -38,13 +57,83 @@ pub(super) fn decode_pins_for_export(
         if reader.seek(pin_start).is_err() {
             continue;
         }
-        let path = format!("/exports/{export_i}/pins");
         match parse_node_pins_report(reader, pin_end, ctx, &candidate, &path) {
             Ok(parsed) => {
+                let mut user_defined_pins: Option<Vec<UserDefinedPin>> = None;
+                let mut selected_diagnostics = Vec::new();
+                if editable_pin_class {
+                    let version = framework_version.unwrap_or(-1);
+                    if is_supported_framework_pin_version(version) {
+                        match parse_user_defined_pins_report(
+                            reader,
+                            pin_end,
+                            ctx,
+                            &candidate,
+                            version,
+                            &format!("{path}/user_defined"),
+                        ) {
+                            Ok(pins) => user_defined_pins = Some(pins),
+                            Err(diagnostic) => {
+                                failures.push(diagnostic.with_context(json!({
+                                    "framework_version": framework_version,
+                                    "has_source_index": candidate.has_source_index,
+                                    "has_uobject_wrapper": candidate.has_uobject_wrapper,
+                                    "has_single_precision_float": candidate.has_single_precision_float,
+                                })));
+                                continue;
+                            }
+                        }
+                        if framework_version.is_none() {
+                            selected_diagnostics.push(
+                                Diagnostic::warning(
+                                    "framework_pin_version_missing",
+                                    format!("{path}/user_defined"),
+                                    "Dev-Framework custom version is absent; parsed FUserPinInfo with the legacy FString name layout",
+                                )
+                                .with_offset(reader.pos()),
+                            );
+                        }
+                    } else {
+                        selected_diagnostics.push(
+                            Diagnostic::warning(
+                                "framework_pin_version_unsupported",
+                                format!("{path}/user_defined"),
+                                format!(
+                                    "Dev-Framework custom version {version} is newer than the supported UE5.7 layout"
+                                ),
+                            )
+                            .with_offset(reader.pos())
+                            .with_context(json!({ "framework_version": version })),
+                        );
+                    }
+                }
                 let consumed_pos = reader.pos();
-                if consumed_pos >= best_pos {
+                if consumed_pos < pin_end {
+                    selected_diagnostics.push(
+                        Diagnostic::warning(
+                            if editable_pin_class {
+                                "user_defined_pins_trailing_bytes"
+                            } else {
+                                "pin_region_trailing_bytes"
+                            },
+                            &path,
+                            format!(
+                                "{} byte(s) remain after the known graph-node serialization",
+                                pin_end - consumed_pos
+                            ),
+                        )
+                        .with_offset(consumed_pos)
+                        .with_context(json!({
+                            "class": class_full,
+                            "tail_start": consumed_pos,
+                            "serial_end": pin_end,
+                            "tail_size": pin_end - consumed_pos,
+                        })),
+                    );
+                }
+                if best.is_none() || consumed_pos > best_pos {
                     best_pos = consumed_pos;
-                    best = Some(parsed.pins);
+                    best = Some((parsed.pins, user_defined_pins, selected_diagnostics));
                 }
             }
             Err(diag) => failures.push(diag.with_context(json!({
@@ -54,9 +143,13 @@ pub(super) fn decode_pins_for_export(
             }))),
         }
     }
-    if let Some(pins) = best {
+    if let Some((pins, user_defined_pins, selected_diagnostics)) = best {
+        export.post_property_tail =
+            (best_pos < pin_end).then(|| preview_range(reader, best_pos, pin_end));
         let _ = reader.seek(best_pos);
         export.pins = Some(pins);
+        export.user_defined_pins = user_defined_pins;
+        diagnostics.extend(selected_diagnostics);
         return;
     }
 
@@ -147,4 +240,18 @@ pub(super) fn is_graph_node_class(class_full: &str) -> bool {
         return false;
     }
     simple.contains("GraphNode")
+}
+
+fn is_editable_pin_class(class_full: &str) -> bool {
+    let simple = class_full.rsplit(['.', '/']).next().unwrap_or(class_full);
+    matches!(
+        simple,
+        "K2Node_EditablePinBase"
+            | "K2Node_FunctionTerminator"
+            | "K2Node_FunctionEntry"
+            | "K2Node_FunctionResult"
+            | "K2Node_Event"
+            | "K2Node_CustomEvent"
+            | "K2Node_Tunnel"
+    )
 }

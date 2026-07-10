@@ -1,5 +1,7 @@
 use crate::package::Package;
-use crate::pin::{Pin, PinRef, PinTerminalType, container_type_label, direction_label};
+use crate::pin::{
+    Pin, PinRef, PinTerminalType, PinType, UserDefinedPin, container_type_label, direction_label,
+};
 use crate::reader::Guid;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -121,6 +123,78 @@ pub(crate) fn pins_to_json(
         })
         .collect();
     Value::Array(arr)
+}
+
+pub(crate) fn user_defined_pins_to_json(package: &Package, pins: &[UserDefinedPin]) -> Value {
+    Value::Array(
+        pins.iter()
+            .map(|pin| {
+                let mut object = serde_json::Map::new();
+                object.insert("name".into(), json!(pin.name));
+                object.insert("direction".into(), json!(direction_label(pin.direction)));
+                object.insert("type".into(), pin_type_to_json(package, &pin.pin_type));
+                if !pin.default_value.is_empty() {
+                    object.insert("default_value".into(), json!(pin.default_value));
+                }
+                Value::Object(object)
+            })
+            .collect(),
+    )
+}
+
+fn pin_type_to_json(package: &Package, pin_type: &PinType) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert("category".into(), json!(pin_type.category));
+    if !pin_type.sub_category.is_empty() {
+        object.insert("sub_category".into(), json!(pin_type.sub_category));
+    }
+    if pin_type.sub_category_object != 0 {
+        object.insert(
+            "sub_category_object".into(),
+            package.resolve_object_ref(pin_type.sub_category_object),
+        );
+    }
+    object.insert(
+        "container_type".into(),
+        json!(container_type_label(pin_type.container_type)),
+    );
+    if let Some(value_type) = &pin_type.value_type {
+        object.insert(
+            "value_type".into(),
+            terminal_type_to_json(value_type, |index| package.resolve_object_ref(index)),
+        );
+    }
+    object.insert("is_reference".into(), json!(pin_type.is_reference));
+    object.insert("is_weak_pointer".into(), json!(pin_type.is_weak_pointer));
+    object.insert("is_const".into(), json!(pin_type.is_const));
+    object.insert(
+        "is_uobject_wrapper".into(),
+        json!(pin_type.is_uobject_wrapper),
+    );
+    object.insert(
+        "serialize_as_single_precision_float".into(),
+        json!(pin_type.serialize_as_single_precision_float),
+    );
+    if pin_type.member_parent != 0
+        || !pin_type.member_name.is_empty()
+        || !pin_type.member_guid.is_zero()
+    {
+        let mut member = serde_json::Map::new();
+        if pin_type.member_parent != 0 {
+            member.insert(
+                "parent".into(),
+                package.resolve_object_ref(pin_type.member_parent),
+            );
+        }
+        if !pin_type.member_name.is_empty() {
+            member.insert("name".into(), json!(pin_type.member_name));
+        }
+        if !pin_type.member_guid.is_zero() {
+            member.insert("guid".into(), json!(pin_type.member_guid.to_hex()));
+        }
+        object.insert("member_reference".into(), Value::Object(member));
+    }
+    Value::Object(object)
 }
 
 fn link_to_json(

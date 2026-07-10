@@ -53,8 +53,7 @@ fn nested_struct_respects_declared_value_end() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -91,8 +90,7 @@ fn truncated_property_array_index_stops_parse() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -130,8 +128,7 @@ fn failed_property_after_entries_reports_status_and_diagnostic() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -231,8 +228,7 @@ fn legacy_property_tags_decode_type_metadata() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION,
     };
@@ -294,8 +290,7 @@ fn property_tag_extensions_are_byte_aligned() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -336,8 +331,7 @@ fn skipped_serialize_property_is_marked_and_parsing_continues() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };

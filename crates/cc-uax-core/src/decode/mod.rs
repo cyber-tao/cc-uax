@@ -6,10 +6,10 @@ mod window;
 use crate::diagnostic::{ByteRangePreview, Diagnostic};
 use crate::output::sections::OutputSections;
 use crate::package::Package;
-use crate::pin::{Pin, PinSerCtx};
+use crate::pin::{Pin, PinSerCtx, UserDefinedPin};
 use crate::property::{ParseCtx, PropertyEntry, PropertyParseStatus};
 use crate::reader::Reader;
-use crate::version::{custom, ue5};
+use crate::version::{SerializationPolicy, custom, ue5};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -34,6 +34,7 @@ pub(crate) struct DecodedExport {
     pub(crate) object_guid: Option<String>,
     pub(crate) metadata: Option<Value>,
     pub(crate) pins: Option<Vec<Pin>>,
+    pub(crate) user_defined_pins: Option<Vec<UserDefinedPin>>,
     pub(crate) member: Option<MemberRef>,
 }
 
@@ -122,14 +123,28 @@ impl Package {
             resolve_object: &resolve,
             pins: pin_ctx,
             soft_object_paths: &self.soft_object_paths,
-            niagara_version: self
-                .summary
-                .custom_version(custom::NIAGARA_OBJECT_VERSION)
-                .unwrap_or(-1),
-            fortnite_main_version: self
-                .summary
-                .custom_version(custom::FORTNITE_MAIN_OBJECT_VERSION)
-                .unwrap_or(-1),
+            serialization: SerializationPolicy {
+                niagara_version: self
+                    .summary
+                    .custom_version(custom::NIAGARA_OBJECT_VERSION)
+                    .unwrap_or(-1),
+                fortnite_main_version: self
+                    .summary
+                    .custom_version(custom::FORTNITE_MAIN_OBJECT_VERSION)
+                    .unwrap_or(-1),
+                instanced_struct_version: self
+                    .summary
+                    .custom_version(custom::INSTANCED_STRUCT_VERSION)
+                    .unwrap_or(-1),
+                state_tree_instance_storage_version: self
+                    .summary
+                    .custom_version(custom::STATE_TREE_INSTANCE_STORAGE_VERSION)
+                    .unwrap_or(-1),
+                fortnite_release_version: self
+                    .summary
+                    .custom_version(custom::FORTNITE_RELEASE_BRANCH_OBJECT_VERSION)
+                    .unwrap_or(-1),
+            },
             file_version_ue4: self.summary.file_version_ue4,
             file_version_ue5: self.summary.file_version_ue5,
         };
@@ -168,6 +183,7 @@ impl Package {
                 object_guid: None,
                 metadata: None,
                 pins: None,
+                user_defined_pins: None,
                 member: None,
             };
 

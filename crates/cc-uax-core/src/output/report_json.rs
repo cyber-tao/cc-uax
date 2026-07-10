@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 use super::export_json::exports_to_json;
+use super::graph_json::graphs_to_json;
 use super::property_json::name_or_null;
 
 impl DecodeReport<'_> {
@@ -24,6 +25,9 @@ impl DecodeReport<'_> {
         }
         if self.sections.exports {
             root.insert("exports".into(), exports_to_json(self));
+        }
+        if self.sections.pins {
+            root.insert("graphs".into(), graphs_to_json(self));
         }
         root.insert("diagnostics".into(), json!(self.diagnostics));
         Value::Object(root)

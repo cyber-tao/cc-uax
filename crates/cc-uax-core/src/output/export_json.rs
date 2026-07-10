@@ -4,7 +4,7 @@ use crate::reader::Guid;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-use super::pin_json::pins_to_json;
+use super::pin_json::{pins_to_json, user_defined_pins_to_json};
 use super::property_json::{name_or_null, tail_to_json};
 
 pub(crate) fn exports_to_json(report: &DecodeReport<'_>) -> Value {
@@ -95,6 +95,14 @@ fn export_to_json(
         obj.insert(
             "pins".into(),
             pins_to_json(package, pins, pin_name_by_id, export_full_names),
+        );
+    }
+    if report.sections.pins
+        && let Some(pins) = &export.user_defined_pins
+    {
+        obj.insert(
+            "user_defined_pins".into(),
+            user_defined_pins_to_json(package, pins),
         );
     }
     Value::Object(obj)

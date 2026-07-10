@@ -33,8 +33,7 @@ fn text_property_unknown_history_falls_back_to_hex() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -70,8 +69,7 @@ fn parse_text_property_value(value: &[u8]) -> serde_json::Value {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -197,8 +195,7 @@ fn text_ordered_format_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -244,8 +241,7 @@ fn text_string_table_entry_decodes() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };

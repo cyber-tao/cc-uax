@@ -116,7 +116,9 @@ fn parse_movie_scene_channel(
     // bShowCurve is gated on FFortniteMainBranchObjectVersion; a position-based
     // heuristic would misread when the channel sits inside an array (value_end then
     // spans the remaining elements, not just this channel).
-    if ctx.fortnite_main_version >= crate::version::custom::SERIALIZE_FLOAT_CHANNEL_SHOW_CURVE {
+    if ctx.serialization.fortnite_main_version
+        >= crate::version::custom::SERIALIZE_FLOAT_CHANNEL_SHOW_CURVE
+    {
         out.insert("show_curve".into(), json!(r.read_bool32()?));
     }
     Ok(Value::Object(out))

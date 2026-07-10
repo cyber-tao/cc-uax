@@ -58,12 +58,39 @@ pub(super) fn parse_gameplay_struct(
 }
 
 fn parse_instanced_struct(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Value> {
-    // Modern format (>= FInstancedStructCustomVersion::CustomVersionAdded):
-    // no legacy header/version prefix, just type object ref + serialized size.
-    let script_struct = r.read_i32()?;
     let mut o = Map::new();
+    if ctx.serialization.instanced_struct_version
+        < crate::version::custom::INSTANCED_STRUCT_CUSTOM_VERSION_ADDED
+    {
+        // Before FInstancedStructCustomVersion, editor archives prefixed the
+        // payload with 0xABABABAB while non-editor archives wrote only the
+        // legacy uint8 version. Probe the header exactly as UE5.7 does.
+        const LEGACY_EDITOR_HEADER: u32 = 0xABAB_ABAB;
+        let header_offset = r.pos();
+        let has_editor_header = if value_end.saturating_sub(header_offset) >= 4 {
+            if r.read_u32()? == LEGACY_EDITOR_HEADER {
+                true
+            } else {
+                r.seek(header_offset)?;
+                false
+            }
+        } else {
+            false
+        };
+        let legacy_version = r.read_u8()?;
+        o.insert("legacy_version".into(), json!(legacy_version));
+        o.insert("legacy_editor_header".into(), json!(has_editor_header));
+    }
+
+    let script_struct = r.read_i32()?;
     o.insert("script_struct".into(), (ctx.resolve_object)(script_struct));
     append_serialized_struct_payload(r, ctx, value_end, &mut o)?;
+    if r.pos() != value_end {
+        bail!(
+            "InstancedStruct ended at byte {}, expected {value_end}",
+            r.pos()
+        );
+    }
     Ok(Value::Object(o))
 }
 

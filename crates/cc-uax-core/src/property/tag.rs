@@ -10,6 +10,8 @@ use crate::version::{ue4, ue5};
 use anyhow::{Result, bail};
 use serde_json::json;
 
+const MAX_TYPE_NAME_DEPTH: usize = 64;
+
 // FPropertyTag flag bits (EPropertyTagFlags).
 const TAG_FLAG_HAS_ARRAY_INDEX: u8 = 0x01;
 const TAG_FLAG_HAS_PROPERTY_GUID: u8 = 0x02;
@@ -54,14 +56,17 @@ impl TypeName {
             }
         }
         let mut pos = 0usize;
-        let ty = Self::build(&flat, &mut pos)?;
+        let ty = Self::build(&flat, &mut pos, 0)?;
         if pos != flat.len() {
             bail!("type name tree did not consume all nodes");
         }
         Ok(ty)
     }
 
-    fn build(flat: &[(String, i32)], pos: &mut usize) -> Result<TypeName> {
+    fn build(flat: &[(String, i32)], pos: &mut usize, depth: usize) -> Result<TypeName> {
+        if depth > MAX_TYPE_NAME_DEPTH {
+            bail!("type name nesting exceeds {MAX_TYPE_NAME_DEPTH}");
+        }
         if *pos >= flat.len() {
             bail!("type name tree is incomplete");
         }
@@ -69,7 +74,7 @@ impl TypeName {
         *pos += 1;
         let mut params = Vec::new();
         for _ in 0..inner {
-            params.push(Self::build(flat, pos)?);
+            params.push(Self::build(flat, pos, depth + 1)?);
         }
         Ok(TypeName { name, params })
     }

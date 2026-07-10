@@ -42,8 +42,7 @@ fn optional_property_decodes_set_and_unset() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -87,8 +86,7 @@ fn multicast_inline_delegate_decodes() {
         resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -132,8 +130,7 @@ fn soft_object_property_resolves_list_index() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &table,
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -171,8 +168,7 @@ fn lazy_object_property_decodes_guid() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -223,8 +219,7 @@ fn map_removed_keys_are_discarded() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -271,8 +266,7 @@ fn set_removed_elements_are_discarded() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };

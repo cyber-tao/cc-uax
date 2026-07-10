@@ -18,11 +18,10 @@ impl PackageIndex {
         }
     }
     pub fn import_index(&self) -> Option<usize> {
-        if self.0 < 0 {
-            Some((-self.0 - 1) as usize)
-        } else {
-            None
-        }
+        self.0
+            .checked_neg()
+            .and_then(|value| value.checked_sub(1))
+            .and_then(|value| usize::try_from(value).ok())
     }
 }
 

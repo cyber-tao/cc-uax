@@ -89,7 +89,13 @@ impl Package {
             return String::new();
         }
         if index < 0 {
-            let i = (-index - 1) as usize;
+            let Some(i) = index
+                .checked_neg()
+                .and_then(|value| value.checked_sub(1))
+                .and_then(|value| usize::try_from(value).ok())
+            else {
+                return format!("<invalid_package_index#{index}>");
+            };
             match self.imports.get(i) {
                 Some(imp) => {
                     let name = self.names.resolve_raw(imp.object_name);

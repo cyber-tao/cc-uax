@@ -15,7 +15,10 @@ pub(super) fn export_serial_window(
     has_script: bool,
     file_len: u64,
 ) -> std::result::Result<Option<ExportSerialWindow>, String> {
-    if exp.serial_size <= 0 {
+    if exp.serial_size < 0 {
+        return Err(format!("negative serial size {}", exp.serial_size));
+    }
+    if exp.serial_size == 0 {
         return Ok(None);
     }
     if exp.serial_offset < 0 {

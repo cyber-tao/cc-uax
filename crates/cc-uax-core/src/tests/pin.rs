@@ -1,10 +1,15 @@
 use super::common::*;
+use crate::decode::{DecodeReport, DecodedExport, DecodedExportIdentity};
 use crate::name::NameMap;
+use crate::output::OutputSections;
+use crate::package::Package;
 use crate::pin::{
-    PinSerCtx, container_type_label, direction_label, parse_node_pins, parse_node_pins_report,
+    Pin, PinSerCtx, container_type_label, direction_label, is_supported_framework_pin_version,
+    locate_legacy_pin_start, parse_node_pins, parse_node_pins_report, parse_pin_ref_array,
+    parse_user_defined_pins_report,
 };
 use crate::property::{ParseCtx, parse_properties};
-use crate::reader::Reader;
+use crate::reader::{Guid, Reader};
 
 #[test]
 fn node_pin_array_decodes() {
@@ -108,9 +113,7 @@ fn node_pin_array_decodes() {
 
         soft_object_paths: &[],
 
-        niagara_version: -1,
-
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
 
         file_version_ue4: crate::version::ue4::HIGHEST,
 
@@ -212,8 +215,7 @@ fn node_pin_parse_failure_reports_diagnostic() {
         resolve_object: &|_idx: i32| serde_json::Value::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        niagara_version: -1,
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -309,9 +311,7 @@ fn edgraph_pin_type_map_container_decodes() {
 
         soft_object_paths: &[],
 
-        niagara_version: -1,
-
-        fortnite_main_version: -1,
+        serialization: crate::version::SerializationPolicy::default(),
 
         file_version_ue4: crate::version::ue4::HIGHEST,
 
@@ -361,4 +361,354 @@ fn edgraph_pin_type_map_container_decodes() {
         v["serialize_as_single_precision_float"].as_bool(),
         Some(true)
     );
+}
+
+#[test]
+fn legacy_property_terminator_locates_the_same_pin_stream_as_script_offset() {
+    let names = NameMap {
+        names: vec!["MyPin".into(), "exec".into(), "None".into()],
+    };
+    let mut data = Vec::new();
+    push_raw_name(&mut data, 2); // legacy property-list None terminator
+    let explicit_pin_start = data.len() as u64;
+    push_minimal_owned_pin(&mut data);
+
+    let pin_context = PinSerCtx {
+        filter_editor_only: true,
+        ..PinSerCtx::default()
+    };
+    let legacy_context = ParseCtx {
+        names: &names,
+        resolve_object: &|_| serde_json::Value::Null,
+        pins: pin_context,
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: 1009,
+    };
+    let script_offset_context = ParseCtx {
+        file_version_ue5: 1010,
+        ..legacy_context
+    };
+
+    let mut legacy_reader = Reader::new(&data);
+    let located = locate_legacy_pin_start(
+        &mut legacy_reader,
+        data.len() as u64,
+        &legacy_context,
+        "/exports/0/pins",
+    )
+    .expect("legacy None terminator must establish the pin boundary");
+    assert_eq!(located, explicit_pin_start);
+    let legacy_pins = parse_node_pins(
+        &mut legacy_reader,
+        data.len() as u64,
+        &legacy_context,
+        &pin_context,
+    )
+    .expect("legacy pins should parse");
+
+    let mut script_offset_reader = Reader::new(&data);
+    script_offset_reader.seek(explicit_pin_start).unwrap();
+    let script_offset_pins = parse_node_pins(
+        &mut script_offset_reader,
+        data.len() as u64,
+        &script_offset_context,
+        &pin_context,
+    )
+    .expect("script-offset pins should parse");
+
+    assert_eq!(legacy_pins.len(), 1);
+    assert_eq!(legacy_pins[0].pin_id, script_offset_pins[0].pin_id);
+    assert_eq!(legacy_pins[0].name, script_offset_pins[0].name);
+    assert_eq!(legacy_pins[0].category, script_offset_pins[0].category);
+}
+
+#[test]
+fn legacy_pin_boundary_is_not_guessed_without_none_terminator() {
+    let names = NameMap {
+        names: vec!["Value".into(), "IntProperty".into(), "None".into()],
+    };
+    let mut data = Vec::new();
+    push_legacy_tag_header(&mut data, 0, 1, 4);
+    push_legacy_tag_tail(&mut data);
+    push_i32(&mut data, 7);
+    let context = ParseCtx {
+        names: &names,
+        resolve_object: &|_| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: 1009,
+    };
+    let mut reader = Reader::new(&data);
+    let diagnostic =
+        locate_legacy_pin_start(&mut reader, data.len() as u64, &context, "/exports/0/pins")
+            .expect_err("a property list without None must not produce a pin offset");
+    assert_eq!(diagnostic.code, "legacy_pin_property_boundary_unavailable");
+    assert_eq!(reader.pos(), 0);
+}
+
+#[test]
+fn user_defined_pins_follow_framework_name_layout() {
+    let names = NameMap {
+        names: vec!["UserParam".into(), "real".into(), "None".into()],
+    };
+    let context = ParseCtx {
+        names: &names,
+        resolve_object: &|_| serde_json::Value::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: 1017,
+    };
+
+    let mut fname_data = Vec::new();
+    push_i32(&mut fname_data, 1);
+    push_raw_name(&mut fname_data, 0);
+    push_minimal_pin_type(&mut fname_data, 1, 2);
+    fname_data.push(0);
+    push_fstring(&mut fname_data, "12.5");
+    let mut fname_reader = Reader::new(&fname_data);
+    let fname_pins = parse_user_defined_pins_report(
+        &mut fname_reader,
+        fname_data.len() as u64,
+        &context,
+        &PinSerCtx::default(),
+        37,
+        "/exports/0/pins/user_defined",
+    )
+    .expect("current Framework layout should parse");
+    assert_eq!(fname_reader.pos(), fname_data.len() as u64);
+    assert_eq!(fname_pins[0].name, "UserParam");
+    assert_eq!(fname_pins[0].pin_type.category, "real");
+    assert_eq!(fname_pins[0].default_value, "12.5");
+
+    let mut string_data = Vec::new();
+    push_i32(&mut string_data, 1);
+    push_fstring(&mut string_data, "LegacyParam");
+    push_minimal_pin_type(&mut string_data, 1, 2);
+    string_data.push(1);
+    push_fstring(&mut string_data, "");
+    let mut string_reader = Reader::new(&string_data);
+    let string_pins = parse_user_defined_pins_report(
+        &mut string_reader,
+        string_data.len() as u64,
+        &context,
+        &PinSerCtx::default(),
+        30,
+        "/exports/0/pins/user_defined",
+    )
+    .expect("legacy Framework layout should parse FString names");
+    assert_eq!(string_reader.pos(), string_data.len() as u64);
+    assert_eq!(string_pins[0].name, "LegacyParam");
+    assert!(!is_supported_framework_pin_version(38));
+}
+
+#[test]
+fn pin_reference_array_accepts_compact_null_entries() {
+    let mut data = Vec::new();
+    push_i32(&mut data, 3);
+    push_i32(&mut data, 1);
+    push_i32(&mut data, 1);
+    push_i32(&mut data, 1);
+    let mut reader = Reader::new(&data);
+    let refs = parse_pin_ref_array(&mut reader).expect("null PinRefs only occupy bool32 values");
+    assert!(refs.is_empty());
+    assert_eq!(reader.pos(), data.len() as u64);
+}
+
+#[test]
+fn pin_reference_array_rejects_truncated_non_null_entry() {
+    let mut data = Vec::new();
+    push_i32(&mut data, 1);
+    push_i32(&mut data, 0); // non-null
+    push_i32(&mut data, 7); // node index, missing Guid
+    let mut reader = Reader::new(&data);
+    let error = parse_pin_ref_array(&mut reader).expect_err("non-null PinRef requires a Guid");
+    assert!(!format!("{error:#}").contains("pin reference count out of range"));
+    assert!(
+        reader.pos() > 4,
+        "the entry must be inspected after count validation"
+    );
+}
+
+#[test]
+fn logic_graphs_group_by_outer_and_never_emit_cross_graph_edges() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut exports = vec![
+        test_export(0, 0, 0, 0),
+        test_export(1, 0, 0, 0),
+        test_export(2, 0, 0, 0),
+        test_export(3, 0, 0, 0),
+        test_export(4, 0, 0, 0),
+    ];
+    exports[2].outer_index.0 = 1;
+    exports[3].outer_index.0 = 1;
+    exports[4].outer_index.0 = 2;
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "GraphA".into(),
+                "GraphB".into(),
+                "NodeA".into(),
+                "NodeB".into(),
+                "NodeC".into(),
+            ],
+        },
+        imports: Vec::new(),
+        exports,
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+    let output_id = Guid([1, 2, 3, 4]);
+    let input_id = Guid([5, 6, 7, 8]);
+    let cross_id = Guid([9, 10, 11, 12]);
+    let node_a = decoded_node(
+        3,
+        "NodeA",
+        vec![graph_pin(
+            output_id,
+            1,
+            "exec",
+            vec![(4, input_id), (5, cross_id)],
+        )],
+    );
+    let node_b = decoded_node(
+        4,
+        "NodeB",
+        vec![graph_pin(input_id, 0, "exec", vec![(3, output_id)])],
+    );
+    let node_c = decoded_node(
+        5,
+        "NodeC",
+        vec![graph_pin(cross_id, 0, "exec", vec![(3, output_id)])],
+    );
+    let mut sections = OutputSections::none();
+    sections.pins = true;
+    let report = DecodeReport {
+        package: &package,
+        sections,
+        exports: vec![
+            decoded_export(1, "GraphA", None),
+            decoded_export(2, "GraphB", None),
+            node_a,
+            node_b,
+            node_c,
+        ],
+        diagnostics: Vec::new(),
+    };
+
+    let json = report.to_json();
+    let graphs = json["graphs"].as_array().unwrap();
+    assert_eq!(graphs.len(), 2);
+    assert_eq!(graphs[0]["nodes"].as_array().unwrap().len(), 2);
+    assert_eq!(graphs[0]["edges"].as_array().unwrap().len(), 1);
+    assert_eq!(graphs[0]["edges"][0]["from"]["node_index"], 3);
+    assert_eq!(graphs[0]["edges"][0]["to"]["node_index"], 4);
+    assert_eq!(graphs[0]["excluded_cross_graph_links"], 1);
+    assert!(
+        graphs[0]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|edge| { edge["from"]["node_index"] != 5 && edge["to"]["node_index"] != 5 })
+    );
+    assert!(graphs[1]["edges"].as_array().unwrap().is_empty());
+}
+
+fn push_minimal_owned_pin(data: &mut Vec<u8>) {
+    push_i32(data, 0); // no UObject guid
+    push_i32(data, 1); // pin count
+    push_i32(data, 0); // owning-pin entry is not null
+    push_i32(data, 3); // wrapper node
+    push_guid(data, 1, 2, 3, 4); // wrapper guid
+    push_i32(data, 3); // owning node
+    push_guid(data, 1, 2, 3, 4); // pin id
+    push_raw_name(data, 0); // MyPin
+    push_fstring(data, ""); // tooltip
+    data.push(1); // output
+    push_minimal_pin_type(data, 1, 2);
+    push_fstring(data, ""); // default
+    push_fstring(data, ""); // autogenerated default
+    push_i32(data, 0); // default object
+    push_empty_ftext(data);
+    push_i32(data, 0); // linked
+    push_i32(data, 0); // sub-pins
+    push_i32(data, 1); // null parent
+    push_i32(data, 1); // null reference pass-through
+}
+
+fn push_minimal_pin_type(data: &mut Vec<u8>, category: i32, none: i32) {
+    push_raw_name(data, category);
+    push_raw_name(data, none);
+    push_i32(data, 0);
+    data.push(0);
+    push_i32(data, 0);
+    push_i32(data, 0);
+    push_i32(data, 0);
+    push_raw_name(data, none);
+    push_guid(data, 0, 0, 0, 0);
+    push_i32(data, 0);
+}
+
+fn decoded_node(index: i32, name: &str, pins: Vec<Pin>) -> DecodedExport {
+    decoded_export(index, name, Some(pins))
+}
+
+fn decoded_export(index: i32, name: &str, pins: Option<Vec<Pin>>) -> DecodedExport {
+    DecodedExport {
+        identity: DecodedExportIdentity {
+            index,
+            name: name.into(),
+            class: "/Script/BlueprintGraph.K2Node_Test".into(),
+            is_asset: false,
+        },
+        layout: None,
+        properties: None,
+        property_status: None,
+        post_property_tail: None,
+        object_guid: None,
+        metadata: None,
+        pins,
+        user_defined_pins: None,
+        member: None,
+    }
+}
+
+fn graph_pin(pin_id: Guid, direction: u8, category: &str, links: Vec<(i32, Guid)>) -> Pin {
+    Pin {
+        pin_id,
+        name: "Pin".into(),
+        direction,
+        category: category.into(),
+        sub_category: String::new(),
+        sub_category_object: 0,
+        default_value: String::new(),
+        default_object: 0,
+        linked_to: links
+            .into_iter()
+            .map(|(node_index, pin_id)| crate::pin::PinRef { node_index, pin_id })
+            .collect(),
+        sub_pins: Vec::new(),
+        parent_pin: None,
+        container_type: 0,
+        value_type: None,
+        is_reference: false,
+        is_weak_pointer: false,
+        member_parent: 0,
+        member_name: String::new(),
+        member_guid: Guid([0; 4]),
+        is_const: false,
+        is_uobject_wrapper: false,
+        serialize_as_single_precision_float: false,
+        persistent_guid: None,
+        editor_flags: None,
+        reference_pass_through: None,
+    }
 }

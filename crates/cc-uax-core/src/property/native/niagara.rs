@@ -50,7 +50,8 @@ pub(super) fn parse_niagara_struct(
 }
 
 fn niagara_modern(ctx: &ParseCtx) -> bool {
-    ctx.niagara_version >= crate::version::custom::NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY
+    ctx.serialization.niagara_version
+        >= crate::version::custom::NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY
 }
 
 fn read_name(r: &mut Reader, names: &NameMap) -> Result<String> {
@@ -64,7 +65,7 @@ fn parse_niagara_gpu_param_info(r: &mut Reader, ctx: &ParseCtx, value_end: u64) 
         json!(r.read_fstring()?),
     );
     o.insert("di_class_name".into(), json!(r.read_fstring()?));
-    if ctx.niagara_version
+    if ctx.serialization.niagara_version
         >= crate::version::custom::NIAGARA_ADD_GENERATED_FUNCTIONS_TO_GPU_PARAM_INFO
     {
         o.insert(
@@ -103,7 +104,7 @@ fn parse_niagara_generated_function(
         "specifiers".into(),
         parse_name_pair_array(r, ctx.names, value_end, "Niagara function specifier")?,
     );
-    if ctx.niagara_version
+    if ctx.serialization.niagara_version
         >= crate::version::custom::NIAGARA_ADD_VARIADIC_PARAMETERS_TO_GPU_FUNCTION_INFO
     {
         o.insert(
@@ -115,7 +116,7 @@ fn parse_niagara_generated_function(
             parse_niagara_variable_references(r, ctx, value_end, "Niagara variadic output")?,
         );
     }
-    if ctx.niagara_version
+    if ctx.serialization.niagara_version
         >= crate::version::custom::NIAGARA_SERIALIZE_USAGE_BITMASK_TO_GPU_FUNCTION_INFO
     {
         o.insert("misc_usage_bitmask".into(), json!(r.read_u16()?));

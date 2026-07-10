@@ -2,6 +2,7 @@ use crate::collect_package_references;
 use crate::name::NameMap;
 use crate::object::PackageIndex;
 use crate::property::TypeName;
+use crate::reader::Reader;
 use crate::{
     ByteRangePreview, Diagnostic, MountMap, OutputSections, Severity, package_path_from_relative,
     package_path_from_relative_with_mounts,
@@ -20,6 +21,27 @@ fn package_index_semantics() {
     assert_eq!(PackageIndex(-1).import_index(), Some(0));
 
     assert_eq!(PackageIndex(-3).import_index(), Some(2));
+
+    assert_eq!(PackageIndex(i32::MIN).import_index(), None);
+}
+
+#[test]
+fn typename_rejects_excessive_nesting() {
+    let names = NameMap {
+        names: vec!["Nested".to_string()],
+    };
+    let mut bytes = Vec::new();
+    for _ in 0..=64 {
+        bytes.extend_from_slice(&0_i32.to_le_bytes());
+        bytes.extend_from_slice(&0_i32.to_le_bytes());
+        bytes.extend_from_slice(&1_i32.to_le_bytes());
+    }
+    bytes.extend_from_slice(&0_i32.to_le_bytes());
+    bytes.extend_from_slice(&0_i32.to_le_bytes());
+    bytes.extend_from_slice(&0_i32.to_le_bytes());
+
+    let err = TypeName::parse(&mut Reader::new(&bytes), &names).unwrap_err();
+    assert!(err.to_string().contains("nesting exceeds"));
 }
 
 #[test]

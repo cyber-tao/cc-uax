@@ -7,6 +7,7 @@ use crate::diagnostic::Diagnostic;
 use crate::name::NameMap;
 use crate::pin::PinSerCtx;
 use crate::reader::Reader;
+use crate::version::SerializationPolicy;
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
 
@@ -26,11 +27,7 @@ pub struct ParseCtx<'a> {
     pub resolve_object: &'a dyn Fn(i32) -> Value,
     pub pins: PinSerCtx,
     pub soft_object_paths: &'a [Value],
-    /// FNiagaraCustomVersion of the package (-1 when absent), gating Niagara decoders.
-    pub niagara_version: i32,
-    /// FFortniteMainBranchObjectVersion of the package (-1 when absent), gating the
-    /// MovieScene channel bShowCurve field.
-    pub fortnite_main_version: i32,
+    pub serialization: SerializationPolicy,
     pub file_version_ue4: i32,
     pub file_version_ue5: i32,
 }

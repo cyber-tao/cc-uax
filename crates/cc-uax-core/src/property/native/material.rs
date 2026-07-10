@@ -42,7 +42,7 @@ pub(super) fn parse_material_input_struct(
         "ColorMaterialInput" => {
             let mut o = parse_expression_input(r, ctx)?;
             o.insert("use_constant".into(), json!(r.read_bool32()?));
-            if ctx.fortnite_main_version < MATERIAL_INPUT_USES_LINEAR_COLOR {
+            if ctx.serialization.fortnite_main_version < MATERIAL_INPUT_USES_LINEAR_COLOR {
                 o.insert("constant".into(), json!({ "packed_bgra": r.read_u32()? }));
             } else {
                 o.insert(

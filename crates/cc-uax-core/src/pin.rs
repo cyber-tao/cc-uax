@@ -1,18 +1,22 @@
 use crate::diagnostic::Diagnostic;
-use crate::property::{ParseCtx, parse_text};
+use crate::property::{ParseCtx, PropertyParseStatus, parse_object_properties_report, parse_text};
 use crate::reader::{Guid, Reader};
 use crate::summary::PackageFileSummary;
 use crate::version::custom;
 use anyhow::{Result, bail};
 
 const MAX_PIN_COUNT: i32 = 4096;
-/// PinRef on disk: node PackageIndex (i32, 4 bytes) + pin Guid (16 bytes).
-const PIN_REF_SIZE: u64 = 20;
+/// A serialized nullable PinRef always starts with a bool32. Null entries end
+/// there; non-null entries append a PackageIndex and Guid (20 more bytes).
+const PIN_REF_MIN_SIZE: u64 = 4;
 const CONTAINER_TYPE_NONE: u8 = 0;
 const CONTAINER_TYPE_ARRAY: u8 = 1;
 const CONTAINER_TYPE_SET: u8 = 2;
 const CONTAINER_TYPE_MAP: u8 = 3;
 const PIN_DIRECTION_INPUT: u8 = 0;
+const FRAMEWORK_PINS_STORE_FNAME: i32 = 31;
+const FRAMEWORK_LATEST_UE57: i32 = 37;
+const FRAMEWORK_OBJECT_VERSION: Guid = Guid([0xCFFC_743F, 0x43B0_4480, 0x9391_14DF, 0x171D_2073]);
 
 #[derive(Clone, Copy, Default)]
 pub struct PinSerCtx {
@@ -114,8 +118,68 @@ pub struct Pin {
 }
 
 #[derive(Debug, Clone)]
+pub struct UserDefinedPin {
+    pub name: String,
+    pub pin_type: PinType,
+    pub direction: u8,
+    pub default_value: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct PinParse {
     pub pins: Vec<Pin>,
+}
+
+pub(crate) fn framework_pin_version(summary: &PackageFileSummary) -> Option<i32> {
+    summary.custom_version(FRAMEWORK_OBJECT_VERSION)
+}
+
+pub(crate) fn is_supported_framework_pin_version(version: i32) -> bool {
+    version <= FRAMEWORK_LATEST_UE57
+}
+
+/// Locate the UObject tail that follows a legacy tagged-property stream.
+///
+/// Packages before `VER_UE5_SCRIPT_SERIALIZATION_OFFSET` do not carry an
+/// explicit property end in their export table.  The only sound boundary is
+/// the position immediately after the serialized `None` property tag.  A
+/// failed/non-tagged property parse must not be treated as a candidate pin
+/// offset because doing so can turn arbitrary payload bytes into a plausible
+/// pin count.
+pub(crate) fn locate_legacy_pin_start(
+    r: &mut Reader,
+    end: u64,
+    ctx: &ParseCtx,
+    path: &str,
+) -> std::result::Result<u64, Diagnostic> {
+    let start = r.pos();
+    let parsed = parse_object_properties_report(r, ctx, end, path);
+    let property_end = r.pos();
+    if matches!(
+        parsed.status,
+        PropertyParseStatus::Complete | PropertyParseStatus::Empty
+    ) && property_end < end
+    {
+        return Ok(property_end);
+    }
+
+    let _ = r.seek(start);
+    let diagnostic_codes: Vec<&str> = parsed
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code.as_str())
+        .collect();
+    Err(Diagnostic::warning(
+        "legacy_pin_property_boundary_unavailable",
+        path,
+        "legacy graph-node properties did not end in a usable None terminator; pin offset was not guessed",
+    )
+    .with_offset(property_end)
+    .with_context(serde_json::json!({
+        "property_status": parsed.status.as_str(),
+        "property_diagnostics": diagnostic_codes,
+        "serial_end": end,
+    })))
 }
 
 pub fn direction_label(direction: u8) -> &'static str {
@@ -172,6 +236,67 @@ pub fn parse_node_pins_report(
                 "pin_parse_failed",
                 path,
                 format!("pin parser failed: {err:#}"),
+            )
+            .with_offset(failed_at))
+        }
+    }
+}
+
+pub(crate) fn parse_user_defined_pins_report(
+    r: &mut Reader,
+    end: u64,
+    ctx: &ParseCtx,
+    vc: &PinSerCtx,
+    framework_version: i32,
+    path: &str,
+) -> std::result::Result<Vec<UserDefinedPin>, Diagnostic> {
+    let start = r.pos();
+    let parsed = (|| -> Result<Vec<UserDefinedPin>> {
+        let count = r.read_i32()?;
+        if !(0..=MAX_PIN_COUNT).contains(&count) {
+            bail!("user-defined pin count out of range: {count}");
+        }
+        let mut pins = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let name = if framework_version >= FRAMEWORK_PINS_STORE_FNAME {
+                ctx.names.resolve_raw(r.read_raw_name()?)
+            } else {
+                r.read_fstring()?
+            };
+            let pin_type = parse_pin_type(r, ctx, vc)?;
+            let direction = r.read_u8()?;
+            let default_value = r.read_fstring()?;
+            if r.pos() > end {
+                bail!("user-defined pin region overrun");
+            }
+            pins.push(UserDefinedPin {
+                name,
+                pin_type,
+                direction,
+                default_value,
+            });
+        }
+        Ok(pins)
+    })();
+
+    match parsed {
+        Ok(pins) if r.pos() <= end => Ok(pins),
+        Ok(_) => {
+            let _ = r.seek(start);
+            Err(Diagnostic::warning(
+                "user_defined_pins_region_overrun",
+                path,
+                "FUserPinInfo array overran the export serial region",
+            )
+            .with_offset(start))
+        }
+        Err(error) => {
+            let failed_at = r.pos();
+            let _ = r.seek(start);
+            Err(Diagnostic::warning(
+                "user_defined_pins_parse_failed",
+                path,
+                format!("failed to parse FUserPinInfo array: {error:#}"),
             )
             .with_offset(failed_at))
         }
@@ -333,9 +458,9 @@ fn parse_terminal_type(r: &mut Reader, ctx: &ParseCtx, vc: &PinSerCtx) -> Result
     })
 }
 
-fn parse_pin_ref_array(r: &mut Reader) -> Result<Vec<PinRef>> {
+pub(crate) fn parse_pin_ref_array(r: &mut Reader) -> Result<Vec<PinRef>> {
     let count = r.read_i32()?;
-    if count < 0 || (count as u64).saturating_mul(PIN_REF_SIZE) > r.remaining() {
+    if count < 0 || (count as u64).saturating_mul(PIN_REF_MIN_SIZE) > r.remaining() {
         bail!("pin reference count out of range: {count}");
     }
     let mut refs = Vec::new();

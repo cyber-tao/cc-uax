@@ -225,11 +225,13 @@ fn parse_soft_object(r: &mut Reader, ctx: &ParseCtx) -> Result<Value> {
     // an int32 index into that list; otherwise the path is serialized inline.
     if !ctx.soft_object_paths.is_empty() {
         let index = r.read_i32()?;
-        return Ok(usize::try_from(index)
-            .ok()
-            .and_then(|i| ctx.soft_object_paths.get(i))
+        let index = usize::try_from(index)
+            .map_err(|_| anyhow::anyhow!("soft object path index out of range: {index}"))?;
+        return ctx
+            .soft_object_paths
+            .get(index)
             .cloned()
-            .unwrap_or(Value::Null));
+            .ok_or_else(|| anyhow::anyhow!("soft object path index out of range: {index}"));
     }
     read_soft_object_path(r, ctx.names)
 }

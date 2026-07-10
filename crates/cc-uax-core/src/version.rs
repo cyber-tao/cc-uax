@@ -53,6 +53,32 @@ pub mod ue4 {
     pub const HIGHEST: i32 = 522;
 }
 
+/// Custom-version values that select native struct serialization layouts.
+///
+/// Unreal returns `-1` when a package does not contain a requested custom
+/// version. Keeping that value is important: for all policies below, a missing
+/// GUID selects the legacy layout rather than the first versioned layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SerializationPolicy {
+    pub niagara_version: i32,
+    pub fortnite_main_version: i32,
+    pub instanced_struct_version: i32,
+    pub state_tree_instance_storage_version: i32,
+    pub fortnite_release_version: i32,
+}
+
+impl Default for SerializationPolicy {
+    fn default() -> Self {
+        Self {
+            niagara_version: -1,
+            fortnite_main_version: -1,
+            instanced_struct_version: -1,
+            state_tree_instance_storage_version: -1,
+            fortnite_release_version: -1,
+        }
+    }
+}
+
 pub mod custom {
     use crate::reader::Guid;
 
@@ -66,6 +92,12 @@ pub mod custom {
         Guid([0xFCF5_7AFA, 0x5076_4283, 0xB9A9_E658, 0xFFA0_2D32]);
     pub const FORTNITE_MAIN_OBJECT_VERSION: Guid =
         Guid([0x601D_1886, 0xAC64_4F84, 0xAA16_D3DE, 0x0DEA_C7D6]);
+    pub const FORTNITE_RELEASE_BRANCH_OBJECT_VERSION: Guid =
+        Guid([0xE708_6368, 0x6B23_4C58, 0x8439_1B70, 0x1626_5E91]);
+    pub const INSTANCED_STRUCT_VERSION: Guid =
+        Guid([0xE21E_1CAA, 0xAF47_425E, 0x89BF_6AD4, 0x4C44_A8BB]);
+    pub const STATE_TREE_INSTANCE_STORAGE_VERSION: Guid =
+        Guid([0x60C4_F0DE, 0x8B26_4C34, 0xAA93_7201, 0x5DFF_09CC]);
 
     pub const EDGRAPH_PIN_SOURCE_INDEX: i32 = 50;
     /// FFortniteMainBranchObjectVersion::SerializeFloatChannelShowCurve — from this
@@ -79,6 +111,12 @@ pub mod custom {
     pub const NIAGARA_SERIALIZE_USAGE_BITMASK_TO_GPU_FUNCTION_INFO: i32 = 91;
     pub const PIN_TYPE_INCLUDES_UOBJECT_WRAPPER_FLAG: i32 = 32;
     pub const SERIALIZE_FLOAT_PIN_SINGLE_PRECISION: i32 = 36;
+    /// FInstancedStructCustomVersion::CustomVersionAdded.
+    pub const INSTANCED_STRUCT_CUSTOM_VERSION_ADDED: i32 = 0;
+    /// FStateTreeInstanceStorageCustomVersion::AddedCustomSerialization.
+    pub const STATE_TREE_INSTANCE_STORAGE_ADDED_CUSTOM_SERIALIZATION: i32 = 1;
+    /// FFortniteReleaseBranchCustomObjectVersion::PCGPointStructuredSerializer.
+    pub const PCG_POINT_STRUCTURED_SERIALIZER: i32 = 13;
 }
 
 pub const PACKAGE_FILE_TAG: u32 = 0x9E2A_83C1;
