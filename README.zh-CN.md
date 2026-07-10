@@ -2,17 +2,12 @@
 
 # cc-uax
 
-**把 Unreal Engine 5 `.uasset`/`.umap` 资产包解析为 JSON —— 属性、蓝图节点图、资源引用关系。**
-
-单一 CLI：把不透明的 UE5 编辑器资产转成结构化 JSON —— 让 Claude Code 终于能读懂你游戏里的蓝图、属性与资产引用。
+**面向 Claude Code、Codex 等工程 Agent 的 Unreal Engine 5 编辑器资产结构化分析工具。**
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Release](https://img.shields.io/github/v/release/cyber-tao/cc-uax?logo=github)](https://github.com/cyber-tao/cc-uax/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/release.yml?branch=master&label=build)](https://github.com/cyber-tao/cc-uax/actions/workflows/release.yml)
-[![UE5](https://img.shields.io/badge/Unreal%20Engine-5.7-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=flat)](https://opensource.org/licenses/MIT)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-5851DB)](#)
-![Status](https://img.shields.io/badge/status-stable%20%202%2C096%20assets%20validated-1F6FEB)
+[![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/ci.yml?branch=master&label=CI)](https://github.com/cyber-tao/cc-uax/actions/workflows/ci.yml)
+[![UE5](https://img.shields.io/badge/reference-UE%205.7-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
 [English](README.md) · **简体中文**
 
@@ -20,61 +15,26 @@
 
 ---
 
-## 📖 关于
+## 为什么需要 cc-uax？
 
-我是 UE5 游戏开发者，做 `cc-uax` 这个工具只为了一件事：**让 Claude Code 能读懂虚幻引擎的资产文件。**
+Unreal 项目的大量逻辑和数据位于二进制 `.uasset`、`.umap` 包中。以源码为中心的 Agent 可以阅读 C++ 和配置，却无法直接检查蓝图执行流、序列化属性、资产依赖、PCG 图、StateTree 或 World Partition 外部包。
 
-一个真实的 UE5 项目，其内容全在不透明的 `.uasset`/`.umap` 二进制里——每一张蓝图图、每一个数据资产、每一个关卡都是一团 AI 编程助手打不开的 blob。它们能写 C++、能改文本，却看不见节点的连线、tagged 属性，也看不见一个 Actor 引用了哪些材质和数据表。`cc-uax` 正是补上这一环：它读取任意 UE5 编辑器资产，把内容导出为结构化的 **JSON** —— 完整包头、tagged 属性、蓝图节点与 pin 连线图，以及前向与反向资源引用——让 agent 能像理解你的代码一样，去理解你游戏里的内容。以单一自包含二进制发布，无运行时依赖。
+`cc-uax` 将受支持的 UE5 编辑器包转换为带类型和证据的报告。它既能分析单个资产，也能在不启动 Unreal Editor 的情况下建立项目级索引。
 
-名字说得很直白：**cc** = Claude Code，**uax** = uasset。它同时还附带一个 [agent skill](#-作为-agent-skill-使用)——配置好后，Claude Code（或 OpenAI Codex）会在你要求检查 `.uasset`/`.umap` 时自动调用 `cc-uax`，无需手读二进制。
+> 支持范围：有版本信息、未 Cook 的 UE5 编辑器包（`FileVersionUE5 >= 1000`）。Cooked/无版本包及 UE4 包明确不支持。
 
-> 目标范围：UE5（`FileVersionUE5 >= 1000`）的 **versioned、未 cooked 的编辑器资产**。包头、各表、引用图、UE5 legacy property tag（`1000..1011`）与完整类型名 property tag（`>= 1012`）均可解码。Cooked / unversioned 包与 UE4 旧格式明确不在支持范围内。
+## 能力
 
-## ✨ 功能
+- **强类型包分析**：包元数据、import/export、带标签属性、对象引用、诊断和字节覆盖率。
+- **按图隔离的逻辑模型**：K2/EdGraph 节点始终归属具体图；不会把不同 EventGraph 或函数图中的同名节点拼成虚假链路。
+- **专用适配器**：在序列化证据充分时分析 K2/EdGraph、RigVM/ControlRig model links、StateTree 的 state/task/condition/transition、PCG 节点/pin/edge，以及 Niagara 编辑器图。
+- **项目级索引**：单次扫描建立资产清单、前向/反向引用邻接表和 World Partition 外部包归属闭包。
+- **显式表达不确定性**：报告包含 schema 版本、总体状态、机器可读 coverage、diagnostics 和 capability 证据；不支持或有意保持 opaque 的区域不会伪装成成功解码。
+- **Agent Skill**：随附 skill 要求 Claude Code、Codex 在描述玩法和资源使用前先建立项目证据。
 
-- **完整包头** —— `FPackageFileSummary`、Name 表、Import 与 Export 映射、自定义版本。
-- **Versioned tagged property** —— UE5 legacy `FPropertyTag` 与 UE5.7 新式完整 `FPropertyTypeName` tag。
-- **精确属性区间** —— 通过 `ScriptSerialization` 范围定位每个对象的数据，正确消费 `UClass` / `UBlueprint` 头部控制字节。
-- **丰富的值类型解码**
+## 安装
 
-  | 类别 | 类型 |
-  |---|---|
-  | 基础类型 | 数值、`bool`、枚举、字符串、`FName`、`FText` |
-  | 引用 | `ObjectProperty` → 全名 + 包索引、`SoftObjectPath`、`FieldPath` |
-  | 容器 | `ArrayProperty`、`SetProperty`、`MapProperty`、`OptionalProperty` |
-  | 嵌套 | 递归 tagged 结构体 |
-  | 原生结构体 | `Vector` / `Vector3f` / `Vector4` / `Vector4f` / `Rotator` / `Quat` / `Color` / `LinearColor` / `Transform` / `Transform3f` / `Box` / `Box2D` / `Box2f` / `Guid` / `DateTime` / `FrameNumber` / `IntVector2` / `IntVector4` / `RichCurveKey` … |
-  | 材质输入 | `ExpressionInput` + Scalar / Vector / Vector2 / Color / ShadingModel / Substrate / MaterialAttributes |
-  | 序列器与曲线 | `FrameRange`、`FloatChannel`、`DoubleChannel`、per-platform Float / Int / Bool / FrameRate、动画曲线（`FloatCurve` / `TransformCurve`） |
-  | 运行时结构体 | `InstancedStruct` / `InstancedStructContainer`、`StateTreeInstanceData`、`PerQualityLevelInt` / `Float`、委托（`Delegate` / `MulticastInline` / `MulticastSparse`）、`EdGraphPinType` |
-  | Gameplay、PCG 与特效 | `GameplayTagContainer`、`GameplayEffectVersion`、`Spline`、`AlphaBlend`、StateTree 引用/链接、PCG selector 与 point array、Niagara 核心（`NiagaraVariable` / `NiagaraVariableBase` / `NiagaraVariableWithOffset` / `NiagaraTypeDefinition`） |
-
-- **蓝图图逻辑** —— 紧随 tagged property 区间之后解码 `UEdGraphNode` 的 pin：每个节点的 pins、pin 类型、默认值/默认对象，以及 `LinkedTo` 连线，从而可重建完整的节点间执行与数据流图 —— 蓝图（`K2Node_*`）与 Niagara（`NiagaraNode*`）图节点均覆盖。图节点还会蒸馏出 `member`（其引用的函数 / 事件 / 变量）与 `member_from`（所属 C++ 类），便于与源码交叉对照。
-- **可选输出区块** —— `--sections`（别名 `-S`）按需组合要输出的区块，或直接选预设（`logic`、`debug`、`dump`、`all`）—— 让逻辑分析精简、查 BUG 全面。
-- **优雅的十六进制回退** —— 未来遇到尚未结构化的自定义二进制结构体时，输出带 `type` + `size` 标注的十六进制预览，**保证字节对齐不被破坏**；当前 UE5.7 验证集内 `@unparsed` 为 0。
-- **引用图谱**
-  - `-S refs` —— 从 import 表提取前向引用（`assets` / `scripts`），并加入包头软引用表（`soft`，如 `TSoftObjectPtr`/`TSoftClassPtr`），去重排序。
-  - `--scan-dir` —— 反向引用：哪些资产引用了*当前文件*（`referenced_by`，硬引用或软引用均计入），通过 `--mount` 路径映射。
-- **增量扫描缓存** —— 基于 SQLite（`.cc-uax-cache.sqlite`），按修改时间 + 大小作键，带实时 stderr 进度条。`--no-cache` 可关闭。
-
-## 🛠️ 技术栈
-
-**语言与运行时**
-
-`Rust (edition 2024)` · `byteorder`（LE 字节流） · `serde` + `serde_json`（输出） · `clap` v4（CLI，derive） · `anyhow`（错误处理） · `rusqlite` 内置 SQLite（扫描缓存，**仅二进制侧**）
-
-| 层 | 职责 | 依赖 |
-|---|---|---|
-| 解析器（`lib`） | 包头、Name、Import/Export、tagged property | `byteorder`、`serde`、`serde_json`、`anyhow` |
-| CLI（`bin`） | 参数、输出整形、反向扫描、缓存 | `clap`、`rusqlite`（+ 解析器） |
-
-> 解析器 crate **刻意不依赖** `rusqlite` —— 反向扫描缓存只存在于二进制侧。
-
-## 📦 安装
-
-### 一键安装（推荐）
-
-自动下载当前平台最新的预编译二进制，把 `cc-uax` 装到 `PATH`，并为 Claude Code 与 Codex 同时配置好 [agent skill](#-作为-agent-skill-使用)。
+预编译 Release 会安装二进制和完整的 Agent Skill 目录。
 
 **Linux / macOS**
 
@@ -82,242 +42,174 @@
 curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.sh | bash
 ```
 
-**Windows（PowerShell）**
+**Windows PowerShell**
 
 ```powershell
 irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
 ```
 
-预编译二进制发布在 [Releases](https://github.com/cyber-tao/cc-uax/releases) 页面：
-
-| 平台 | Target |
-|---|---|
-| Linux x86_64 / aarch64 | `x86_64-unknown-linux-gnu`、`aarch64-unknown-linux-gnu` |
-| Windows x86_64 | `x86_64-pc-windows-msvc` |
-| macOS x86_64 / Apple Silicon | `x86_64-apple-darwin`、`aarch64-apple-darwin` |
-
-安装脚本支持的环境变量（执行前设置）：`INSTALL_DIR`（二进制位置）、`VERSION`（指定 tag）、`NO_SKILL=1`（跳过 skill 配置）。
-
-### 卸载
-
-移除二进制、Windows 用户 `PATH` 条目，以及 Claude Code / Codex 的 skill。`NO_SKILL=1` 时保留 skill。
-
-**Linux / macOS**
-
-```bash
-bash install.sh uninstall
-# 管道方式：curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.sh | bash -s -- uninstall
-```
-
-**Windows（PowerShell）**
-
-```powershell
-.\install.ps1 -Uninstall
-# 管道方式：$env:UNINSTALL='1'; irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
-```
-
-### 从源码构建
-
-需要 Rust ≥ 1.88（edition 2024，使用 let-chains）：
+从源码构建 0.9 workspace 需要 Rust 1.88 或更高版本：
 
 ```bash
 git clone https://github.com/cyber-tao/cc-uax.git
 cd cc-uax
-cargo build --release    # 产物在 target/release/cc-uax[.exe]
+cargo build -p cc-uax-cli --release --locked
 ```
 
-或直接安装到 `~/.cargo/bin`：`cargo install --path .`。无运行时依赖；SQLite 静态链接。
+二进制位于 `target/release/cc-uax[.exe]`。也可以从 checkout 安装：
 
-## 🤖 作为 Agent Skill 使用
+```bash
+cargo install --path crates/cc-uax-cli --locked
+```
 
-`cc-uax` 同时附带一个遵循开放 agent-skills 标准的 [agent skill](skills/cc-uax/SKILL.md) —— **同一份 `SKILL.md` 在 Claude Code 和 OpenAI Codex 中都能用**。配置完成后，当你要求任一 agent 检查 `.uasset`/`.umap` 或追踪资产引用时，它会自动调用 `cc-uax`，无需手读二进制。
+## CLI
 
-一键安装脚本会同时为两个 agent 配置好 skill。如需手动配置，把 [skills/cc-uax/](skills/cc-uax/) 复制到：
+0.9 CLI 使用两个明确的工作流。
 
-| Agent | 用户级位置 | 项目级位置 |
+### 分析单个资产
+
+```text
+cc-uax asset <FILE> --view <summary|logic|properties|references|full>
+```
+
+```powershell
+# 资产身份、状态、coverage 和 capabilities
+cc-uax asset Content/Blueprints/BP_Player.uasset --view summary
+
+# 图、节点、exec/data edge、成员引用和 pin 默认值
+cc-uax asset Content/Blueprints/BP_Player.uasset --view logic
+
+# 完整强类型报告
+cc-uax asset Content/Blueprints/BP_Player.uasset --view full --output BP_Player.json
+```
+
+### 分析项目
+
+```text
+cc-uax project <PROJECT_OR_CONTENT_DIR>
+  [--focus <PACKAGE_OR_GLOB>]
+  [--mount <PACKAGE_PREFIX=RELATIVE_DIR>]...
+  [--allow-partial]
+  [--cache-file <FILE> | --no-cache]
+```
+
+```powershell
+# 对 .uproject 目录或 Content 目录执行一次扫描
+cc-uax project D:/Games/MyGame --output project-report.json
+
+# 复用同一项目索引，并为匹配包附加完整分析
+cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
+
+# 添加显式 package mount
+cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
+```
+
+项目分析默认采用 **strict** 模式。任何已映射资产读取、索引或解析失败都会生成结构化 failure；只要请求的项目证据仍为 `partial` 或 `unsupported`，进程也会以非零状态退出。`--allow-partial` 只改变进程是否接受该结果，不会粉饰报告；真实 status、失败项和降低后的 coverage 都会保留。
+
+项目缓存默认放在操作系统缓存目录，不写入被分析项目。使用 `--cache-file` 指定位置，或用 `--no-cache` 完全禁用缓存。
+
+输出格式选项以 `cc-uax asset --help` 和 `cc-uax project --help` 为准。
+
+## 报告契约
+
+解析层内部使用强类型结果，只在 CLI 边界渲染 JSON。资产报告直接包含 `coverage`、`capabilities` 和 `diagnostics`；项目报告通过聚合 `analysis`、inventory 中的紧凑分析以及可选的完整 `focused` 分析提供同类证据：
+
+```jsonc
+{
+  "schema_version": 1,
+  "status": "complete",
+  "coverage_or_analysis": {
+    /* 请求、已解码、opaque、不支持和失败的证据 */
+  },
+  "capabilities": [
+    /* 各能力的证据与限制 */
+  ],
+  "diagnostics": [],
+  /* 其余强类型资产 view 或项目索引字段 */
+}
+```
+
+状态语义：
+
+| 状态 | 含义 |
+|---|---|
+| `complete` | 当前 view 所要求的证据全部解码，且没有未解决缺口。 |
+| `partial` | 报告仍可用，但至少一个请求区域失败、保持 opaque 或无法连接。 |
+| `unsupported` | 当前包/版本无法提供请求的能力。 |
+
+`known_opaque` 是明确的能力结果，不等于成功。典型例子包括尚不能表示为源码级逻辑的 RigVM 编译字节码和压缩 RigHierarchy。只要请求的能力存在此类缺口，报告就不能升级为 `complete`。
+
+核心公开类型包括 `PackageView<'a>`、`AssetAnalysis`、`DecodedValue`、`LogicGraph`、`GraphNode`、`GraphEdge` 和 `ParseCoverage`。`PackageView<'a>` 将解析和解码绑定到同一份字节，避免调用方用 A 文件解析结果解码 B 文件。
+
+## 架构
+
+仓库是包含三个职责层的虚拟 Cargo workspace：
+
+```text
+cc-uax/
+├── crates/
+│   ├── cc-uax-core/       # 绑定字节的包解析、强类型值、图和 coverage
+│   ├── cc-uax-project/    # 项目发现、清单、邻接、归属和缓存策略
+│   └── cc-uax-cli/        # asset/project 命令与 JSON 渲染
+├── validation/
+│   └── stackobot/         # 相对路径 manifest 和外部语料 harness
+├── docs/
+│   └── validation.md      # 语料契约和验收门禁
+└── skills/
+    └── cc-uax/            # 完整 Claude Code/Codex skill 包
+```
+
+依赖方向保持单向：
+
+```text
+cc-uax-cli ──> cc-uax-project ──> cc-uax-core
+      └────────────────────────> cc-uax-core
+```
+
+- `cc-uax-core` 不负责文件系统扫描、SQLite、CLI 参数或 JSON 呈现策略。
+- `cc-uax-project` 负责 mount、项目发现、共享清单扫描、引用邻接、World Partition 归属和缓存位置。
+- `cc-uax-cli` 负责选择 view/focus、附加请求的完整资产分析、退出语义和强类型报告渲染。
+
+贡献者应同时阅读 [CLAUDE.md](CLAUDE.md) 中的解析约束。
+
+## Agent Skill
+
+请复制完整的 [`skills/cc-uax/`](skills/cc-uax/) 目录，而不是只复制 `SKILL.md`：
+
+| Agent | 用户级目录 | 项目级目录 |
 |---|---|---|
 | Claude Code | `~/.claude/skills/cc-uax/` | `<repo>/.claude/skills/cc-uax/` |
 | Codex | `~/.codex/skills/cc-uax/` | `<repo>/.codex/skills/cc-uax/` |
-| Codex / Agents legacy | `~/.agents/skills/cc-uax/` | `<repo>/.agents/skills/cc-uax/` |
+| Agents 兼容客户端 | `~/.agents/skills/cc-uax/` | `<repo>/.agents/skills/cc-uax/` |
 
-> skill 就是一个带 `SKILL.md`（YAML frontmatter 含 `name`、`description`）的目录。放进项目级路径并提交，团队每个成员都能自动获得该 skill。
+`agents/` 和 `references/` 是 skill 契约的一部分。
 
-## 🚀 用法
+## 验证与支持边界
 
-```text
-cc-uax <input.uasset|input.umap> [选项]
+序列化判断以 UE5.7 源码为依据，解析器使用外部真实编辑器资产验证。精确语料清单、预期语义证据和发布门禁集中记录在 [docs/validation.md](docs/validation.md)。
 
-  -o, --output <FILE>   输出 JSON 到文件（默认：标准输出）
-  -c, --compact         紧凑 JSON（默认：美化）
-  -S, --sections <LIST> 要输出的区块（逗号分隔）或预设（见“输出区块”）
-  -d, --scan-dir <DIR>  递归扫描 <DIR>；附带列出谁引用了当前文件（配合 -S refs）
-  -m, --mount <PREFIX>  <DIR> 的挂载映射（默认 /Game；支持 /Game=Content,/Plugin=Plugins/Plugin/Content）
-      --no-cache        关闭反向扫描磁盘缓存
-  -h, --help            显示帮助
-  -V, --version         显示版本
+StackOBot 语料和 Unreal Engine 源码都是外部输入；仓库不会提交其二进制资产或机器相关绝对路径。验证 harness 是发布门禁，但本 README 不会把尚待执行的验收目标写成当前 checkout 已通过的事实。
+
+当前限制包括：
+
+- Cooked/无版本包和 UE4 包格式；
+- RigVM 编译字节码、压缩 RigHierarchy 的源码级还原；
+- 无法由序列化图、属性、配置或引用证明的运行时行为；
+- 尚未核对 UE5.7 序列化契约的插件原生格式。
+
+证据不完整时，下游结论必须保留 `partial`、`unsupported`、diagnostics 和 capability 限制。
+
+## 贡献
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features --locked
+cargo test --workspace --locked
+cargo build --workspace --release --locked
 ```
 
-**示例**
+真实语料验收是独立的必需门禁，详见 [docs/validation.md](docs/validation.md)。
 
-```pwsh
-# 解析编辑器资产，美化输出到文件
-cc-uax BP_MyActor.uasset -o out.json
+## 许可
 
-# 只看图逻辑 —— 节点 + pin 连线（框架分析的精简视图）
-cc-uax BP_MyActor.uasset -S logic
-
-# 查 BUG 视图 —— 包头 + imports + 完整属性 + 字节布局
-cc-uax BP_MyActor.uasset -S debug
-
-# 只看包头信息
-cc-uax BP_MyActor.uasset -S summary
-
-# 前向引用 —— 该资产依赖了哪些包
-cc-uax BP_MyActor.uasset -S refs
-
-# 反向引用 —— 谁引用了我（扫描 Content 目录树，挂载到 /Game）
-cc-uax BP_MyActor.uasset -S refs --scan-dir ./Content
-```
-
-## 📋 输出结构
-
-**完整模式**
-
-```jsonc
-{
-  "diagnostics": [],
-  "summary":  { /* 版本、引擎版本、各表计数、自定义版本、包名 */ },
-  "imports":  [ { "index": -1, "class": "...", "name": "...", "full_name": "..." } ],
-  "exports":  [
-    {
-      "index": 15,
-      "name": "K2Node_CallFunction_14",
-      "class": "/Script/BlueprintGraph.K2Node_CallFunction",
-      "member": "SetMaterial",                       // 蒸馏出的节点身份
-      "member_from": { "ref": "/Script/Engine.PrimitiveComponent", "index": -19 },
-      "properties": [ /* tagged property —— -S logic 时省略 */ ],
-      "pins": [
-        { "name": "execute", "direction": "input", "category": "exec",
-          "linked_to": [ { "node": "...K2Node_Knot_7", "node_index": 25, "pin": "OutputPin" } ] },
-        { "name": "Material", "direction": "input", "category": "object",
-          "container_type": "none", "is_reference": true, "is_const": false,
-          "is_weak_pointer": false, "is_uobject_wrapper": false,
-          "default_object": { "ref": "/Game/.../MI_Box_Destroyed", "index": -45 } }
-      ]
-    }
-  ],
-  "file": "输入文件路径"
-}
-```
-
-> `member` / `member_from` 与 `pins` 仅出现在图节点导出（`K2Node_*`、`EdGraphNode_*`）。底层的 `super` / `outer` / `serial_offset` / `object_flags` / `script_serialization_*` 字段归入 `layout` 区块（`-S layout`，或任何包含它的预设）。
-
-**引用模式**（`self` / `referenced_by` 仅在配合 `--scan-dir` 时出现）
-
-```jsonc
-{
-  "references": {
-    "assets":        [ "/Game/...", "/Engine/..." ],
-    "scripts":       [ "/Script/CoreUObject", "/Script/Engine" ],
-    "soft":          [ "/Game/.../SoftReferencedAsset" ],
-    "self":          "/Game/Foo/BP_MyActor",
-    "referenced_by": [ "/Game/Foo/BP_Other" ]
-  },
-  "file": "输入文件路径"
-}
-```
-
-如果希望引用输出同时包含包头字段，请显式使用 `-S summary,refs`。
-
-**诊断**
-
-`diagnostics[]` 使用稳定结构：`severity`（`error` / `warning` / `info`）、`code`、`path`、`message`、可选字节 `offset` 与可选 `context`。字节预览统一为 `{ start, end, size, preview }`。未知或失败的 value decoder 会输出 `property_value_fallback` 等 warning，而不是静默吞掉原因。
-
-### 输出区块
-
-`--sections <LIST>`（别名 `-S`）选择输出哪些区块；用逗号分隔，可混用区块键与预设。省略时默认 `dump`。
-
-| 预设 | 展开为 | 适用 |
-|---|---|---|
-| `logic` | `summary` + exports（identity + `member` + `pins`） | 对照 C++ 的图 / 框架分析 |
-| `debug` | `summary` + `imports` + exports（`properties` + `layout`） | 查 BUG / 序列化核对 |
-| `dump`  | `summary` + `imports` + exports（`pins` + `properties` + `layout`）— 默认；除非显式请求，否则不包含 `names` 和 `references` | 完整 export 导出 |
-| `all`   | `dump` + `names` + `references` | 穷尽式 package JSON |
-
-区块键（可组合，如 `-S exports,pins,properties` 或 `-S dump,names`）：`summary`、`imports`、`exports`（identity 基础）、`pins`、`properties`、`layout`（serial 偏移 / flags / script 窗口）、`names`、`references`（别名 `refs`）。
-
-只要单个区块直接写名字即可：`-S summary`（仅包头），或 `-S refs`（前向引用；加 `--scan-dir` 得反向引用）。
-
-## 🏗️ 架构
-
-```
-cc-uax/
-├── crates/
-│   └── cc-uax-core/
-│       └── src/
-│           ├── lib.rs      # 核心解析库入口 —— Package、parse_to_json、诊断、区块和引用 helpers
-│           ├── package.rs  # 核心 package 解析器
-│           ├── decode/     # Export 解码报告、property/pin/member 编排
-│           ├── output/     # 纯 JSON serializer：report/export/property/pin
-│           ├── property/   # Tagged property 解析 + 原生结构体解码
-│           ├── pin.rs      # EdGraphNode pin 解码器 —— pins、pin 类型、LinkedTo 连线
-│           ├── summary.rs  # FPackageFileSummary（魔数、版本、表偏移）
-│           ├── name.rs     # NameMap —— Name 表解析与名称解析
-│           ├── object.rs   # PackageIndex（+/- ⇒ export/import）、Import、Export
-│           ├── version.rs  # UE5/UE4 文件版本常量 + 自定义版本 GUID
-│           ├── diagnostic.rs
-│           ├── reader.rs   # 小端字节流读取原语
-│           └── tests/      # 核心 crate 内部手写字节向量测试
-├── src/
-│   ├── main.rs         # CLI 入口编排
-│   ├── cli/
-│   │   ├── mod.rs
-│   │   ├── args.rs     # Clap 参数与区块解析
-│   │   ├── reverse_refs/   # 反向引用扫描发现与 worker 协调
-│   │   └── cache.rs    # SQLite 反向引用缓存（仅二进制侧）
-├── tests/
-│   └── cli.rs          # CLI 黑盒集成测试
-├── scripts/
-│   ├── validate-real-assets.ps1 # 真实 UE 资产验证（PowerShell）
-│   └── validate-real-assets.sh  # 真实 UE 资产验证（Bash）
-├── skills/
-│   └── cc-uax/
-│       └── SKILL.md    # Agent skill（Claude Code + Codex 兼容）
-├── .github/workflows/
-│   └── release.yml     # 多平台构建 + tag 触发 GitHub Release
-├── install.sh          # 一键安装（Linux / macOS）
-├── install.ps1         # 一键安装（Windows）
-├── dev-install.sh      # 开发：从源码重编译 + 刷新 skill（Linux / macOS）
-├── dev-install.ps1     # 开发：从源码重编译 + 刷新 skill（Windows）
-├── Cargo.toml          # Workspace 根 + CLI 包
-├── CLAUDE.md           # 给 Claude Code 的架构指引
-└── README.md
-```
-
-**解析流水线**（由 `Package::parse` 编排，每个阶段为下一阶段提供偏移）：
-
-1. `Reader` —— LE 原语（`u8..u64`、`f32`/`f64`、`FString`、`FName`、`Guid`）。
-2. `PackageFileSummary::parse` —— 校验 `PACKAGE_FILE_TAG`（`0x9E2A83C1`），检测字节序，读取版本与表偏移。
-3. `NameMap::parse` —— 解析 Name，含数字后缀（`Foo_3`）。
-4. Import / Export 表 —— `PackageIndex` 正负号选择表。
-5. 每个 export 的 `ScriptSerialization` 窗口 → `property/` 递归解码 legacy 与完整类型名 property tag；未来未知结构体回退到十六进制，对齐永不破坏。
-6. 图节点 —— 属性窗口之后，`pin.rs` 解码 `UEdGraphNode` 的 pin 区域（`pins` + `LinkedTo`），并把节点身份蒸馏为 `member` / `member_from`。
-7. `output/` 将已完成的内部解码报告序列化为 JSON；输出层不驱动解析决策。
-
-> 完整架构指引见 [CLAUDE.md](CLAUDE.md)。
-
-## ⚠️ 支持范围与限制
-
-- ✅ **已验证** 真实 UE5.7 编辑器 `.uasset` / `.umap` 文件 —— failed = 0，diagnostics = 0，`@unparsed` = 0。将验证脚本指向任意 UE5 项目：`.\scripts\validate-real-assets.ps1 -ContentDir <your-project>/Content`（PowerShell）或 `CC_UAX_CONTENT_DIR=<your-project>/Content ./scripts/validate-real-assets.sh`（Bash）；可用 `-ReverseRefInput <asset.uasset> -ExpectedReferencer /Game/.../Referencer` 固定反向引用样本。
-- ❌ Cooked 包（unversioned / 包级压缩）与 UE4 旧格式**不支持**。
-- 🔧 当前 UE5.7 验证集用到的原生二进制结构体（含 StateTree、PCG、InstancedStruct container、Niagara、GPU binding、groom dataflow、skeletal-mesh sampling、cloth LOD payload）已结构化解码；依赖运行时 registry 的未来自定义 payload 仍会使用保持对齐的 typed hex/opaque 预览。
-- 🔧 `referenced_by` 从磁盘推导包路径 —— 输入文件必须位于由 `--mount` 映射的 `--scan-dir` 内。单个 `/Game` 会把整个扫描根目录映射为 `/Game`；显式映射如 `/Game=Content,/MyPlugin=Plugins/MyPlugin/Content,/Engine=Engine/Content` 可覆盖项目根、插件和 Engine 内容。硬引用（import）与软引用（`TSoftObjectPtr`/`TSoftClassPtr`）均计入统计。
-- 🔧 缓存按修改时间 + 大小失效，内置 schema 版本变化时自动重建。
-
-## 🤝 贡献
-
-这是一个聚焦单一用途的工具。如扩展解码器，请在 [crates/cc-uax-core/src/tests/](crates/cc-uax-core/src/tests/) 下添加手写字节向量测试，并确保 export 的属性区间保持字节对齐；[tests/](tests/) 只保留 CLI 黑盒覆盖。提交前运行 `cargo fmt -- --check`、`cargo clippy --workspace --all-targets --all-features --locked`、`cargo test --workspace --locked`、`cargo test --workspace --no-default-features --locked`；有 UE 资产时再运行真实资产验证脚本。
-
-## 📄 许可
-
-MIT
+[MIT](LICENSE)

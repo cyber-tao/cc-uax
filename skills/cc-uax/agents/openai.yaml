@@ -1,0 +1,4 @@
+interface:
+  display_name: "cc-uax UE5 Analyzer"
+  short_description: "Evidence-backed UE5 binary project analysis"
+  default_prompt: "Use $cc-uax to analyze this UE5 project with graph, reference, diagnostic, and coverage evidence."

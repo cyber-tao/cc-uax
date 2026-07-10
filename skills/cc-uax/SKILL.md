@@ -1,120 +1,90 @@
 ---
 name: cc-uax
-description: Parse and inspect Unreal Engine 5 .uasset/.umap package files, and query forward/reverse asset references. Use whenever you need to READ a UE5 asset (.uasset/.umap), extract its imports/exports/properties, find what packages an asset references, or find which assets reference a given package — invoke the cc-uax CLI instead of hand-reading the binary.
+description: Analyze versioned, uncooked Unreal Engine 5 editor assets and projects from .uasset/.umap binaries. Use for Blueprint gameplay logic, asset properties, forward/reverse references, Control Rig, StateTree, PCG, World Partition closure, project inventory, or evidence-backed UE project audits with cc-uax.
 ---
 
-`cc-uax` is a from-scratch Rust reader for UE5 editor package files (`.uasset`, `.umap`). It parses the `CoreUObject` binary format and emits JSON — header, name table, import/export tables, tagged properties, and Blueprint graph-node pins with their `LinkedTo` connectivity. It also computes forward references (what this asset depends on) and, by scanning a directory, reverse references (who depends on this asset).
+# Analyze UE5 projects with cc-uax
 
-It is a **system-installed CLI tool** — `cc-uax` lives on `PATH` and behaves identically on Windows, Linux, and macOS. All commands below are plain `cc-uax` invocations.
+Use `cc-uax` as the binary-evidence source. Treat its structured graph, reference, diagnostic, and coverage fields as evidence; never infer connectivity from rendered text or node names alone.
 
-Scope: **versioned, uncooked editor assets** for UE5 (`FileVersionUE5 >= 1000`, little-endian). Legacy UE5 property tags (`1000..1011`) and complete-type-name property tags (`>= 1012`) are decoded. Cooked / unversioned / big-endian / UE4-legacy packages are rejected — see Gotchas.
+Scope the result to versioned, uncooked UE5 editor packages. Report cooked, unversioned, unsupported, missing, or corrupt inputs as limitations instead of guessing.
 
-## Prerequisites
+## Establish the project report
 
-`cc-uax` must be on `PATH`. Verify:
-
-```bash
-cc-uax --version
-# → cc-uax x.y.z
-```
-
-If missing, install via the one-line installer (downloads the latest prebuilt binary for your platform):
+1. Locate the `.uproject` or `Content` directory and any plugin content roots.
+2. Read the project report's config-derived `entry_points` first. Inspect raw `Config/DefaultEngine.ini`, `DefaultGame.ini`, or platform overrides only when a reported diagnostic or missing key requires it; do not copy unrelated config values into the analysis.
+3. Run exactly one project scan for the investigation:
 
 ```bash
-# Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.sh | bash
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
+cc-uax project "<PROJECT_OR_CONTENT_DIR>" --output "<REPORT.json>"
 ```
 
-Or build from source: `cargo install --path .` (puts `cc-uax` in `~/.cargo/bin`).
+Add each nonstandard content root with `--mount <PACKAGE=RELATIVE>`. Use `--focus <PACKAGE_OR_GLOB>` to attach full typed analyses for selected packages while retaining the single project inventory and reference graph.
 
-To uninstall (remove the binary, PATH entry, and skills): `bash install.sh uninstall` / `.\install.ps1 -Uninstall` (or `UNINSTALL=1` for the piped one-liners).
+Keep strict mode enabled. Use `--allow-partial` only when the user explicitly accepts incomplete evidence, and carry every failure into the conclusion.
 
-## Run
+4. Inspect `schema_version`, `status`, `stats`, aggregate `analysis`, per-asset coverage/capabilities, `failures`, and `diagnostics` before analyzing gameplay. Read [references/report-contract.md](references/report-contract.md) when interpreting these fields.
 
-`cc-uax <INPUT> [OPTIONS]` — JSON on stdout, progress on stderr. Exit code: `0` parsed ok, `1` not a valid UE5 package / file missing / parse error. Always check `$?` before consuming the JSON.
+Do not run one reverse scan per asset. Reuse the project report's inventory and bidirectional adjacency.
 
-### Which command for which task
+## Trace gameplay from configured roots
 
-| Task | Command |
-|---|---|
-| Header — versions, counts, engine version | `cc-uax -c -S summary <file>` |
-| Blueprint graph logic — nodes + pin connectivity | `cc-uax -c -S logic <file>` |
-| Forward refs — what this asset imports (assets/scripts) | `cc-uax -c -S refs <file>` |
-| Reverse refs — who references this asset | `cc-uax -c -S refs -d <Content-dir> <file>` |
-| Property-focused dump (properties + byte layout, no pins) | `cc-uax -c -S debug <file>` |
-| Export/import structure without property decode | `cc-uax -c -S exports,layout <file>` |
-| Dump export parse (default: summary/imports/exports with pins, properties, layout) | `cc-uax -c <file>` |
-| Exhaustive JSON including names and references | `cc-uax -c -S all <file>` |
-| Pick exact sections | `cc-uax -c -S exports,pins,properties <file>` |
-| Summary + full name table | `cc-uax -c -S summary,names <file>` |
+Start with configured maps and runtime classes, then traverse both graph edges and asset references:
 
-`-S`/`--sections` is the single content selector — presets `logic` (graph nodes + pins), `debug` (properties + layout), `dump` (default: summary + imports + exports with pins/properties/layout; excludes `names` and `references` unless requested), and `all` (`dump` + `names` + `references`); or comma-separate section keys `summary,imports,exports`/`identity`, `pins,properties,layout,names,references` (`refs` aliases `references`). Omitting `-S` yields `dump`.
-
-### Verified examples
+1. Resolve the startup map and `GameInstance`/`GameMode` chain.
+2. Include World Partition `ExternalActors`/`ExternalObjects`, Level Instances, and Packed Level Actors from the reported closure.
+3. Analyze each K2/EdGraph by its stable graph identity. Follow `exec` edges for control flow and `data` edges/defaults for values. Never join nodes across graphs because their display names match.
+4. Follow call targets, delegates, interfaces, component ownership, spawned classes, possessed pawns, widgets, save objects, and referenced data assets.
+5. Use the native adapter that owns the source of truth:
+   - K2/EdGraph for Blueprint and Niagara editor graphs.
+   - RigVM model/links for Control Rig; do not double-count editor mirror graphs.
+   - StateTree states, tasks, conditions, and transitions.
+   - PCG nodes, pins, and edges.
+6. Request a focused asset view when the project report lacks needed detail:
 
 ```bash
-CONTENT="<your-project>/Content"
-TARGET="$CONTENT/<asset.uasset>"
-
-# Header — versions and package name
-cc-uax -c -S summary "$TARGET"
-# → "summary": {"package_name": "/Game/..."}
-
-# Blueprint graph logic — node members + pin LinkedTo edges (lean, no full properties)
-cc-uax -c -S logic "<Blueprint.uasset>"
-# → exports[].member ("SetMaterial"), member_from ("/Script/Engine.PrimitiveComponent"),
-#   pins[].linked_to[] ({node, pin}) — the reconstructable node-to-node graph
-
-# Forward references — assets/scripts this file imports
-cc-uax -c -S refs "$TARGET"
-# → "references": {"assets": ["/Game/...", ...], "scripts": ["/Script/Engine", ...]}
-
-# Reverse references — scan the project's Content/ to find dependents
-cc-uax -c -S refs -d "$CONTENT" --no-cache "$TARGET"
-# → "referenced_by" includes "/Game/.../Map_..."
+cc-uax asset "<FILE.uasset>" --view logic --output "<ASSET.json>"
+cc-uax asset "<FILE.uasset>" --view properties --output "<ASSET.json>"
+cc-uax asset "<FILE.uasset>" --view references --output "<ASSET.json>"
 ```
 
-`-c` / `--compact` emits compact single-line JSON; `-o <FILE>` writes to a file instead of stdout.
+Use `--view full` only for a bounded asset; it can be large.
 
-> **Default to `-c` whenever the JSON goes back into your context.** Compact output trims roughly 15-30% of the tokens (indentation + newlines) at zero information loss — the model parses it just as easily. Omit `-c` (pretty-print) only when writing to a file for a human to read.
+## Build an evidence-backed explanation
 
-```bash
-cc-uax -o out.json "<file.uasset>"    # pretty JSON to a file (for humans)
-```
+For each gameplay claim, retain:
 
-`.umap` (level) files use the exact same commands — they share the UE5 package format:
+- package path and asset class;
+- graph/state/model identity;
+- stable node/pin/state identities;
+- ordered exec path;
+- required data edges or default values;
+- cross-asset reference or call target;
+- relevant diagnostics and coverage status.
 
-```bash
-cc-uax -c -S summary "<Level.umap>"
-# → "package_name": "/Game/..."
-```
+Separate findings into:
 
-Flag reference:
+- `confirmed`: complete structured evidence supports the full claim;
+- `partial`: some required path, data dependency, referenced package, or adapter is missing;
+- `unsupported`: cc-uax declares the required capability opaque or unsupported;
+- `contradicted`: structured evidence disproves the proposed behavior.
 
-```bash
-cc-uax --help
-```
+Do not upgrade `partial` to `confirmed` from naming conventions, screenshots, regex matches, opaque byte previews, or general UE conventions.
 
-### Reverse-reference scanning
+## Audit resource use
 
-`-S refs -d <Content-dir>` recursively scans `<Content-dir>` for `.uasset`/`.umap`, parses each mapped package, and reports which ones import `<file>`'s package path. The on-disk cache (`.cc-uax-cache.sqlite`) is written at the scan-dir root to speed up repeat runs; pass `--no-cache` to disable. Output adds `self` (the input's package path) and `referenced_by` under `references`. With explicit `--mount` mappings, the input file must be covered by a mount entry; scanned files outside all mount entries are skipped rather than assigned a guessed package path.
+Use project adjacency to distinguish configured roots, reachable runtime dependencies, editor-only assets, isolated assets, and failed/unsupported assets. Treat “unreferenced” as a graph fact under the scanned mounts, not proof that deletion is safe; account for soft loads, primary asset rules, config paths, localization, and runtime-generated names.
 
-## Gotchas
+When proposing deletion, require both no reachable hard/soft/config reference and adequate scan coverage.
 
-- **Map disk roots explicitly for project-root or plugin scans.** `--mount /Game` (the default) maps `<scan-dir>/<relative>` → `/Game/<relative>` and is best when `-d` is the project `Content/` root. When scanning from a project root or including plugin/Engine content, pass a mapping such as `--mount /Game=Content,/MyPlugin=Plugins/MyPlugin/Content,/Engine=Engine/Content`.
-- **`-d` writes `.cc-uax-cache.sqlite` into the scan-dir.** When scanning a UE5 project you do not own, pass `--no-cache` or delete the file afterwards. The cache key is path+mtime+size; malformed soft-reference tables are treated as parse failures so partial reference results are not cached as successful scans.
-- **Git Bash / MSYS2 mangles `-m /Game`.** A leading-slash argument like `-m /Game` gets path-converted to `C:/Program Files/Git/Game`, corrupting the mount prefix (symptom: `self` starts with `/C:/Program Files/Git/Game/...`). Use a double slash — `-m //Game` — which MSYS2 restores to `/Game`; or run from PowerShell/cmd. Native Linux/macOS shells are unaffected.
-- **Cooked / unversioned / big-endian packages are rejected by design.** cc-uax targets editor-saved versioned assets only. These are hard limits, not bugs — see Troubleshooting for the exact messages.
-- **`@unparsed` means an unknown future custom payload, not normal UE5.7 coverage.** A clean UE5.7 validation run has zero `@unparsed` fallbacks. In the repo, re-run that check with `scripts/validate-real-assets.ps1 -ContentDir <your-project>/Content` or `CC_UAX_CONTENT_DIR=<your-project>/Content scripts/validate-real-assets.sh` when a UE5 project is available. If one appears on a new project, cc-uax still preserves the struct `type`, byte `size`, and hex preview so alignment is not lost and the next property can decode. Blueprint graph-node pins are decoded structurally — use `-S logic` for the pins.
-- **Only `.uasset` and `.umap` are package files.** Companion files (`.uexp`, `.ubulk`, `.ini`) are not UE5 package summaries — don't pass them.
+## Finish with coverage
 
-## Troubleshooting
+Summarize gameplay, resource use, and architecture alongside:
 
-- **`command not found: cc-uax`**: not installed. Run the one-line installer (see Prerequisites) or `cargo install --path .`, then ensure the install dir is on `PATH`.
-- **`Error: Failed to parse: ... invalid package magic: 0x...`**: not a UE5 package file. Confirm it is a `.uasset`/`.umap` editor asset, not a cooked/`.pak`/`.uexp` companion.
-- **`package is unversioned (... typically a cooked package)`**: the asset was saved by a cooked build. cc-uax cannot read it; find the source editor asset instead.
-- **`package uses swapped (big-endian) byte order, possibly a cooked console package`**: console cooked package. Out of scope.
-- **`looks like a legacy UE3 package`**: `LegacyFileVersion >= 0`. Out of scope.
-- **`-S refs -d` returns `referenced_by: []` but you expect hits**: usually the scan-dir/mount mapping is wrong or MSYS2 mangled `-m /Game` (use `-m //Game` under Git Bash). Confirm a suspected dependent actually imports the target's package path with `cc-uax -S refs <dependent>`.
+- indexed, analyzed, complete, partial, unsupported, and failed package counts;
+- adapter-specific node/pin/edge/state/link counts;
+- opaque capability types and byte ranges;
+- excluded mounts or filters;
+- every evidence gap that could change the conclusion.
+
+If any required evidence is partial, unsupported, or failed, say exactly which conclusion remains unverified.
