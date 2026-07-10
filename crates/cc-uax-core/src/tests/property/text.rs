@@ -30,7 +30,7 @@ fn text_property_unknown_history_falls_back_to_hex() {
     let end = d.len() as u64;
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -47,7 +47,7 @@ fn text_property_unknown_history_falls_back_to_hex() {
     assert_eq!(unparsed, Some("0000000004"));
 }
 
-fn parse_text_property_value(value: &[u8]) -> serde_json::Value {
+fn parse_text_property_value(value: &[u8]) -> crate::DecodedValue {
     let names = NameMap {
         names: vec![
             "MyText".to_string(),
@@ -66,7 +66,7 @@ fn parse_text_property_value(value: &[u8]) -> serde_json::Value {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -192,7 +192,7 @@ fn text_ordered_format_decodes() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -238,7 +238,7 @@ fn text_string_table_entry_decodes() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),

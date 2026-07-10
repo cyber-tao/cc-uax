@@ -5,17 +5,16 @@ mod typed;
 
 use crate::decode::pins::is_graph_node_class;
 use crate::decode::rigvm::{is_rigvm_graph_class, is_rigvm_link_class};
-use crate::decode::{DecodeReport, DecodedExport};
+use crate::decode::{DecodeOptions, DecodeReport, DecodedExport};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::model::*;
-use crate::output::sections::OutputSections;
 use crate::package::Package;
 use crate::pin::{Pin, PinTerminalType, PinType, UserDefinedPin};
 use crate::property::{PropertyEntry, PropertyParseStatus};
 use crate::reader::Guid;
 use crate::references::collect_package_references;
+use crate::structured_value::{Map, Value};
 use crate::version::ue5;
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use pcg::build_pcg_graphs;
@@ -64,23 +63,23 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
     let wants_logic = matches!(view, AssetView::Logic | AssetView::Full);
     let wants_properties = matches!(view, AssetView::Properties | AssetView::Full);
     let wants_references = matches!(view, AssetView::References | AssetView::Full);
-    let sections = match view {
-        AssetView::Summary | AssetView::References => OutputSections::none(),
+    let options = match view {
+        AssetView::Summary | AssetView::References => DecodeOptions::none(),
         AssetView::Logic => {
-            let mut sections = OutputSections::none();
-            sections.exports = true;
-            sections.pins = true;
-            sections
+            let mut options = DecodeOptions::none();
+            options.exports = true;
+            options.pins = true;
+            options
         }
         AssetView::Properties => {
-            let mut sections = OutputSections::none();
-            sections.exports = true;
-            sections.properties = true;
-            sections
+            let mut options = DecodeOptions::none();
+            options.exports = true;
+            options.properties = true;
+            options
         }
-        AssetView::Full => OutputSections::all(),
+        AssetView::Full => DecodeOptions::full(),
     };
-    let report = package.decode(bytes, &sections);
+    let report = package.decode(bytes, &options);
     let rigvm_adapter = if wants_logic {
         build_rigvm_graphs(&report)
     } else {
@@ -558,6 +557,7 @@ fn references_to_model(package: &Package) -> AssetReferences {
     let soft = package
         .soft_package_references
         .iter()
+        .filter(|reference| !reference.is_empty() && reference.as_str() != "None")
         .cloned()
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -629,10 +629,10 @@ fn export_to_model(package: &Package, export: &DecodedExport) -> AssetExport {
             .iter()
             .map(property_to_model)
             .collect(),
-        metadata: export.metadata.as_ref().map(decoded_value_from_json),
+        metadata: export.metadata.clone(),
         member: export.member.as_ref().map(|member| MemberReference {
             name: member.name.clone(),
-            parent: member.parent.as_ref().map(decoded_value_from_json),
+            parent: member.parent.clone(),
         }),
     }
 }
@@ -651,7 +651,7 @@ fn property_to_model(property: &PropertyEntry) -> AssetProperty {
         name: property.name.clone(),
         type_name: property.type_str.clone(),
         array_index: property.array_index,
-        value: decoded_value_from_json(&property.value),
+        value: property.value.clone(),
         guid: property.guid.clone(),
     }
 }
@@ -667,27 +667,7 @@ fn diagnostic_to_model(diagnostic: &Diagnostic) -> AnalysisDiagnostic {
         path: diagnostic.path.clone(),
         message: diagnostic.message.clone(),
         offset: diagnostic.offset,
-        details: diagnostic.context.as_deref().map(decoded_value_from_json),
-    }
-}
-
-pub(crate) fn decoded_value_from_json(value: &Value) -> DecodedValue {
-    match value {
-        Value::Null => DecodedValue::Null,
-        Value::Bool(value) => DecodedValue::Bool(*value),
-        Value::Number(value) if value.is_i64() => DecodedValue::Integer(value.as_i64().unwrap()),
-        Value::Number(value) if value.is_u64() => DecodedValue::Unsigned(value.as_u64().unwrap()),
-        Value::Number(value) => DecodedValue::Float(value.as_f64().unwrap_or_default()),
-        Value::String(value) => DecodedValue::String(value.clone()),
-        Value::Array(values) => {
-            DecodedValue::Array(values.iter().map(decoded_value_from_json).collect())
-        }
-        Value::Object(values) => DecodedValue::Object(
-            values
-                .iter()
-                .map(|(key, value)| (key.clone(), decoded_value_from_json(value)))
-                .collect::<BTreeMap<_, _>>(),
-        ),
+        details: diagnostic.context.as_deref().cloned(),
     }
 }
 
@@ -848,7 +828,7 @@ fn opaque_kind_rank(kind: KnownOpaqueKind) -> u8 {
     }
 }
 
-fn opaque_byte_range(object: &serde_json::Map<String, Value>) -> Option<OpaqueByteRange> {
+fn opaque_byte_range(object: &Map) -> Option<OpaqueByteRange> {
     let start = object.get("start")?.as_u64()?;
     let end = object.get("end")?.as_u64()?;
     let size = object.get("size")?.as_u64()?;
@@ -1054,7 +1034,7 @@ fn graph_node_from_export(package: &Package, export: &DecodedExport) -> GraphNod
         class: export.identity.class.clone(),
         member: export.member.as_ref().map(|member| MemberReference {
             name: member.name.clone(),
-            parent: member.parent.as_ref().map(decoded_value_from_json),
+            parent: member.parent.clone(),
         }),
         pins: export
             .pins
@@ -1092,7 +1072,7 @@ fn graph_pin_from_pin(package: &Package, pin: &Pin) -> GraphPin {
     GraphPin {
         pin_id: pin.pin_id.to_hex(),
         name: pin.name.clone(),
-        friendly_name: pin.friendly_name.as_ref().map(decoded_value_from_json),
+        friendly_name: pin.friendly_name.clone(),
         source_index: pin.source_index,
         tooltip: pin.tooltip.clone(),
         direction: pin_direction(pin.direction),
@@ -1101,8 +1081,8 @@ fn graph_pin_from_pin(package: &Package, pin: &Pin) -> GraphPin {
         autogenerated_default_value: (!pin.autogenerated_default_value.is_empty())
             .then(|| pin.autogenerated_default_value.clone()),
         default_object: (pin.default_object != 0)
-            .then(|| decoded_value_from_json(&package.resolve_object_ref(pin.default_object))),
-        default_text: decoded_value_from_json(&pin.default_text),
+            .then(|| package.resolve_object_ref(pin.default_object)),
+        default_text: pin.default_text.clone(),
         linked_to: pin.linked_to.iter().map(pin_reference_to_model).collect(),
         sub_pins: pin.sub_pins.iter().map(pin_reference_to_model).collect(),
         parent_pin: pin.parent_pin.as_ref().map(pin_reference_to_model),
@@ -1148,14 +1128,13 @@ fn pin_type_to_model(package: &Package, pin_type: &PinType) -> GraphPinType {
     .then(|| MemberReference {
         name: pin_type.member_name.clone(),
         parent: (pin_type.member_parent != 0)
-            .then(|| decoded_value_from_json(&package.resolve_object_ref(pin_type.member_parent))),
+            .then(|| package.resolve_object_ref(pin_type.member_parent)),
     });
     GraphPinType {
         category: pin_type.category.clone(),
         sub_category: pin_type.sub_category.clone(),
-        sub_category_object: (pin_type.sub_category_object != 0).then(|| {
-            decoded_value_from_json(&package.resolve_object_ref(pin_type.sub_category_object))
-        }),
+        sub_category_object: (pin_type.sub_category_object != 0)
+            .then(|| package.resolve_object_ref(pin_type.sub_category_object)),
         container: match pin_type.container_type {
             0 => PinContainer::None,
             1 => PinContainer::Array,
@@ -1180,9 +1159,8 @@ fn terminal_type_to_model(package: &Package, terminal: &PinTerminalType) -> Grap
     GraphTerminalType {
         category: terminal.category.clone(),
         sub_category: terminal.sub_category.clone(),
-        sub_category_object: (terminal.sub_category_object != 0).then(|| {
-            decoded_value_from_json(&package.resolve_object_ref(terminal.sub_category_object))
-        }),
+        sub_category_object: (terminal.sub_category_object != 0)
+            .then(|| package.resolve_object_ref(terminal.sub_category_object)),
         is_const: terminal.is_const,
         is_weak_pointer: terminal.is_weak_pointer,
         is_uobject_wrapper: terminal.is_uobject_wrapper,

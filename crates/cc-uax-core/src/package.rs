@@ -7,9 +7,9 @@ use crate::name::NameMap;
 use crate::object::{ObjectExport, ObjectImport};
 use crate::property::read_soft_object_path;
 use crate::reader::Reader;
+use crate::structured_value::{Value, json};
 use crate::summary::PackageFileSummary;
 use anyhow::Result;
-use serde_json::{Value, json};
 
 /// Maximum outer-chain depth when resolving a full object name; guards against
 /// cyclic outer references in malformed packages.

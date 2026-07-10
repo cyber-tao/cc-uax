@@ -6,9 +6,9 @@ use super::{
 use crate::diagnostic::Diagnostic;
 use crate::name::NameMap;
 use crate::reader::Reader;
+use crate::structured_value::json;
 use crate::version::{ue4, ue5};
 use anyhow::{Result, bail};
-use serde_json::json;
 
 const MAX_TYPE_NAME_DEPTH: usize = 64;
 

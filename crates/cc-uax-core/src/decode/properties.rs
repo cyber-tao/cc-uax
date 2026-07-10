@@ -7,7 +7,7 @@ use crate::property::{
     read_soft_object_path,
 };
 use crate::reader::Reader;
-use serde_json::{Value, json};
+use crate::structured_value::{Map, Value, json};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn decode_properties_for_export(
@@ -139,7 +139,7 @@ fn parse_package_metadata_tail(
         object_metadata.push(json!({ "object": object, "values": values }));
     }
 
-    let mut root_metadata = serde_json::Map::new();
+    let mut root_metadata = Map::new();
     for _ in 0..root_count {
         let key = ctx.names.resolve_raw(reader.read_raw_name()?);
         let value = reader.read_fstring()?;
@@ -159,7 +159,7 @@ fn parse_metadata_name_string_map(
 ) -> anyhow::Result<Value> {
     let count = reader.read_i32()?;
     validate_metadata_count(count, reader, end, "metadata value")?;
-    let mut map = serde_json::Map::new();
+    let mut map = Map::new();
     for _ in 0..count {
         let key = ctx.names.resolve_raw(reader.read_raw_name()?);
         let value = reader.read_fstring()?;

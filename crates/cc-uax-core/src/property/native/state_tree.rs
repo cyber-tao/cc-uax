@@ -1,7 +1,7 @@
-use crate::property::{ParseCtx, PropertyParseStatus, entries_to_json, parse_properties_report};
+use crate::property::{ParseCtx, PropertyParseStatus, entries_to_values, parse_properties_report};
 use crate::reader::Reader;
+use crate::structured_value::{Map, Value, json};
 use anyhow::{Result, bail};
-use serde_json::{Map, Value, json};
 
 // Runtime StateTree structs with custom serializers.
 pub(super) fn parse_state_tree_struct(
@@ -32,7 +32,7 @@ fn parse_state_tree_instance_data(r: &mut Reader, ctx: &ParseCtx, value_end: u64
         let mut o = Map::new();
         o.insert("@struct".into(), json!("StateTreeInstanceData"));
         o.insert("serialization".into(), json!("legacy_tagged"));
-        o.insert("properties".into(), entries_to_json(&parsed.entries));
+        o.insert("properties".into(), entries_to_values(&parsed.entries));
         if parsed.status.is_output_relevant() {
             o.insert("property_status".into(), json!(parsed.status.as_str()));
         }
@@ -57,7 +57,7 @@ fn parse_state_tree_instance_storage(
     ensure_complete_tagged_payload(r, value_end, &parsed.status, "StateTreeInstanceStorage")?;
     let mut o = Map::new();
     o.insert("@struct".into(), json!("StateTreeInstanceStorage"));
-    o.insert("properties".into(), entries_to_json(&parsed.entries));
+    o.insert("properties".into(), entries_to_values(&parsed.entries));
     if parsed.status.is_output_relevant() {
         o.insert("property_status".into(), json!(parsed.status.as_str()));
     }

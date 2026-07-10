@@ -1,8 +1,8 @@
 use super::{PREVIEW_MAX, to_hex, validate_count};
 use crate::name::NameMap;
 use crate::reader::Reader;
+use crate::structured_value::{Map, Value, json};
 use anyhow::{Result, bail};
-use serde_json::{Value, json};
 
 pub(crate) fn parse_text(r: &mut Reader, names: &NameMap, depth: usize) -> Result<Value> {
     if depth > 32 {
@@ -110,7 +110,7 @@ pub(crate) fn parse_text(r: &mut Reader, names: &NameMap, depth: usize) -> Resul
             };
             let time_zone = r.read_fstring()?;
             let culture = r.read_fstring()?;
-            let mut o = serde_json::Map::new();
+            let mut o = Map::new();
             o.insert("history".into(), json!("AsDateTime"));
             o.insert("datetime".into(), json!(datetime));
             o.insert("date_style".into(), json!(date_style));
@@ -143,7 +143,7 @@ pub(crate) fn parse_text(r: &mut Reader, names: &NameMap, depth: usize) -> Resul
         12 => {
             // TextGenerator: GeneratorTypeID (FName), then a TArray<uint8> blob when named.
             let type_id = names.resolve_raw(r.read_raw_name()?);
-            let mut o = serde_json::Map::new();
+            let mut o = Map::new();
             o.insert("history".into(), json!("TextGenerator"));
             o.insert("generator_type_id".into(), json!(type_id.clone()));
             if type_id != "None" && !type_id.is_empty() {
@@ -201,7 +201,7 @@ fn parse_number_format_history(
         None
     };
     let culture = r.read_fstring()?;
-    let mut o = serde_json::Map::new();
+    let mut o = Map::new();
     o.insert("history".into(), json!(kind));
     if let Some(code) = currency_code {
         o.insert("currency_code".into(), json!(code));

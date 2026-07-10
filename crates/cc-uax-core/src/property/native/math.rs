@@ -1,6 +1,6 @@
 use crate::reader::Reader;
+use crate::structured_value::{Value, json};
 use anyhow::Result;
-use serde_json::{Value, json};
 // structs). None of these need name resolution or the value window.
 pub(super) fn parse_math_struct(r: &mut Reader, name: &str) -> Result<Option<Value>> {
     let v = match name {

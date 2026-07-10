@@ -50,7 +50,7 @@ fn nested_struct_respects_declared_value_end() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -87,7 +87,7 @@ fn truncated_property_array_index_stops_parse() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -125,7 +125,7 @@ fn failed_property_after_entries_reports_status_and_diagnostic() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -225,7 +225,7 @@ fn legacy_property_tags_decode_type_metadata() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -287,7 +287,7 @@ fn property_tag_extensions_are_byte_aligned() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -328,7 +328,7 @@ fn skipped_serialize_property_is_marked_and_parsing_continues() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),

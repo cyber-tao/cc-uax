@@ -1,11 +1,11 @@
 use crate::name::NameMap;
 use crate::property::{
-    PREVIEW_MAX, ParseCtx, ensure_within_value, entries_to_json, parse_properties, to_hex,
+    PREVIEW_MAX, ParseCtx, ensure_within_value, entries_to_values, parse_properties, to_hex,
     validate_count,
 };
 use crate::reader::Reader;
+use crate::structured_value::{Map, Value, json};
 use anyhow::Result;
-use serde_json::{Map, Value, json};
 
 // Niagara core variable/type structs (modern registry format only).
 pub(super) fn parse_niagara_struct(
@@ -20,7 +20,7 @@ pub(super) fn parse_niagara_struct(
         // serializes via SerializeTaggedProperties, so it reuses parse_properties.
         "NiagaraTypeDefinition" if niagara_modern(ctx) => {
             let nested = parse_properties(r, ctx, value_end);
-            json!({ "@struct": "NiagaraTypeDefinition", "properties": entries_to_json(&nested) })
+            json!({ "@struct": "NiagaraTypeDefinition", "properties": entries_to_values(&nested) })
         }
         "NiagaraVariableBase" if niagara_modern(ctx) => {
             Value::Object(parse_niagara_variable_base(r, ctx, value_end)?)
@@ -169,18 +169,14 @@ fn parse_niagara_variable_references(
 /// FNiagaraVariableBase::Serialize (modern): `Ar << Name; Ar << TypeDefHandle;`
 /// where TypeDefHandle serializes a full FNiagaraTypeDefinition via tagged
 /// properties. Leaves the reader positioned right after the type definition.
-fn parse_niagara_variable_base(
-    r: &mut Reader,
-    ctx: &ParseCtx,
-    value_end: u64,
-) -> Result<serde_json::Map<String, Value>> {
+fn parse_niagara_variable_base(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Map> {
     let name = ctx.names.resolve_raw(r.read_raw_name()?);
     let type_def = parse_properties(r, ctx, value_end);
-    let mut o = serde_json::Map::new();
+    let mut o = Map::new();
     o.insert("name".into(), json!(name));
     o.insert(
         "type".into(),
-        json!({ "@struct": "NiagaraTypeDefinition", "properties": entries_to_json(&type_def) }),
+        json!({ "@struct": "NiagaraTypeDefinition", "properties": entries_to_values(&type_def) }),
     );
     Ok(o)
 }

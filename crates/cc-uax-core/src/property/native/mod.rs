@@ -11,8 +11,8 @@ mod state_tree;
 
 use crate::property::ParseCtx;
 use crate::reader::Reader;
+use crate::structured_value::Value;
 use anyhow::Result;
-use serde_json::Value;
 
 pub(crate) fn is_tagged_fallback_struct(name: &str) -> bool {
     matches!(

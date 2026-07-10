@@ -7,9 +7,9 @@ use crate::diagnostic::Diagnostic;
 use crate::name::NameMap;
 use crate::pin::PinSerCtx;
 use crate::reader::Reader;
+use crate::structured_value::{Map, Value, json};
 use crate::version::SerializationPolicy;
 use anyhow::{Result, bail};
-use serde_json::{Value, json};
 
 pub use tag::TypeName;
 pub(crate) use text::parse_text;
@@ -75,11 +75,11 @@ impl PropertyParseStatus {
     }
 }
 
-pub fn entries_to_json(props: &[PropertyEntry]) -> Value {
+pub fn entries_to_values(props: &[PropertyEntry]) -> Value {
     let arr: Vec<Value> = props
         .iter()
         .map(|e| {
-            let mut o = serde_json::Map::new();
+            let mut o = Map::new();
             o.insert("name".into(), json!(e.name));
             o.insert("type".into(), json!(e.type_str));
             if e.array_index != 0 {

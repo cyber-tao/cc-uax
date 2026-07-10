@@ -1,7 +1,7 @@
 use crate::property::ParseCtx;
 use crate::reader::Reader;
+use crate::structured_value::{Map, Value, json};
 use anyhow::Result;
-use serde_json::{Value, json};
 
 // Blueprint pin type embedded as a native struct payload.
 pub(super) fn parse_graph_pin_struct(
@@ -12,7 +12,7 @@ pub(super) fn parse_graph_pin_struct(
     let v = match name {
         "EdGraphPinType" => {
             let pin_type = crate::pin::parse_pin_type(r, ctx, &ctx.pins)?;
-            let mut o = serde_json::Map::new();
+            let mut o = Map::new();
             o.insert("category".into(), json!(pin_type.category));
             o.insert("sub_category".into(), json!(pin_type.sub_category));
             o.insert(
@@ -35,7 +35,7 @@ pub(super) fn parse_graph_pin_struct(
                 || !pin_type.member_name.is_empty()
                 || !pin_type.member_guid.is_zero()
             {
-                let mut member = serde_json::Map::new();
+                let mut member = Map::new();
                 if pin_type.member_parent != 0 {
                     member.insert(
                         "parent".into(),
@@ -67,7 +67,7 @@ pub(super) fn parse_graph_pin_struct(
 }
 
 fn pin_terminal_type_to_json(ty: &crate::pin::PinTerminalType, ctx: &ParseCtx) -> Value {
-    let mut o = serde_json::Map::new();
+    let mut o = Map::new();
     o.insert("category".into(), json!(ty.category));
     o.insert("sub_category".into(), json!(ty.sub_category));
     o.insert(

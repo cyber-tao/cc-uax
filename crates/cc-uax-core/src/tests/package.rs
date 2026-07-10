@@ -1,93 +1,92 @@
 use super::common::*;
+use crate::analysis::analyze_package;
 use crate::name::NameMap;
 use crate::reader::Reader;
-use crate::{OutputSections, Package, parse_to_json, referenced_packages_from_bytes};
+use crate::{
+    AnalysisDiagnostic, AssetView, DiagnosticSeverity, KnownOpaqueKind, Package, PackageView,
+    PropertyDecodeStatus,
+};
+
+fn diagnostic_with_code<'a>(
+    diagnostics: &'a [AnalysisDiagnostic],
+    code: &str,
+) -> &'a AnalysisDiagnostic {
+    diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == code)
+        .unwrap_or_else(|| panic!("missing diagnostic code {code}: {diagnostics:#?}"))
+}
 
 #[test]
 fn package_rejects_pre_ue5_version() {
-    let mut d = Vec::new();
-    push_u32(&mut d, 0x9E2A_83C1); // PACKAGE_FILE_TAG
-    push_i32(&mut d, -8); // legacy_file_version
-    push_i32(&mut d, 0); // legacy ue3 version
-    push_i32(&mut d, 522); // file_version_ue4
-    push_i32(&mut d, 999); // below UE5 initial version
-    push_i32(&mut d, 0); // file_version_licensee
+    let mut data = Vec::new();
+    push_u32(&mut data, 0x9E2A_83C1);
+    push_i32(&mut data, -8);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 522);
+    push_i32(&mut data, 999);
+    push_i32(&mut data, 0);
 
-    let err = Package::parse(&d).err().unwrap().to_string();
-    assert!(err.contains("FileVersionUE5=999"));
+    let error = Package::parse(&data).err().unwrap().to_string();
+    assert!(error.contains("FileVersionUE5=999"));
 }
 
 #[test]
 fn name_map_rejects_negative_count() {
     let data = [];
-    let mut r = Reader::new(&data);
+    let mut reader = Reader::new(&data);
 
-    let err = NameMap::parse(&mut r, 0, -1, 522)
+    let error = NameMap::parse(&mut reader, 0, -1, 522)
         .err()
         .unwrap()
         .to_string();
-    assert!(err.contains("name count out of range"));
+    assert!(error.contains("name count out of range"));
 }
 
 #[test]
-fn package_parse_minimal_header() {
+fn package_view_analyzes_the_bound_minimal_package() {
     let data = build_minimal_package();
-    let pkg = Package::parse(&data).expect("minimal package should parse");
+    let view = PackageView::parse(&data).expect("minimal package should parse");
+    let analysis = view.analyze(AssetView::Full);
 
-    assert_eq!(pkg.summary.file_version_ue4, 522);
-    assert_eq!(pkg.summary.file_version_ue5, 1018);
-    assert_eq!(pkg.summary.package_name, "TestPkg");
-    assert_eq!(pkg.summary.export_count, 0);
-    assert!(pkg.imports.is_empty());
-    assert!(pkg.exports.is_empty());
-
-    let json = pkg.decode_to_json(&data, &OutputSections::dump());
-    assert_eq!(json["summary"]["package_name"], "TestPkg");
-    assert_eq!(json["summary"]["file_version_ue5"], 1018);
-    assert!(json["imports"].as_array().unwrap().is_empty());
-    assert!(json["exports"].as_array().unwrap().is_empty());
+    assert_eq!(analysis.summary.file_version_ue4, 522);
+    assert_eq!(analysis.summary.file_version_ue5, 1018);
+    assert_eq!(analysis.summary.package_name, "TestPkg");
+    assert_eq!(analysis.summary.export_count, 0);
+    assert!(analysis.imports.is_empty());
+    assert!(analysis.exports.is_empty());
 }
 
 #[test]
-fn parse_to_json_matches_package_decode_to_json() {
-    let data = build_minimal_package();
-    let sections = OutputSections::parse("summary").unwrap();
-    let direct = parse_to_json(&data, &sections).expect("minimal package should parse to json");
-    let pkg = Package::parse(&data).expect("minimal package should parse");
-    let staged = pkg.decode_to_json(&data, &sections);
-
-    assert_eq!(direct, staged);
-    assert_eq!(direct["summary"]["package_name"], "TestPkg");
-    assert!(direct.get("exports").is_none());
-}
-
-#[test]
-fn soft_object_path_table_error_is_reported() {
+fn soft_object_path_table_error_is_structured() {
     let mut data = build_minimal_package();
-    put_i32(&mut data, 76, 1); // soft_object_paths_count
-    put_i32(&mut data, 80, 999_999); // soft_object_paths_offset
+    put_i32(&mut data, 76, 1);
+    put_i32(&mut data, 80, 999_999);
 
-    let pkg = Package::parse(&data).unwrap();
-    let err = pkg.soft_object_path_error.as_deref().unwrap();
-    assert!(err.contains("soft object path table seek failed"));
-
-    let json = pkg.decode_to_json(&data, &OutputSections::dump());
-    let diag = diagnostic_with_code(&json, "soft_object_path_table_error");
-    assert_eq!(diag["severity"].as_str(), Some("warning"));
-    assert_eq!(diag["path"].as_str(), Some("/summary/soft_object_paths"));
+    let package = Package::parse(&data).unwrap();
     assert!(
-        diag["message"]
-            .as_str()
+        package
+            .soft_object_path_error
+            .as_deref()
             .unwrap()
             .contains("soft object path table seek failed")
     );
-    assert!(json["summary"].get("soft_object_paths_error").is_none());
+
+    let analysis = analyze_package(&package, &data, AssetView::References);
+    let diagnostic = diagnostic_with_code(&analysis.diagnostics, "soft_object_path_table_error");
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+    assert_eq!(diagnostic.path, "/summary/soft_object_paths");
+    assert!(
+        diagnostic
+            .message
+            .contains("soft object path table seek failed")
+    );
 }
 
 #[test]
-fn invalid_script_window_is_reported_in_layout() {
+fn invalid_script_window_is_structured() {
     let base = Package::parse(&build_minimal_package()).unwrap();
-    let pkg = Package {
+    let package = Package {
         summary: base.summary,
         names: NameMap {
             names: vec!["Obj".to_string()],
@@ -99,39 +98,29 @@ fn invalid_script_window_is_reported_in_layout() {
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
     };
-    let mut sections = OutputSections::none();
-    sections.exports = true;
-    sections.layout = true;
-    sections.properties = true;
 
-    let json = pkg.decode_to_json(&[0; 4], &sections);
-    let diag = diagnostic_with_code(&json, "serial_window_invalid");
-    assert_eq!(diag["severity"].as_str(), Some("error"));
-    assert_eq!(diag["path"].as_str(), Some("/exports/0"));
-    assert!(
-        diag["message"]
-            .as_str()
-            .unwrap()
-            .contains("outside serial size")
-    );
-    assert!(json["exports"][0].get("serial_window_error").is_none());
-    assert!(json["exports"][0].get("properties").is_none());
+    let analysis = analyze_package(&package, &[0; 4], AssetView::Properties);
+    let diagnostic = diagnostic_with_code(&analysis.diagnostics, "serial_window_invalid");
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+    assert_eq!(diagnostic.path, "/exports/0");
+    assert!(diagnostic.message.contains("outside serial size"));
+    assert!(analysis.exports[0].properties.is_empty());
 }
 
 #[test]
 fn zero_script_window_uses_serial_range() {
     let base = Package::parse(&build_minimal_package()).unwrap();
     let mut data = Vec::new();
-    data.push(0); // property tag extension control byte
-    push_raw_name(&mut data, 1); // Value
-    push_raw_name(&mut data, 2); // IntProperty
+    data.push(0);
+    push_raw_name(&mut data, 1);
+    push_raw_name(&mut data, 2);
     push_i32(&mut data, 0);
     push_i32(&mut data, 4);
     data.push(0);
     push_i32(&mut data, 42);
-    push_raw_name(&mut data, 3); // None
+    push_raw_name(&mut data, 3);
 
-    let pkg = Package {
+    let package = Package {
         summary: base.summary,
         names: NameMap {
             names: vec![
@@ -148,16 +137,12 @@ fn zero_script_window_uses_serial_range() {
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
     };
-    let mut sections = OutputSections::none();
-    sections.exports = true;
-    sections.layout = true;
-    sections.properties = true;
 
-    let json = pkg.decode_to_json(&data, &sections);
-    let props = json["exports"][0]["properties"].as_array().unwrap();
-    assert_eq!(props.len(), 1);
-    assert_eq!(props[0]["name"].as_str(), Some("Value"));
-    assert_eq!(props[0]["value"].as_i64(), Some(42));
+    let analysis = analyze_package(&package, &data, AssetView::Properties);
+    let properties = &analysis.exports[0].properties;
+    assert_eq!(properties.len(), 1);
+    assert_eq!(properties[0].name, "Value");
+    assert_eq!(properties[0].value.as_i64(), Some(42));
 }
 
 #[test]
@@ -165,13 +150,13 @@ fn pre_complete_typename_version_decodes_legacy_properties() {
     let mut base = Package::parse(&build_minimal_package()).unwrap();
     base.summary.file_version_ue5 = 1011;
     let mut data = Vec::new();
-    data.push(0); // object serialization control byte
+    data.push(0);
     push_legacy_tag_header(&mut data, 1, 2, 4);
     push_legacy_tag_tail(&mut data);
     push_i32(&mut data, 123);
-    push_raw_name(&mut data, 3); // None
+    push_raw_name(&mut data, 3);
 
-    let pkg = Package {
+    let package = Package {
         summary: base.summary,
         names: NameMap {
             names: vec![
@@ -188,40 +173,36 @@ fn pre_complete_typename_version_decodes_legacy_properties() {
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
     };
-    let mut sections = OutputSections::none();
-    sections.exports = true;
-    sections.properties = true;
 
-    let json = pkg.decode_to_json(&data, &sections);
-    let props = json["exports"][0]["properties"].as_array().unwrap();
-    assert_eq!(props.len(), 1);
-    assert_eq!(props[0]["name"].as_str(), Some("Value"));
-    assert_eq!(props[0]["type"].as_str(), Some("IntProperty"));
-    assert_eq!(props[0]["value"].as_i64(), Some(123));
+    let analysis = analyze_package(&package, &data, AssetView::Properties);
+    let properties = &analysis.exports[0].properties;
+    assert_eq!(properties.len(), 1);
+    assert_eq!(properties[0].name, "Value");
+    assert_eq!(properties[0].type_name, "IntProperty");
+    assert_eq!(properties[0].value.as_i64(), Some(123));
     assert!(
-        !json["diagnostics"]
-            .as_array()
-            .unwrap()
+        analysis
+            .diagnostics
             .iter()
-            .any(|diag| diag["code"].as_str() == Some("properties_unsupported_version"))
+            .all(|diagnostic| diagnostic.code != "properties_unsupported_version")
     );
 }
 
 #[test]
-fn post_property_tail_is_recorded_on_export_without_diagnostic() {
+fn post_property_tail_is_classified_with_its_byte_range() {
     let base = Package::parse(&build_minimal_package()).unwrap();
     let mut data = Vec::new();
-    data.push(0); // object serialization control byte
-    push_raw_name(&mut data, 1); // Value
-    push_raw_name(&mut data, 2); // IntProperty
-    push_i32(&mut data, 0); // type name inner param count
-    push_i32(&mut data, 4); // size
-    data.push(0); // flags
+    data.push(0);
+    push_raw_name(&mut data, 1);
+    push_raw_name(&mut data, 2);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 4);
+    data.push(0);
     push_i32(&mut data, 123);
-    push_raw_name(&mut data, 3); // None
+    push_raw_name(&mut data, 3);
     data.extend_from_slice(&[1, 2, 3, 4]);
 
-    let pkg = Package {
+    let package = Package {
         summary: base.summary,
         names: NameMap {
             names: vec![
@@ -238,36 +219,30 @@ fn post_property_tail_is_recorded_on_export_without_diagnostic() {
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
     };
-    let mut sections = OutputSections::none();
-    sections.exports = true;
-    sections.properties = true;
 
-    let json = pkg.decode_to_json(&data, &sections);
-    assert_eq!(
-        json["exports"][0]["post_property_tail"]["size"].as_u64(),
-        Some(4)
-    );
-    assert_eq!(
-        json["exports"][0]["post_property_tail"]["preview"].as_str(),
-        Some("01020304")
-    );
+    let analysis = analyze_package(&package, &data, AssetView::Properties);
+    let tail = analysis
+        .known_opaque
+        .iter()
+        .find(|opaque| opaque.kind == KnownOpaqueKind::PostPropertyTail)
+        .unwrap();
+    let range = tail.byte_range.as_ref().unwrap();
+    assert_eq!(range.size, 4);
+    assert_eq!(range.preview, "01020304");
     assert!(
-        !json["diagnostics"]
-            .as_array()
-            .unwrap()
+        analysis
+            .diagnostics
             .iter()
-            .any(|diag| diag["code"].as_str() == Some("post_property_tail"))
+            .all(|diagnostic| diagnostic.code != "post_property_tail")
     );
 }
 
 #[test]
 fn non_tagged_property_payload_is_reported_as_status() {
     let base = Package::parse(&build_minimal_package()).unwrap();
-    let mut data = Vec::new();
-    data.push(0); // object serialization control byte
-    data.extend_from_slice(&[1, 2, 3, 4]); // not enough bytes for a tagged property name
-
-    let pkg = Package {
+    let mut data = vec![0];
+    data.extend_from_slice(&[1, 2, 3, 4]);
+    let package = Package {
         summary: base.summary,
         names: NameMap {
             names: vec!["Obj".to_string()],
@@ -279,78 +254,58 @@ fn non_tagged_property_payload_is_reported_as_status() {
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
     };
-    let mut sections = OutputSections::none();
-    sections.exports = true;
-    sections.properties = true;
 
-    let json = pkg.decode_to_json(&data, &sections);
-
+    let analysis = analyze_package(&package, &data, AssetView::Properties);
     assert_eq!(
-        json["exports"][0]["property_parse_status"].as_str(),
-        Some("non_tagged_payload")
+        analysis.exports[0].property_status,
+        Some(PropertyDecodeStatus::NonTaggedPayload)
     );
-    assert!(
-        json["exports"][0]["properties"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-    assert!(json["diagnostics"].as_array().unwrap().is_empty());
+    assert!(analysis.exports[0].properties.is_empty());
+    assert!(analysis.diagnostics.is_empty());
 }
 
 #[test]
-fn soft_package_references_parse_and_merge() {
-    // Append a name table and a SoftPackageReferences table to the minimal package,
-    // then patch the summary offsets (name_count@68/name_offset@72,
-    // soft_package_references count@132/offset@136).
+fn soft_package_references_are_parsed_and_filtered() {
     let mut data = build_minimal_package();
     let name_offset = data.len() as i32;
     push_fstring(&mut data, "/Game/Foo/SoftDep");
-    push_u32(&mut data, 0); // name hashes (ue4 >= 504)
+    push_u32(&mut data, 0);
     push_fstring(&mut data, "None");
     push_u32(&mut data, 0);
     let soft_offset = data.len() as i32;
-    push_raw_name(&mut data, 0); // /Game/Foo/SoftDep
-    push_raw_name(&mut data, 1); // None (filtered out of references)
-    put_i32(&mut data, 68, 2); // name_count
+    push_raw_name(&mut data, 0);
+    push_raw_name(&mut data, 1);
+    put_i32(&mut data, 68, 2);
     put_i32(&mut data, 72, name_offset);
-    put_i32(&mut data, 132, 2); // soft_package_references_count
+    put_i32(&mut data, 132, 2);
     put_i32(&mut data, 136, soft_offset);
 
-    let pkg = Package::parse(&data).expect("package with soft refs should parse");
-    assert!(pkg.soft_package_reference_error.is_none());
+    let package = Package::parse(&data).expect("package with soft refs should parse");
+    assert!(package.soft_package_reference_error.is_none());
     assert_eq!(
-        pkg.soft_package_references,
+        package.soft_package_references,
         vec!["/Game/Foo/SoftDep", "None"]
     );
-    assert_eq!(pkg.referenced_packages(), vec!["/Game/Foo/SoftDep"]);
-    assert!(pkg.references_package("/game/foo/softdep"));
 
-    let json = pkg.decode_to_json(&data, &OutputSections::parse("refs").unwrap());
-    let soft = json["references"]["soft"].as_array().unwrap();
-    assert_eq!(soft.len(), 1);
-    assert_eq!(soft[0].as_str(), Some("/Game/Foo/SoftDep"));
-
-    let refs = referenced_packages_from_bytes(&data).unwrap();
-    assert_eq!(refs, vec!["/Game/Foo/SoftDep"]);
+    let analysis = analyze_package(&package, &data, AssetView::References);
+    assert_eq!(analysis.references.soft, vec!["/Game/Foo/SoftDep"]);
 }
 
 #[test]
-fn fast_reference_extraction_rejects_soft_package_table_errors() {
+fn soft_package_table_failure_is_not_silenced() {
     let mut data = build_minimal_package();
-    put_i32(&mut data, 132, 1); // soft_package_references_count
-    put_i32(&mut data, 136, 999_999); // soft_package_references_offset
+    put_i32(&mut data, 132, 1);
+    put_i32(&mut data, 136, 999_999);
 
-    let pkg = Package::parse(&data).expect("package with broken soft ref table should parse");
-    assert!(pkg.soft_package_reference_error.is_some());
-
-    let json = pkg.decode_to_json(&data, &OutputSections::parse("refs").unwrap());
-    let diag = diagnostic_with_code(&json, "soft_package_reference_table_error");
-    assert_eq!(diag["severity"].as_str(), Some("warning"));
-
-    let err = referenced_packages_from_bytes(&data)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("soft package reference table failed"));
-    assert!(err.contains("soft package reference table seek failed"));
+    let package = Package::parse(&data).expect("broken optional table keeps package inspectable");
+    assert!(package.soft_package_reference_error.is_some());
+    let analysis = analyze_package(&package, &data, AssetView::References);
+    let diagnostic =
+        diagnostic_with_code(&analysis.diagnostics, "soft_package_reference_table_error");
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+    assert!(
+        diagnostic
+            .message
+            .contains("soft package reference table seek failed")
+    );
 }

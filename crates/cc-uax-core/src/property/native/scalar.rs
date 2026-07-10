@@ -1,8 +1,8 @@
 use crate::name::NameMap;
 use crate::property::{ParseCtx, ensure_within_value, validate_count};
 use crate::reader::Reader;
+use crate::structured_value::{Value, json};
 use anyhow::Result;
-use serde_json::{Value, json};
 // PerPlatform* / PerQualityLevel* scalar overrides (default + optional map).
 pub(super) fn parse_scalar_struct(
     r: &mut Reader,

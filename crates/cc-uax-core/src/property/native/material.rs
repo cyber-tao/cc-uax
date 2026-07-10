@@ -1,7 +1,7 @@
 use crate::property::ParseCtx;
 use crate::reader::Reader;
+use crate::structured_value::{Map, Value, json};
 use anyhow::Result;
-use serde_json::{Value, json};
 
 const MATERIAL_INPUT_USES_LINEAR_COLOR: i32 = 171;
 
@@ -65,10 +65,7 @@ pub(super) fn parse_material_input_struct(
     Ok(Some(v))
 }
 
-fn parse_expression_input(
-    r: &mut Reader,
-    ctx: &ParseCtx,
-) -> Result<serde_json::Map<String, Value>> {
+fn parse_expression_input(r: &mut Reader, ctx: &ParseCtx) -> Result<Map> {
     let expression = r.read_i32()?;
     let output_index = r.read_i32()?;
     let input_name = ctx.names.resolve_raw(r.read_raw_name()?);
@@ -77,7 +74,7 @@ fn parse_expression_input(
     let mask_g = r.read_i32()?;
     let mask_b = r.read_i32()?;
     let mask_a = r.read_i32()?;
-    let mut o = serde_json::Map::new();
+    let mut o = Map::new();
     o.insert("expression".into(), (ctx.resolve_object)(expression));
     o.insert("output_index".into(), json!(output_index));
     o.insert("input_name".into(), json!(input_name));

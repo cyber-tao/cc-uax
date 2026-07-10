@@ -1,6 +1,6 @@
 use super::MemberRef;
 use crate::property::PropertyEntry;
-use serde_json::Value;
+use crate::structured_value::Value;
 
 pub(super) fn distill_member(props: &[PropertyEntry]) -> Option<MemberRef> {
     const REF_PROPS: [&str; 4] = [

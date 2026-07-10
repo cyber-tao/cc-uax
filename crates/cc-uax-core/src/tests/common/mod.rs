@@ -3,15 +3,6 @@
 use crate::object::{ObjectExport, PackageIndex};
 use crate::reader::RawName;
 
-pub fn diagnostic_with_code<'a>(json: &'a serde_json::Value, code: &str) -> &'a serde_json::Value {
-    json["diagnostics"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|diag| diag["code"].as_str() == Some(code))
-        .unwrap_or_else(|| panic!("missing diagnostic code {code}: {json}"))
-}
-
 pub fn push_u16(v: &mut Vec<u8>, x: u16) {
     v.extend_from_slice(&x.to_le_bytes());
 }

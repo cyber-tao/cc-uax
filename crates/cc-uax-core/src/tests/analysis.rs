@@ -32,8 +32,8 @@ fn package_view_binds_analysis_to_its_original_bytes() {
     assert_eq!(analysis_a.coverage.property_exports_total, 0);
     assert_eq!(analysis_a.coverage.graph_nodes_total, 0);
 
-    let encoded = serde_json::to_string(&analysis_a).unwrap();
-    let decoded: AssetAnalysis = serde_json::from_str(&encoded).unwrap();
+    let encoded = serde_json_crate::to_string(&analysis_a).unwrap();
+    let decoded: AssetAnalysis = serde_json_crate::from_str(&encoded).unwrap();
     assert_eq!(decoded, analysis_a);
 }
 

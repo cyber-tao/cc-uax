@@ -1,10 +1,10 @@
 use crate::property::{
-    PREVIEW_MAX, ParseCtx, PropertyParseStatus, entries_to_json, parse_properties_report, to_hex,
+    PREVIEW_MAX, ParseCtx, PropertyParseStatus, entries_to_values, parse_properties_report, to_hex,
     validate_count,
 };
 use crate::reader::Reader;
+use crate::structured_value::{Map, Value, json};
 use anyhow::{Result, bail};
-use serde_json::{Map, Value, json};
 
 // Gameplay / generic engine structs with custom native serialization.
 pub(super) fn parse_gameplay_struct(
@@ -134,7 +134,7 @@ pub(super) fn append_serialized_struct_payload(
     r: &mut Reader,
     ctx: &ParseCtx,
     value_end: u64,
-    out: &mut Map<String, Value>,
+    out: &mut Map,
 ) -> Result<()> {
     let serial_size = r.read_i32()?;
     if serial_size < 0 {
@@ -153,7 +153,7 @@ pub(super) fn append_serialized_struct_payload(
 
     let parsed = parse_properties_report(r, ctx, payload_end, "/serialized_struct/properties");
     if !parsed.entries.is_empty() {
-        out.insert("properties".into(), entries_to_json(&parsed.entries));
+        out.insert("properties".into(), entries_to_values(&parsed.entries));
     }
     if parsed.status.is_output_relevant() || !parsed.diagnostics.is_empty() {
         out.insert("property_status".into(), json!(parsed.status.as_str()));

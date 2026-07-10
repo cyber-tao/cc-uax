@@ -1,9 +1,9 @@
 use crate::property::{
-    ParseCtx, PropertyParseStatus, entries_to_json, parse_properties_report, validate_count,
+    ParseCtx, PropertyParseStatus, entries_to_values, parse_properties_report, validate_count,
 };
 use crate::reader::Reader;
+use crate::structured_value::{Map, Value, json};
 use anyhow::{Result, bail};
-use serde_json::{Map, Value, json};
 
 const POINT_ARRAY_SAMPLE_MAX: i32 = 3;
 
@@ -143,7 +143,7 @@ fn parse_pcg_point(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Val
         let mut o = Map::new();
         o.insert("@struct".into(), json!("PCGPoint"));
         o.insert("serialization".into(), json!("legacy_tagged"));
-        o.insert("properties".into(), entries_to_json(&parsed.entries));
+        o.insert("properties".into(), entries_to_values(&parsed.entries));
         if parsed.status.is_output_relevant() {
             o.insert("property_status".into(), json!(parsed.status.as_str()));
         }

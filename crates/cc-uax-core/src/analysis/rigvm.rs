@@ -6,7 +6,7 @@ use crate::model::{
     RigVmLinearColor, RigVmLink, RigVmNode, RigVmPin, RigVmPinDirection, RigVmVector2,
 };
 use crate::property::{PropertyEntry, PropertyParseStatus};
-use serde_json::Value;
+use crate::structured_value::{Map, Value};
 use std::collections::{HashMap, HashSet};
 
 const MAX_PIN_DEPTH: usize = 128;
@@ -321,8 +321,7 @@ fn pin_from_index(
         is_dynamic_array: bool_property(export, "bIsDynamicArray"),
         is_lazy: bool_property(export, "bIsLazy"),
         cpp_type: string_property(export, "CPPType"),
-        cpp_type_object: value_property(export, "CPPTypeObject")
-            .map(super::decoded_value_from_json),
+        cpp_type_object: value_property(export, "CPPTypeObject").cloned(),
         cpp_type_object_path: string_property(export, "CPPTypeObjectPath"),
         default_value: string_property(export, "DefaultValue"),
         default_value_type: string_property(export, "DefaultValueType"),
@@ -500,7 +499,7 @@ fn color_property(export: &DecodedExport, name: &str) -> Option<RigVmLinearColor
     })
 }
 
-fn object_number(object: &serde_json::Map<String, Value>, key: &str) -> Option<f64> {
+fn object_number(object: &Map, key: &str) -> Option<f64> {
     object
         .get(key)
         .or_else(|| object.get(&key.to_ascii_uppercase()))
@@ -602,6 +601,7 @@ fn warning(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::structured_value::json;
 
     #[test]
     fn direction_keeps_unknown_values() {
@@ -629,7 +629,7 @@ mod tests {
                 name: "Nodes".into(),
                 type_str: "ArrayProperty(ObjectProperty)".into(),
                 array_index: 0,
-                value: serde_json::json!([
+                value: json!([
                     { "index": 3, "ref": "Graph.Node" },
                     { "index": -1, "ref": "/Script/Foo" },
                     { "invalid": true }

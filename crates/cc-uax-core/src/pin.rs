@@ -1,10 +1,10 @@
 use crate::diagnostic::Diagnostic;
 use crate::property::{ParseCtx, PropertyParseStatus, parse_object_properties_report, parse_text};
 use crate::reader::{Guid, Reader};
+use crate::structured_value::{Value, json};
 use crate::summary::PackageFileSummary;
 use crate::version::custom;
 use anyhow::{Result, bail};
-use serde_json::Value;
 
 const MAX_PIN_COUNT: i32 = 4096;
 /// A serialized nullable PinRef always starts with a bool32. Null entries end
@@ -181,7 +181,7 @@ pub(crate) fn locate_legacy_pin_start(
         "legacy graph-node properties did not end in a usable None terminator; pin offset was not guessed",
     )
     .with_offset(property_end)
-    .with_context(serde_json::json!({
+    .with_context(json!({
         "property_status": parsed.status.as_str(),
         "property_diagnostics": diagnostic_codes,
         "serial_end": end,

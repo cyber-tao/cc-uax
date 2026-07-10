@@ -8,8 +8,8 @@ use crate::pin::{
 };
 use crate::property::ParseCtx;
 use crate::reader::Reader;
+use crate::structured_value::json;
 use crate::version::custom;
-use serde_json::json;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn decode_pins_for_export(

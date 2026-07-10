@@ -85,7 +85,7 @@ pub struct ParseCoverage {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+#[serde(untagged)]
 pub enum DecodedValue {
     Null,
     Bool(bool),

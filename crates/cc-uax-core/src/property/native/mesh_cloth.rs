@@ -1,10 +1,10 @@
 use crate::property::{
-    PREVIEW_MAX, ParseCtx, ensure_within_value, entries_to_json, parse_properties, to_hex,
+    PREVIEW_MAX, ParseCtx, ensure_within_value, entries_to_values, parse_properties, to_hex,
     validate_count,
 };
 use crate::reader::Reader;
+use crate::structured_value::{Map, Value, json};
 use anyhow::Result;
-use serde_json::{Map, Value, json};
 
 // Mesh / cloth / property-bag structs (sampled or hex-tailed payloads).
 pub(super) fn parse_mesh_cloth_struct(
@@ -38,7 +38,7 @@ fn parse_tagged_struct_with_payload(
     let nested = parse_properties(r, ctx, value_end);
     let mut o = Map::new();
     o.insert("@struct".into(), json!(name));
-    o.insert("properties".into(), entries_to_json(&nested));
+    o.insert("properties".into(), entries_to_values(&nested));
     if r.pos() < value_end {
         let payload_size = value_end - r.pos();
         let preview_len = payload_size.min(PREVIEW_MAX as u64) as usize;
@@ -97,7 +97,7 @@ fn parse_cloth_lod_data_common(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -
     let nested = parse_properties(r, ctx, value_end);
     let mut o = Map::new();
     o.insert("@struct".into(), json!("ClothLODDataCommon"));
-    o.insert("properties".into(), entries_to_json(&nested));
+    o.insert("properties".into(), entries_to_values(&nested));
     o.insert(
         "transition_up_skin_data".into(),
         parse_mesh_to_mesh_vert_data_array(r, value_end, "TransitionUpSkinData")?,
@@ -152,7 +152,7 @@ fn parse_cloth_tether_data(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Re
     }
     Ok(json!({
         "@struct": "ClothTetherData",
-        "properties": entries_to_json(&nested),
+        "properties": entries_to_values(&nested),
         "batch_count": batch_count,
         "tether_count": tether_total,
         "batch_sample": batch_sample,

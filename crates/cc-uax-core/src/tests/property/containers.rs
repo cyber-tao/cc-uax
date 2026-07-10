@@ -39,7 +39,7 @@ fn optional_property_decodes_set_and_unset() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -83,7 +83,7 @@ fn multicast_inline_delegate_decodes() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|idx: i32| serde_json::json!({ "index": idx }),
+        resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -110,8 +110,8 @@ fn soft_object_property_resolves_list_index() {
         ],
     };
     let table = vec![
-        serde_json::json!({ "asset_path": "/Game/A.A" }),
-        serde_json::json!({ "asset_path": "/Game/B.B" }),
+        crate::structured_value::json!({ "asset_path": "/Game/A.A" }),
+        crate::structured_value::json!({ "asset_path": "/Game/B.B" }),
     ];
     let mut value = Vec::new();
     push_i32(&mut value, 1); // index into the soft object path list
@@ -127,7 +127,7 @@ fn soft_object_property_resolves_list_index() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &table,
         serialization: crate::version::SerializationPolicy::default(),
@@ -165,7 +165,7 @@ fn lazy_object_property_decodes_guid() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -216,7 +216,7 @@ fn map_removed_keys_are_discarded() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -263,7 +263,7 @@ fn set_removed_elements_are_discarded() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),

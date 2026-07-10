@@ -2,7 +2,7 @@ use super::DecodedExport;
 use super::window::{ExportSerialWindow, preview_range};
 use crate::diagnostic::Diagnostic;
 use crate::reader::Reader;
-use serde_json::json;
+use crate::structured_value::json;
 
 const RIGVM_DEVELOPER_PREFIX: &str = "/Script/RigVMDeveloper.";
 const RIGVM_GRAPH_CLASS: &str = "/Script/RigVMDeveloper.RigVMGraph";

@@ -27,7 +27,7 @@ fn excessive_array_count_falls_back_to_hex() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -68,7 +68,7 @@ fn property_value_fallback_reports_diagnostic_context() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -119,7 +119,7 @@ fn float_curve_parses_as_tagged_fallback() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -166,7 +166,7 @@ fn tagged_fallback_struct_parses_as_properties() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
@@ -209,7 +209,7 @@ fn vm_external_function_binding_info_parses_as_tagged_fallback() {
 
     let ctx = ParseCtx {
         names: &names,
-        resolve_object: &|_idx: i32| serde_json::Value::Null,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),

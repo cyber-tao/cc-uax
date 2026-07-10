@@ -1,12 +1,12 @@
 use super::native::{is_tagged_fallback_struct, parse_native_struct};
 use super::text::parse_text;
 use super::{
-    ParseCtx, TypeName, ensure_within_value, entries_to_json, parse_properties, validate_count,
+    ParseCtx, TypeName, ensure_within_value, entries_to_values, parse_properties, validate_count,
 };
 use crate::name::NameMap;
 use crate::reader::Reader;
+use crate::structured_value::{Value, json};
 use anyhow::{Result, bail};
-use serde_json::{Value, json};
 
 pub(crate) fn parse_value(
     r: &mut Reader,
@@ -214,7 +214,7 @@ fn parse_struct(
         bail!("unknown native struct: {struct_name}");
     }
     let nested = parse_properties(r, ctx, value_end);
-    Ok(json!({ "@struct": struct_name, "properties": entries_to_json(&nested) }))
+    Ok(json!({ "@struct": struct_name, "properties": entries_to_values(&nested) }))
 }
 
 /// Structs that declare `WithSerializer` (so their property tag carries the

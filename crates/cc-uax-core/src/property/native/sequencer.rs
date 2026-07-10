@@ -1,7 +1,7 @@
 use crate::property::ParseCtx;
 use crate::reader::Reader;
+use crate::structured_value::{Map, Value, json};
 use anyhow::{Result, bail};
-use serde_json::{Value, json};
 // Sequencer MovieScene channels/ranges.
 pub(super) fn parse_sequencer_struct(
     r: &mut Reader,
@@ -102,7 +102,7 @@ fn parse_movie_scene_channel(
     let has_default_value = r.read_bool32()?;
     let tick_numerator = r.read_i32()?;
     let tick_denominator = r.read_i32()?;
-    let mut out = serde_json::Map::new();
+    let mut out = Map::new();
     out.insert("pre_infinity_extrap".into(), json!(pre_infinity));
     out.insert("post_infinity_extrap".into(), json!(post_infinity));
     out.insert("times".into(), Value::Array(times));

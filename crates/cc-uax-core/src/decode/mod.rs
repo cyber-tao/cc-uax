@@ -5,13 +5,12 @@ pub(crate) mod rigvm;
 mod window;
 
 use crate::diagnostic::{ByteRangePreview, Diagnostic};
-use crate::output::sections::OutputSections;
 use crate::package::Package;
 use crate::pin::{Pin, PinSerCtx, UserDefinedPin};
 use crate::property::{ParseCtx, PropertyEntry, PropertyParseStatus};
 use crate::reader::Reader;
+use crate::structured_value::{Value, json};
 use crate::version::{SerializationPolicy, custom, ue5};
-use serde_json::{Value, json};
 use std::collections::HashMap;
 
 use pins::{decode_pins_for_export, is_graph_node_class};
@@ -22,10 +21,37 @@ use rigvm::{
 };
 use window::export_serial_window;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct DecodeOptions {
+    pub(crate) exports: bool,
+    pub(crate) pins: bool,
+    pub(crate) properties: bool,
+    pub(crate) layout: bool,
+}
+
+impl DecodeOptions {
+    pub(crate) const fn none() -> Self {
+        Self {
+            exports: false,
+            pins: false,
+            properties: false,
+            layout: false,
+        }
+    }
+
+    pub(crate) const fn full() -> Self {
+        Self {
+            exports: true,
+            pins: true,
+            properties: true,
+            layout: true,
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub(crate) struct DecodeReport<'a> {
     pub(crate) package: &'a Package,
-    pub(crate) sections: OutputSections,
     pub(crate) exports: Vec<DecodedExport>,
     pub(crate) diagnostics: Vec<Diagnostic>,
 }
@@ -75,16 +101,15 @@ pub(crate) struct MemberRef {
 }
 
 impl Package {
-    pub(crate) fn decode<'a>(&'a self, data: &[u8], sections: &OutputSections) -> DecodeReport<'a> {
+    pub(crate) fn decode<'a>(&'a self, data: &[u8], options: &DecodeOptions) -> DecodeReport<'a> {
         let mut diagnostics = self.table_diagnostics();
-        let exports = if sections.exports {
-            self.decode_exports(data, sections, &mut diagnostics)
+        let exports = if options.exports {
+            self.decode_exports(data, options, &mut diagnostics)
         } else {
             Vec::new()
         };
         DecodeReport {
             package: self,
-            sections: sections.clone(),
             exports,
             diagnostics,
         }
@@ -112,7 +137,7 @@ impl Package {
     fn decode_exports(
         &self,
         data: &[u8],
-        sections: &OutputSections,
+        options: &DecodeOptions,
         diagnostics: &mut Vec<Diagnostic>,
     ) -> Vec<DecodedExport> {
         let object_ref_memo = std::cell::RefCell::new(HashMap::<i32, Value>::new());
@@ -167,7 +192,7 @@ impl Package {
             let class_full = self.resolve_full_name(exp.class_index.0);
             let is_node = is_graph_node_class(&class_full);
             let is_rigvm_link = is_rigvm_link_class(&class_full);
-            let capture_adapter_properties = sections.pins
+            let capture_adapter_properties = options.pins
                 && ((is_rigvm_model_object_class(&class_full) && !is_rigvm_link)
                     || is_pcg_model_object_class(&class_full)
                     || is_state_tree_model_object_class(&class_full));
@@ -178,7 +203,7 @@ impl Package {
                     class: class_full.clone(),
                     is_asset: exp.is_asset,
                 },
-                layout: sections.layout.then(|| DecodedExportLayout {
+                layout: options.layout.then(|| DecodedExportLayout {
                     super_name: self.resolve_full_name(exp.super_index.0),
                     template_name: self.resolve_full_name(exp.template_index.0),
                     outer_name: self.resolve_full_name(exp.outer_index.0),
@@ -219,11 +244,11 @@ impl Package {
             };
 
             if is_rigvm_link
-                && (sections.properties || sections.pins)
+                && (options.properties || options.pins)
                 && let Some(window) = serial_window
             {
                 decode_rigvm_link_for_export(&mut reader, window, i, diagnostics, &mut export);
-            } else if (sections.properties || is_node || capture_adapter_properties)
+            } else if (options.properties || is_node || capture_adapter_properties)
                 && let Some(window) = serial_window
             {
                 decode_properties_for_export(
@@ -233,13 +258,13 @@ impl Package {
                     window,
                     i,
                     &class_full,
-                    sections.properties || capture_adapter_properties,
+                    options.properties || capture_adapter_properties,
                     diagnostics,
                     &mut export,
                 );
             }
 
-            if sections.pins
+            if options.pins
                 && let Some(window) = serial_window
             {
                 decode_pins_for_export(
