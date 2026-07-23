@@ -10,48 +10,27 @@ pub(super) fn property<'a>(export: &'a AssetExport, name: &str) -> Option<&'a De
 }
 
 pub(super) fn object(value: &DecodedValue) -> Option<&BTreeMap<String, DecodedValue>> {
-    match value {
-        DecodedValue::Object(value) => Some(value),
-        _ => None,
-    }
+    value.as_object()
 }
 
 pub(super) fn array(value: &DecodedValue) -> Option<&[DecodedValue]> {
-    match value {
-        DecodedValue::Array(value) => Some(value),
-        _ => None,
-    }
+    value.as_array()
 }
 
 pub(super) fn string(value: &DecodedValue) -> Option<&str> {
-    match value {
-        DecodedValue::String(value) => Some(value),
-        _ => None,
-    }
+    value.as_str()
 }
 
 pub(super) fn boolean(value: &DecodedValue) -> Option<bool> {
-    match value {
-        DecodedValue::Bool(value) => Some(*value),
-        _ => None,
-    }
+    value.as_bool()
 }
 
 pub(super) fn integer(value: &DecodedValue) -> Option<i64> {
-    match value {
-        DecodedValue::Integer(value) => Some(*value),
-        DecodedValue::Unsigned(value) => i64::try_from(*value).ok(),
-        _ => None,
-    }
+    value.as_i64()
 }
 
 pub(super) fn float(value: &DecodedValue) -> Option<f64> {
-    match value {
-        DecodedValue::Float(value) => Some(*value),
-        DecodedValue::Integer(value) => Some(*value as f64),
-        DecodedValue::Unsigned(value) => Some(*value as f64),
-        _ => None,
-    }
+    value.as_f64()
 }
 
 pub(super) fn object_ref_index(value: &DecodedValue) -> Option<i32> {
