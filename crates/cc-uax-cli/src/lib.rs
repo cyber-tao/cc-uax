@@ -15,6 +15,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 const PROJECT_REPORT_SCHEMA_VERSION: u32 = 1;
+const UASSET_EXT_LEN: usize = 7;
+const UMAP_EXT_LEN: usize = 5;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {
@@ -160,10 +162,14 @@ fn package_matches(pattern: &str, package: &str) -> bool {
 }
 
 fn strip_package_extension(value: &str) -> &str {
-    if value.len() >= 7 && value[value.len() - 7..].eq_ignore_ascii_case(".uasset") {
-        &value[..value.len() - 7]
-    } else if value.len() >= 5 && value[value.len() - 5..].eq_ignore_ascii_case(".umap") {
-        &value[..value.len() - 5]
+    if value.len() >= UASSET_EXT_LEN
+        && value[value.len() - UASSET_EXT_LEN..].eq_ignore_ascii_case(".uasset")
+    {
+        &value[..value.len() - UASSET_EXT_LEN]
+    } else if value.len() >= UMAP_EXT_LEN
+        && value[value.len() - UMAP_EXT_LEN..].eq_ignore_ascii_case(".umap")
+    {
+        &value[..value.len() - UMAP_EXT_LEN]
     } else {
         value
     }
@@ -180,24 +186,26 @@ fn strip_object_name(value: &str) -> &str {
 fn glob_match(pattern: &str, value: &str) -> bool {
     let pattern = pattern.as_bytes();
     let value = value.as_bytes();
-    let mut row = vec![false; value.len() + 1];
-    row[0] = true;
+    let value_len = value.len();
+    let mut prev = vec![false; value_len + 1];
+    let mut curr = vec![false; value_len + 1];
+    prev[0] = true;
     for &token in pattern {
-        let mut next = vec![false; value.len() + 1];
+        curr.iter_mut().for_each(|slot| *slot = false);
         if token == b'*' {
-            next[0] = row[0];
-            for index in 1..=value.len() {
-                next[index] = row[index] || next[index - 1];
+            curr[0] = prev[0];
+            for index in 1..=value_len {
+                curr[index] = prev[index] || curr[index - 1];
             }
         } else {
-            for index in 1..=value.len() {
-                next[index] = row[index - 1]
+            for index in 1..=value_len {
+                curr[index] = prev[index - 1]
                     && (token == b'?' || token.eq_ignore_ascii_case(&value[index - 1]));
             }
         }
-        row = next;
+        std::mem::swap(&mut prev, &mut curr);
     }
-    row[value.len()]
+    prev[value_len]
 }
 
 fn write_json<T: Serialize>(value: &T, compact: bool, output: Option<&Path>) -> Result<()> {

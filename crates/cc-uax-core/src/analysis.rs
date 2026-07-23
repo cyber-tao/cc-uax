@@ -9,7 +9,10 @@ use crate::decode::{DecodeOptions, DecodeReport, DecodedExport};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::model::*;
 use crate::package::Package;
-use crate::pin::{Pin, PinTerminalType, PinType, UserDefinedPin};
+use crate::pin::{
+    CONTAINER_TYPE_ARRAY, CONTAINER_TYPE_MAP, CONTAINER_TYPE_NONE, CONTAINER_TYPE_SET, Pin,
+    PinTerminalType, PinType, UserDefinedPin,
+};
 use crate::property::{PropertyEntry, PropertyParseStatus};
 use crate::reader::Guid;
 use crate::references::collect_package_references;
@@ -63,22 +66,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
     let wants_logic = matches!(view, AssetView::Logic | AssetView::Full);
     let wants_properties = matches!(view, AssetView::Properties | AssetView::Full);
     let wants_references = matches!(view, AssetView::References | AssetView::Full);
-    let options = match view {
-        AssetView::Summary | AssetView::References => DecodeOptions::none(),
-        AssetView::Logic => {
-            let mut options = DecodeOptions::none();
-            options.exports = true;
-            options.pins = true;
-            options
-        }
-        AssetView::Properties => {
-            let mut options = DecodeOptions::none();
-            options.exports = true;
-            options.properties = true;
-            options
-        }
-        AssetView::Full => DecodeOptions::full(),
-    };
+    let options = build_decode_options(view);
     let report = package.decode(bytes, &options);
     let rigvm_adapter = if wants_logic {
         build_rigvm_graphs(&report)
@@ -117,89 +105,18 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         HashSet::new()
     };
 
-    let graph_nodes_total = if wants_logic {
-        report
-            .exports
-            .iter()
-            .filter(|export| {
-                is_graph_node_class(&export.identity.class)
-                    && !(has_authoritative_rigvm_graph
-                        && is_control_rig_editor_mirror_export(
-                            &report,
-                            export,
-                            &control_rig_editor_graphs,
-                        ))
-            })
-            .count()
-    } else {
-        0
-    };
-    let graph_nodes_decoded = if wants_logic {
-        report
-            .exports
-            .iter()
-            .filter(|export| {
-                is_graph_node_class(&export.identity.class)
-                    && export.pins.is_some()
-                    && !(has_authoritative_rigvm_graph
-                        && is_control_rig_editor_mirror_export(
-                            &report,
-                            export,
-                            &control_rig_editor_graphs,
-                        ))
-            })
-            .count()
-    } else {
-        0
-    };
-    let property_exports_total = if wants_properties {
-        report
-            .exports
-            .iter()
-            .zip(&package.exports)
-            .filter(|(export, raw)| {
-                raw.serial_size > 0 && !is_rigvm_link_class(&export.identity.class)
-            })
-            .count()
-    } else {
-        0
-    };
-    let property_exports_complete = if wants_properties {
-        report
-            .exports
-            .iter()
-            .zip(&package.exports)
-            .filter(|(export, raw)| {
-                raw.serial_size > 0
-                    && !is_rigvm_link_class(&export.identity.class)
-                    && matches!(
-                        export.property_status,
-                        Some(PropertyParseStatus::Complete | PropertyParseStatus::Empty)
-                    )
-            })
-            .count()
-    } else {
-        0
-    };
-    let properties_decoded = if wants_properties {
-        report
-            .exports
-            .iter()
-            .map(|export| export.properties.as_ref().map_or(0, Vec::len))
-            .sum()
-    } else {
-        0
-    };
-    let pins_decoded = if wants_logic {
-        report
-            .exports
-            .iter()
-            .map(|export| export.pins.as_ref().map_or(0, Vec::len))
-            .sum()
-    } else {
-        0
-    };
-    let graph_edges_decoded = graphs.iter().map(|graph| graph.edges.len()).sum();
+    let graph_coverage = compute_graph_coverage(
+        &report,
+        wants_logic,
+        has_authoritative_rigvm_graph,
+        &control_rig_editor_graphs,
+        &graphs,
+    );
+    let property_coverage = compute_property_coverage(&report, package, wants_properties);
+    let pcg_coverage = compute_pcg_coverage(&pcg_adapter);
+    let state_tree_coverage = compute_state_tree_coverage(&state_tree_adapter);
+    let rigvm_coverage = compute_rigvm_coverage(&rigvm_adapter);
+
     let diagnostic_errors = diagnostics
         .iter()
         .filter(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
@@ -209,91 +126,423 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         .filter(|diagnostic| diagnostic.severity == DiagnosticSeverity::Warning)
         .count();
 
-    let pcg_graphs_decoded = pcg_adapter
+    let pcg_partial = pcg_coverage.is_partial(&pcg_adapter);
+    let state_tree_partial = state_tree_coverage.is_partial(&state_tree_adapter);
+    let property_partial = property_coverage.is_partial();
+    let graph_partial = graph_coverage.is_partial(&graphs);
+
+    let capabilities = build_capabilities(
+        &report,
+        package,
+        wants_references,
+        wants_properties,
+        wants_logic,
+        &property_coverage,
+        property_partial,
+        &graph_coverage,
+        graph_partial,
+        &rigvm_adapter,
+        rigvm_coverage,
+        &state_tree_adapter,
+        state_tree_partial,
+        &state_tree_coverage,
+        &pcg_adapter,
+        pcg_partial,
+        &pcg_coverage,
+        &mut known_opaque,
+    );
+
+    let known_opaque_regions = known_opaque.len();
+    let coverage = ParseCoverage {
+        bytes_total: bytes.len() as u64,
+        exports_total: package.exports.len(),
+        exports_analyzed: report.exports.len(),
+        property_exports_total: property_coverage.exports_total,
+        property_exports_complete: property_coverage.exports_complete,
+        properties_decoded: property_coverage.properties_decoded,
+        graph_nodes_total: graph_coverage.nodes_total,
+        graph_nodes_decoded: graph_coverage.nodes_decoded,
+        pins_decoded: graph_coverage.pins_decoded,
+        graph_edges_decoded: graph_coverage.edges_decoded,
+        rigvm_graphs_total: rigvm_coverage.graphs_total,
+        rigvm_graphs_decoded: rigvm_coverage.graphs_decoded,
+        rigvm_nodes_total: rigvm_coverage.nodes_total,
+        rigvm_nodes_decoded: rigvm_coverage.nodes_decoded,
+        rigvm_pins_total: rigvm_coverage.pins_total,
+        rigvm_pins_decoded: rigvm_coverage.pins_decoded,
+        rigvm_links_total: rigvm_coverage.links_total,
+        rigvm_links_decoded: rigvm_coverage.links_decoded,
+        pcg_graphs_total: pcg_adapter.graph_exports_total,
+        pcg_graphs_decoded: pcg_coverage.graphs_decoded,
+        pcg_nodes_total: pcg_coverage.nodes_total,
+        pcg_nodes_decoded: pcg_coverage.nodes_decoded,
+        pcg_pins_total: pcg_coverage.pins_total,
+        pcg_pins_decoded: pcg_coverage.pins_decoded,
+        pcg_edges_total: pcg_coverage.edges_total,
+        pcg_edges_decoded: pcg_coverage.edges_decoded,
+        state_tree_graphs_total: state_tree_adapter.graph_exports_total,
+        state_tree_graphs_decoded: state_tree_coverage.graphs_decoded,
+        state_tree_states_total: state_tree_adapter.state_exports_total,
+        state_tree_states_decoded: state_tree_coverage.states_decoded,
+        state_tree_tasks_total: state_tree_coverage.tasks_decoded,
+        state_tree_tasks_decoded: state_tree_coverage.tasks_decoded,
+        state_tree_conditions_total: state_tree_coverage.conditions_decoded,
+        state_tree_conditions_decoded: state_tree_coverage.conditions_decoded,
+        state_tree_transitions_total: state_tree_coverage.transitions_decoded,
+        state_tree_transitions_decoded: state_tree_coverage.transitions_decoded,
+        known_opaque_regions,
+        diagnostic_errors,
+        diagnostic_warnings,
+    };
+    let status = determine_analysis_status(
+        package,
+        diagnostic_errors,
+        diagnostic_warnings,
+        property_partial,
+        graph_partial,
+        known_opaque_regions,
+        &capabilities,
+    );
+
+    AssetAnalysis {
+        schema_version: ASSET_ANALYSIS_SCHEMA_VERSION,
+        view,
+        status,
+        summary: summary_to_model(package),
+        references: if wants_references {
+            references_to_model(package)
+        } else {
+            AssetReferences {
+                assets: Vec::new(),
+                scripts: Vec::new(),
+                soft: Vec::new(),
+            }
+        },
+        imports: if wants_references {
+            imports_to_model(package)
+        } else {
+            Vec::new()
+        },
+        exports,
+        graphs,
+        rigvm_graphs: rigvm_adapter.graphs,
+        pcg_graphs: pcg_adapter.graphs,
+        state_tree_graphs: state_tree_adapter.graphs,
+        coverage,
+        diagnostics,
+        capabilities,
+        known_opaque,
+    }
+}
+
+fn build_decode_options(view: AssetView) -> DecodeOptions {
+    match view {
+        AssetView::Summary | AssetView::References => DecodeOptions::none(),
+        AssetView::Logic => {
+            let mut options = DecodeOptions::none();
+            options.exports = true;
+            options.pins = true;
+            options
+        }
+        AssetView::Properties => {
+            let mut options = DecodeOptions::none();
+            options.exports = true;
+            options.properties = true;
+            options
+        }
+        AssetView::Full => DecodeOptions::full(),
+    }
+}
+
+struct GraphCoverage {
+    nodes_total: usize,
+    nodes_decoded: usize,
+    pins_decoded: usize,
+    edges_decoded: usize,
+}
+
+impl GraphCoverage {
+    fn is_partial(&self, graphs: &[LogicGraph]) -> bool {
+        self.nodes_decoded < self.nodes_total
+            || graphs
+                .iter()
+                .any(|graph| graph.excluded_cross_graph_links > 0 || graph.unresolved_links > 0)
+    }
+}
+
+fn compute_graph_coverage(
+    report: &DecodeReport<'_>,
+    wants_logic: bool,
+    has_authoritative_rigvm_graph: bool,
+    control_rig_editor_graphs: &HashSet<i32>,
+    graphs: &[LogicGraph],
+) -> GraphCoverage {
+    if !wants_logic {
+        return GraphCoverage {
+            nodes_total: 0,
+            nodes_decoded: 0,
+            pins_decoded: 0,
+            edges_decoded: 0,
+        };
+    }
+    let nodes_total = report
+        .exports
+        .iter()
+        .filter(|export| {
+            is_graph_node_class(&export.identity.class)
+                && !(has_authoritative_rigvm_graph
+                    && is_control_rig_editor_mirror_export(
+                        report,
+                        export,
+                        control_rig_editor_graphs,
+                    ))
+        })
+        .count();
+    let nodes_decoded = report
+        .exports
+        .iter()
+        .filter(|export| {
+            is_graph_node_class(&export.identity.class)
+                && export.pins.is_some()
+                && !(has_authoritative_rigvm_graph
+                    && is_control_rig_editor_mirror_export(
+                        report,
+                        export,
+                        control_rig_editor_graphs,
+                    ))
+        })
+        .count();
+    let pins_decoded = report
+        .exports
+        .iter()
+        .map(|export| export.pins.as_ref().map_or(0, Vec::len))
+        .sum();
+    let edges_decoded = graphs.iter().map(|graph| graph.edges.len()).sum();
+    GraphCoverage {
+        nodes_total,
+        nodes_decoded,
+        pins_decoded,
+        edges_decoded,
+    }
+}
+
+struct PropertyCoverage {
+    exports_total: usize,
+    exports_complete: usize,
+    properties_decoded: usize,
+}
+
+impl PropertyCoverage {
+    fn is_partial(&self) -> bool {
+        self.exports_complete < self.exports_total
+    }
+}
+
+fn compute_property_coverage(
+    report: &DecodeReport<'_>,
+    package: &Package,
+    wants_properties: bool,
+) -> PropertyCoverage {
+    if !wants_properties {
+        return PropertyCoverage {
+            exports_total: 0,
+            exports_complete: 0,
+            properties_decoded: 0,
+        };
+    }
+    let exports_total = report
+        .exports
+        .iter()
+        .zip(&package.exports)
+        .filter(|(export, raw)| raw.serial_size > 0 && !is_rigvm_link_class(&export.identity.class))
+        .count();
+    let exports_complete = report
+        .exports
+        .iter()
+        .zip(&package.exports)
+        .filter(|(export, raw)| {
+            raw.serial_size > 0
+                && !is_rigvm_link_class(&export.identity.class)
+                && matches!(
+                    export.property_status,
+                    Some(PropertyParseStatus::Complete | PropertyParseStatus::Empty)
+                )
+        })
+        .count();
+    let properties_decoded = report
+        .exports
+        .iter()
+        .map(|export| export.properties.as_ref().map_or(0, Vec::len))
+        .sum();
+    PropertyCoverage {
+        exports_total,
+        exports_complete,
+        properties_decoded,
+    }
+}
+
+struct PcgCoverage {
+    graphs_decoded: usize,
+    nodes_decoded: usize,
+    nodes_total: usize,
+    pins_decoded: usize,
+    pins_total: usize,
+    edges_decoded: usize,
+    edges_total: usize,
+}
+
+impl PcgCoverage {
+    fn is_partial(&self, adapter: &pcg::PcgAdapterResult) -> bool {
+        self.graphs_decoded < adapter.graph_exports_total
+            || self.nodes_decoded < self.nodes_total
+            || self.pins_decoded < self.pins_total
+            || self.edges_decoded < self.edges_total
+            || !adapter.known_opaque.is_empty()
+    }
+}
+
+fn compute_pcg_coverage(adapter: &pcg::PcgAdapterResult) -> PcgCoverage {
+    let graphs_decoded = adapter
         .graphs
         .iter()
         .filter(|graph| graph.nodes_array_count > 0 || graph.default_node_count > 0)
         .count();
-    let pcg_nodes_decoded = pcg_adapter
-        .graphs
-        .iter()
-        .map(|graph| graph.nodes.len())
-        .sum::<usize>();
-    let pcg_nodes_total = pcg_nodes_decoded
-        + pcg_adapter
+    let nodes_decoded = adapter.graphs.iter().map(|graph| graph.nodes.len()).sum();
+    let nodes_total = nodes_decoded
+        + adapter
             .graphs
             .iter()
             .map(|graph| graph.unresolved_node_references)
             .sum::<usize>();
-    let pcg_pins_decoded = pcg_adapter
+    let pins_decoded = adapter
         .graphs
         .iter()
         .flat_map(|graph| &graph.nodes)
         .map(|node| node.pins.len())
         .sum::<usize>();
-    let pcg_pins_total = pcg_pins_decoded
-        + pcg_adapter
+    let pins_total = pins_decoded
+        + adapter
             .graphs
             .iter()
             .map(|graph| graph.unresolved_pin_references)
             .sum::<usize>();
-    let pcg_edges_decoded = pcg_adapter
-        .graphs
-        .iter()
-        .map(|graph| graph.edges.len())
-        .sum::<usize>();
-    let pcg_edges_total = pcg_edges_decoded
-        + pcg_adapter
+    let edges_decoded = adapter.graphs.iter().map(|graph| graph.edges.len()).sum();
+    let edges_total = edges_decoded
+        + adapter
             .graphs
             .iter()
             .map(|graph| graph.unresolved_edge_references)
             .sum::<usize>();
-    let pcg_partial = pcg_graphs_decoded < pcg_adapter.graph_exports_total
-        || pcg_nodes_decoded < pcg_nodes_total
-        || pcg_pins_decoded < pcg_pins_total
-        || pcg_edges_decoded < pcg_edges_total
-        || !pcg_adapter.known_opaque.is_empty();
+    PcgCoverage {
+        graphs_decoded,
+        nodes_decoded,
+        nodes_total,
+        pins_decoded,
+        pins_total,
+        edges_decoded,
+        edges_total,
+    }
+}
 
-    let state_tree_graphs_decoded = state_tree_adapter
+struct StateTreeCoverage {
+    graphs_decoded: usize,
+    states_decoded: usize,
+    tasks_decoded: usize,
+    conditions_decoded: usize,
+    transitions_decoded: usize,
+}
+
+impl StateTreeCoverage {
+    fn is_partial(&self, adapter: &state_tree::StateTreeAdapterResult) -> bool {
+        self.graphs_decoded < adapter.graph_exports_total
+            || self.states_decoded < adapter.state_exports_total
+            || adapter
+                .graphs
+                .iter()
+                .any(|graph| graph.unresolved_state_references > 0)
+    }
+}
+
+fn compute_state_tree_coverage(adapter: &state_tree::StateTreeAdapterResult) -> StateTreeCoverage {
+    let graphs_decoded = adapter
         .graphs
         .iter()
         .filter(|graph| graph.editor_data_index.is_some())
         .count();
-    let state_tree_states_decoded = state_tree_adapter
-        .graphs
-        .iter()
-        .map(|graph| graph.states.len())
-        .sum::<usize>();
-    let state_tree_tasks_decoded = state_tree_adapter
+    let states_decoded = adapter.graphs.iter().map(|graph| graph.states.len()).sum();
+    let tasks_decoded = adapter
         .graphs
         .iter()
         .flat_map(|graph| &graph.states)
         .map(|state| state.tasks.len())
         .sum::<usize>();
-    let state_tree_conditions_decoded = state_tree_adapter
+    let conditions_decoded = adapter
         .graphs
         .iter()
         .flat_map(|graph| &graph.states)
         .map(|state| state.enter_conditions.len())
         .sum::<usize>();
-    let state_tree_transitions_decoded = state_tree_adapter
+    let transitions_decoded = adapter
         .graphs
         .iter()
         .flat_map(|graph| &graph.states)
         .map(|state| state.transitions.len())
         .sum::<usize>();
-    let state_tree_partial = state_tree_graphs_decoded < state_tree_adapter.graph_exports_total
-        || state_tree_states_decoded < state_tree_adapter.state_exports_total
-        || state_tree_adapter
-            .graphs
-            .iter()
-            .any(|graph| graph.unresolved_state_references > 0);
+    StateTreeCoverage {
+        graphs_decoded,
+        states_decoded,
+        tasks_decoded,
+        conditions_decoded,
+        transitions_decoded,
+    }
+}
 
-    let property_partial = property_exports_complete < property_exports_total;
-    let graph_partial = graph_nodes_decoded < graph_nodes_total
-        || graphs
-            .iter()
-            .any(|graph| graph.excluded_cross_graph_links > 0 || graph.unresolved_links > 0);
+#[derive(Clone, Copy)]
+struct RigVmCoverage {
+    graphs_total: usize,
+    graphs_decoded: usize,
+    nodes_total: usize,
+    nodes_decoded: usize,
+    pins_total: usize,
+    pins_decoded: usize,
+    links_total: usize,
+    links_decoded: usize,
+}
+
+fn compute_rigvm_coverage(adapter: &rigvm::RigVmAdapterResult) -> RigVmCoverage {
+    RigVmCoverage {
+        graphs_total: adapter.graphs_total,
+        graphs_decoded: adapter.graphs_decoded,
+        nodes_total: adapter.nodes_total,
+        nodes_decoded: adapter.nodes_decoded,
+        pins_total: adapter.pins_total,
+        pins_decoded: adapter.pins_decoded,
+        links_total: adapter.links_total,
+        links_decoded: adapter.links_decoded,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_capabilities(
+    report: &DecodeReport<'_>,
+    package: &Package,
+    wants_references: bool,
+    wants_properties: bool,
+    wants_logic: bool,
+    property_coverage: &PropertyCoverage,
+    property_partial: bool,
+    graph_coverage: &GraphCoverage,
+    graph_partial: bool,
+    rigvm_adapter: &rigvm::RigVmAdapterResult,
+    rigvm_coverage: RigVmCoverage,
+    state_tree_adapter: &state_tree::StateTreeAdapterResult,
+    state_tree_partial: bool,
+    state_tree_coverage: &StateTreeCoverage,
+    pcg_adapter: &pcg::PcgAdapterResult,
+    pcg_partial: bool,
+    pcg_coverage: &PcgCoverage,
+    known_opaque: &mut Vec<KnownOpaque>,
+) -> Vec<AnalysisCapability> {
     let mut capabilities = vec![AnalysisCapability {
         kind: CapabilityKind::PackageTables,
         status: if report.diagnostics.iter().any(|diagnostic| {
@@ -328,12 +577,13 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
             },
             detail: property_partial.then(|| {
                 format!(
-                    "{property_exports_complete}/{property_exports_total} non-empty exports have complete tagged-property coverage"
+                    "{}/{} non-empty exports have complete tagged-property coverage",
+                    property_coverage.exports_complete, property_coverage.exports_total
                 )
             }),
         });
     }
-    if wants_logic && graph_nodes_total > 0 {
+    if wants_logic && graph_coverage.nodes_total > 0 {
         capabilities.push(AnalysisCapability {
             kind: CapabilityKind::EdGraphLogic,
             status: if graph_partial {
@@ -343,12 +593,13 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
             },
             detail: graph_partial.then(|| {
                 format!(
-                    "{graph_nodes_decoded}/{graph_nodes_total} graph nodes decoded; unresolved or cross-graph links are excluded"
+                    "{}/{} graph nodes decoded; unresolved or cross-graph links are excluded",
+                    graph_coverage.nodes_decoded, graph_coverage.nodes_total
                 )
             }),
         });
     }
-    if wants_logic && rigvm_adapter.graphs_total > 0 {
+    if wants_logic && rigvm_coverage.graphs_total > 0 {
         let rigvm_complete = rigvm_adapter.is_complete();
         capabilities.push(AnalysisCapability {
             kind: CapabilityKind::RigVmModel,
@@ -359,19 +610,19 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
             },
             detail: Some(format!(
                 "{}/{} graphs, {}/{} nodes, {}/{} pins and {}/{} links decoded from the authoritative RigVM model",
-                rigvm_adapter.graphs_decoded,
-                rigvm_adapter.graphs_total,
-                rigvm_adapter.nodes_decoded,
-                rigvm_adapter.nodes_total,
-                rigvm_adapter.pins_decoded,
-                rigvm_adapter.pins_total,
-                rigvm_adapter.links_decoded,
-                rigvm_adapter.links_total,
+                rigvm_coverage.graphs_decoded,
+                rigvm_coverage.graphs_total,
+                rigvm_coverage.nodes_decoded,
+                rigvm_coverage.nodes_total,
+                rigvm_coverage.pins_decoded,
+                rigvm_coverage.pins_total,
+                rigvm_coverage.links_decoded,
+                rigvm_coverage.links_total,
             )),
         });
     }
 
-    let has_rigvm = rigvm_adapter.graphs_total > 0;
+    let has_rigvm = rigvm_coverage.graphs_total > 0;
     if wants_logic && has_rigvm {
         capabilities.push(AnalysisCapability {
             kind: CapabilityKind::RigVmBytecode,
@@ -408,8 +659,11 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
             },
             detail: state_tree_partial.then(|| {
                 format!(
-                    "{state_tree_graphs_decoded}/{} graphs and {state_tree_states_decoded}/{} editor states decoded",
-                    state_tree_adapter.graph_exports_total, state_tree_adapter.state_exports_total
+                    "{}/{} graphs and {}/{} editor states decoded",
+                    state_tree_coverage.graphs_decoded,
+                    state_tree_adapter.graph_exports_total,
+                    state_tree_coverage.states_decoded,
+                    state_tree_adapter.state_exports_total
                 )
             }),
         });
@@ -424,61 +678,37 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
             },
             detail: pcg_partial.then(|| {
                 format!(
-                    "{pcg_graphs_decoded}/{} graphs, {pcg_nodes_decoded}/{pcg_nodes_total} nodes, {pcg_pins_decoded}/{pcg_pins_total} pins, and {pcg_edges_decoded}/{pcg_edges_total} edges decoded; {} PropertyBag payloads remain known opaque",
+                    "{}/{} graphs, {}/{} nodes, {}/{} pins, and {}/{} edges decoded; {} PropertyBag payloads remain known opaque",
+                    pcg_coverage.graphs_decoded,
                     pcg_adapter.graph_exports_total,
+                    pcg_coverage.nodes_decoded,
+                    pcg_coverage.nodes_total,
+                    pcg_coverage.pins_decoded,
+                    pcg_coverage.pins_total,
+                    pcg_coverage.edges_decoded,
+                    pcg_coverage.edges_total,
                     pcg_adapter.known_opaque.len()
                 )
             }),
         });
     }
+    capabilities
+}
 
-    let known_opaque_regions = known_opaque.len();
-    let coverage = ParseCoverage {
-        bytes_total: bytes.len() as u64,
-        exports_total: package.exports.len(),
-        exports_analyzed: report.exports.len(),
-        property_exports_total,
-        property_exports_complete,
-        properties_decoded,
-        graph_nodes_total,
-        graph_nodes_decoded,
-        pins_decoded,
-        graph_edges_decoded,
-        rigvm_graphs_total: rigvm_adapter.graphs_total,
-        rigvm_graphs_decoded: rigvm_adapter.graphs_decoded,
-        rigvm_nodes_total: rigvm_adapter.nodes_total,
-        rigvm_nodes_decoded: rigvm_adapter.nodes_decoded,
-        rigvm_pins_total: rigvm_adapter.pins_total,
-        rigvm_pins_decoded: rigvm_adapter.pins_decoded,
-        rigvm_links_total: rigvm_adapter.links_total,
-        rigvm_links_decoded: rigvm_adapter.links_decoded,
-        pcg_graphs_total: pcg_adapter.graph_exports_total,
-        pcg_graphs_decoded,
-        pcg_nodes_total,
-        pcg_nodes_decoded,
-        pcg_pins_total,
-        pcg_pins_decoded,
-        pcg_edges_total,
-        pcg_edges_decoded,
-        state_tree_graphs_total: state_tree_adapter.graph_exports_total,
-        state_tree_graphs_decoded,
-        state_tree_states_total: state_tree_adapter.state_exports_total,
-        state_tree_states_decoded,
-        state_tree_tasks_total: state_tree_tasks_decoded,
-        state_tree_tasks_decoded,
-        state_tree_conditions_total: state_tree_conditions_decoded,
-        state_tree_conditions_decoded,
-        state_tree_transitions_total: state_tree_transitions_decoded,
-        state_tree_transitions_decoded,
-        known_opaque_regions,
-        diagnostic_errors,
-        diagnostic_warnings,
-    };
+fn determine_analysis_status(
+    package: &Package,
+    diagnostic_errors: usize,
+    diagnostic_warnings: usize,
+    property_partial: bool,
+    graph_partial: bool,
+    known_opaque_regions: usize,
+    capabilities: &[AnalysisCapability],
+) -> AnalysisStatus {
     let unsupported_version = package.summary.file_version_ue5 > ue5::IMPORT_TYPE_HIERARCHIES;
     let has_incomplete_capability = capabilities
         .iter()
         .any(|capability| capability.status != AnalysisStatus::Complete);
-    let status = if unsupported_version {
+    if unsupported_version {
         AnalysisStatus::Unsupported
     } else if diagnostic_errors > 0
         || diagnostic_warnings > 0
@@ -490,36 +720,6 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         AnalysisStatus::Partial
     } else {
         AnalysisStatus::Complete
-    };
-
-    AssetAnalysis {
-        schema_version: ASSET_ANALYSIS_SCHEMA_VERSION,
-        view,
-        status,
-        summary: summary_to_model(package),
-        references: if wants_references {
-            references_to_model(package)
-        } else {
-            AssetReferences {
-                assets: Vec::new(),
-                scripts: Vec::new(),
-                soft: Vec::new(),
-            }
-        },
-        imports: if wants_references {
-            imports_to_model(package)
-        } else {
-            Vec::new()
-        },
-        exports,
-        graphs,
-        rigvm_graphs: rigvm_adapter.graphs,
-        pcg_graphs: pcg_adapter.graphs,
-        state_tree_graphs: state_tree_adapter.graphs,
-        coverage,
-        diagnostics,
-        capabilities,
-        known_opaque,
     }
 }
 
@@ -1136,10 +1336,10 @@ fn pin_type_to_model(package: &Package, pin_type: &PinType) -> GraphPinType {
         sub_category_object: (pin_type.sub_category_object != 0)
             .then(|| package.resolve_object_ref(pin_type.sub_category_object)),
         container: match pin_type.container_type {
-            0 => PinContainer::None,
-            1 => PinContainer::Array,
-            2 => PinContainer::Set,
-            3 => PinContainer::Map,
+            CONTAINER_TYPE_NONE => PinContainer::None,
+            CONTAINER_TYPE_ARRAY => PinContainer::Array,
+            CONTAINER_TYPE_SET => PinContainer::Set,
+            CONTAINER_TYPE_MAP => PinContainer::Map,
             value => PinContainer::Unknown(value),
         },
         value_type: pin_type

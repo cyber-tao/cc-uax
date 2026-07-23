@@ -10,11 +10,11 @@ const MAX_PIN_COUNT: i32 = 4096;
 /// A serialized nullable PinRef always starts with a bool32. Null entries end
 /// there; non-null entries append a PackageIndex and Guid (20 more bytes).
 const PIN_REF_MIN_SIZE: u64 = 4;
-const CONTAINER_TYPE_NONE: u8 = 0;
-const CONTAINER_TYPE_ARRAY: u8 = 1;
-const CONTAINER_TYPE_SET: u8 = 2;
-const CONTAINER_TYPE_MAP: u8 = 3;
-const PIN_DIRECTION_INPUT: u8 = 0;
+pub(crate) const CONTAINER_TYPE_NONE: u8 = 0;
+pub(crate) const CONTAINER_TYPE_ARRAY: u8 = 1;
+pub(crate) const CONTAINER_TYPE_SET: u8 = 2;
+pub(crate) const CONTAINER_TYPE_MAP: u8 = 3;
+pub(crate) const PIN_DIRECTION_INPUT: u8 = 0;
 const FRAMEWORK_PINS_STORE_FNAME: i32 = 31;
 const FRAMEWORK_LATEST_UE57: i32 = 37;
 const FRAMEWORK_OBJECT_VERSION: Guid = Guid([0xCFFC_743F, 0x43B0_4480, 0x9391_14DF, 0x171D_2073]);

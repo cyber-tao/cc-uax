@@ -2,7 +2,7 @@ use crate::{
     AssetAnalysisSummary, MountTable, ProjectAnalysisSummary, ProjectEntryPoints, ProjectLayout,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
 pub type Adjacency = BTreeMap<String, BTreeSet<String>>;
@@ -72,7 +72,9 @@ pub enum ScanFailureStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanDiagnosticSeverity {
+    Info,
     Warning,
+    Error,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +150,8 @@ pub struct ProjectIndex {
     pub stats: ScanStats,
     pub failures: Vec<ScanFailure>,
     pub diagnostics: Vec<ScanDiagnostic>,
+    #[serde(skip)]
+    pub(crate) canonical_lookup: HashMap<String, String>,
 }
 
 impl ProjectIndex {
@@ -162,10 +166,7 @@ impl ProjectIndex {
     }
 
     pub fn reverse_referencers(&self, package_path: &str) -> Option<&BTreeSet<String>> {
-        let key = self
-            .reverse
-            .keys()
-            .find(|candidate| candidate.eq_ignore_ascii_case(package_path))?;
+        let key = self.canonical_package(package_path)?;
         self.reverse.get(key)
     }
 
@@ -209,9 +210,17 @@ impl ProjectIndex {
     }
 
     pub(crate) fn canonical_package(&self, package_path: &str) -> Option<&str> {
-        self.assets
-            .keys()
-            .find(|candidate| candidate.eq_ignore_ascii_case(package_path))
+        self.canonical_lookup
+            .get(&package_path.to_ascii_lowercase())
             .map(String::as_str)
+    }
+
+    pub(crate) fn with_canonical_lookup(mut self) -> Self {
+        self.canonical_lookup = self
+            .assets
+            .keys()
+            .map(|key| (key.to_ascii_lowercase(), key.clone()))
+            .collect();
+        self
     }
 }

@@ -8,7 +8,7 @@ use crate::{
 };
 use cc_uax_core::{AssetView, PackageView};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -375,7 +375,9 @@ pub(crate) fn build_project_index(
         stats,
         failures,
         diagnostics,
+        canonical_lookup: HashMap::new(),
     }
+    .with_canonical_lookup()
 }
 
 #[derive(Debug)]
@@ -650,16 +652,15 @@ fn classify_ownership(relative_path: &str) -> AssetOwnership {
 }
 
 fn resolve_external_ownership(records: &mut [AssetRecord], failures: &mut Vec<ScanFailure>) {
-    let owners = records
-        .iter()
-        .map(|record| {
-            (
-                record.mount_root.clone(),
-                without_package_extension(&record.relative_path),
-                record.package_path.clone(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut owner_index: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for record in records.iter() {
+        let key = record.mount_root.to_ascii_lowercase();
+        let relative = without_package_extension(&record.relative_path);
+        owner_index
+            .entry(key)
+            .or_default()
+            .push((relative, record.package_path.clone()));
+    }
 
     for record in records.iter_mut().filter(|record| record.is_external()) {
         let tail = record
@@ -667,15 +668,18 @@ fn resolve_external_ownership(records: &mut [AssetRecord], failures: &mut Vec<Sc
             .split_once('/')
             .map(|(_, tail)| tail)
             .unwrap_or_default();
-        let owner = owners
-            .iter()
-            .filter(|(mount_root, relative, package)| {
-                mount_root.eq_ignore_ascii_case(&record.mount_root)
-                    && !package.eq_ignore_ascii_case(&record.package_path)
-                    && path_has_prefix(tail, relative)
-            })
-            .max_by_key(|(_, relative, _)| relative.len())
-            .map(|(_, _, package)| package.clone());
+        let mount_key = record.mount_root.to_ascii_lowercase();
+        let candidates = owner_index.get(&mount_key);
+        let owner = candidates.and_then(|candidates| {
+            candidates
+                .iter()
+                .filter(|(relative, package)| {
+                    !package.eq_ignore_ascii_case(&record.package_path)
+                        && path_has_prefix(tail, relative)
+                })
+                .max_by_key(|(relative, _)| relative.len())
+                .map(|(_, package)| package.clone())
+        });
         let AssetOwnership::External { owner_package, .. } = &mut record.ownership else {
             continue;
         };
@@ -700,7 +704,7 @@ fn build_ownership_closure(
     let mut closures = BTreeMap::<String, BTreeSet<String>>::new();
     for package in assets.keys() {
         let mut root = package.as_str();
-        let mut visited = BTreeSet::new();
+        let mut visited = HashSet::new();
         while visited.insert(root.to_ascii_lowercase()) {
             let Some(owner) = assets.get(root).and_then(AssetRecord::owner_package) else {
                 break;
