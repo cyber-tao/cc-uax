@@ -118,17 +118,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc-uax-stackobot-validation"
-version = "0.9.0"
-dependencies = [
- "anyhow",
- "cc-uax-core",
- "cc-uax-project",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

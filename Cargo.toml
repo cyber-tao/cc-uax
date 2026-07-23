@@ -3,13 +3,11 @@ members = [
     "crates/cc-uax-core",
     "crates/cc-uax-project",
     "crates/cc-uax-cli",
-    "validation/stackobot",
 ]
 default-members = [
     "crates/cc-uax-core",
     "crates/cc-uax-project",
     "crates/cc-uax-cli",
-    "validation/stackobot",
 ]
 resolver = "3"
 

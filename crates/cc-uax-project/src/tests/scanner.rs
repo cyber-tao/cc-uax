@@ -171,7 +171,6 @@ fn scans_real_project_from_environment() {
 
     assert!(index.stats.discovered > 0);
     assert_eq!(index.stats.indexed, index.stats.discovered);
-    assert!(index.stats.external_actors > 0);
     assert_eq!(index.stats.unowned_external_packages, 0);
     assert_scan_accounting(&index);
     assert_eq!(index.analysis.assets, index.stats.indexed);
@@ -188,30 +187,6 @@ fn scans_real_project_from_environment() {
             .values()
             .map(|asset| asset.analysis.known_opaque.identities.len())
             .sum::<usize>()
-    );
-    assert_eq!(
-        index
-            .entry_points
-            .reference("GameDefaultMap")
-            .unwrap()
-            .package_path,
-        "/Game/StackOBot/Maps/LVL_MainMenu"
-    );
-    assert_eq!(
-        index
-            .entry_points
-            .reference("GameInstanceClass")
-            .unwrap()
-            .package_path,
-        "/Game/StackOBot/Blueprints/Framework/GI_StackOBot"
-    );
-    assert_eq!(
-        index
-            .entry_points
-            .reference("GlobalDefaultGameMode")
-            .unwrap()
-            .package_path,
-        "/Game/StackOBot/Blueprints/Framework/GM_InGame"
     );
     assert!(
         index.failures.is_empty(),

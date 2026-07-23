@@ -114,18 +114,40 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 解析层内部使用强类型结果，只在 CLI 边界渲染 JSON。资产报告直接包含 `coverage`、`capabilities` 和 `diagnostics`；项目报告通过聚合 `analysis`、inventory 中的紧凑分析以及可选的完整 `focused` 分析提供同类证据：
 
+**资产报告（缩略）：**
+
 ```jsonc
 {
   "schema_version": 1,
   "status": "complete",
-  "coverage_or_analysis": {
+  "view": "full",
+  "summary": { /* 包名、类、文件版本…… */ },
+  "coverage": {
     /* 请求、已解码、opaque、不支持和失败的证据 */
   },
   "capabilities": [
     /* 各能力的证据与限制 */
   ],
   "diagnostics": [],
-  /* 其余强类型资产 view 或项目索引字段 */
+  "exports": [], "graphs": [], "references": {}, "known_opaque": []
+}
+```
+
+**项目报告（缩略）：**
+
+```jsonc
+{
+  "schema_version": 1,
+  "status": "complete",
+  "layout": {}, "mounts": {}, "entry_points": {},
+  "stats": { "discovered": 1961, "indexed": 1961, "failed": 0, "skipped": 0 },
+  "analysis": {
+    /* 聚合 coverage、capabilities 及逐资产摘要 */
+  },
+  "focused": [
+    /* 匹配 --focus 的完整 AssetAnalysis */
+  ],
+  "failures": [], "diagnostics": []
 }
 ```
 
@@ -151,10 +173,6 @@ cc-uax/
 │   ├── cc-uax-core/       # 绑定字节的包解析、强类型值、图和 coverage
 │   ├── cc-uax-project/    # 项目发现、清单、邻接、归属和缓存策略
 │   └── cc-uax-cli/        # asset/project 命令与 JSON 渲染
-├── validation/
-│   └── stackobot/         # 相对路径 manifest 和外部语料 harness
-├── docs/
-│   └── validation.md      # 语料契约和验收门禁
 └── skills/
     └── cc-uax/            # 完整 Claude Code/Codex skill 包
 ```
@@ -186,9 +204,9 @@ cc-uax-cli ──> cc-uax-project ──> cc-uax-core
 
 ## 验证与支持边界
 
-序列化判断以 UE5.7 源码为依据，解析器使用外部真实编辑器资产验证。精确语料清单、预期语义证据和发布门禁集中记录在 [docs/validation.md](docs/validation.md)。
+序列化判断以 UE5.7 源码为依据，解析器使用外部真实编辑器资产验证。验收门禁由外部语料 harness 定义，该 harness 独立于 workspace crate 维护，不作为 workspace 成员提交。
 
-StackOBot 语料和 Unreal Engine 源码都是外部输入；仓库不会提交其二进制资产或机器相关绝对路径。验证 harness 是发布门禁，但本 README 不会把尚待执行的验收目标写成当前 checkout 已通过的事实。
+外部资产和机器相关的绝对路径均保留在本地，仓库不提交此类内容。
 
 当前限制包括：
 
@@ -207,8 +225,6 @@ cargo clippy --workspace --all-targets --all-features --locked
 cargo test --workspace --locked
 cargo build --workspace --release --locked
 ```
-
-真实语料验收是独立的必需门禁，详见 [docs/validation.md](docs/validation.md)。
 
 ## 许可
 

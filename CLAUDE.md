@@ -23,7 +23,7 @@ cargo run -p cc-uax-cli -- asset <file.uasset> --view logic
 cargo run -p cc-uax-cli -- project <project-or-content-dir>
 ```
 
-Real-corpus acceptance is separate from ordinary workspace tests. Its contract lives in [docs/validation.md](docs/validation.md).
+Real-corpus acceptance is separate from ordinary workspace tests.
 
 ## Workspace layout
 
@@ -51,7 +51,7 @@ Important public types:
 
 Every rendered report has:
 
-- `schema_version`;
+- `schema_version` (currently `1`, defined as `ASSET_ANALYSIS_SCHEMA_VERSION` in `cc-uax-core/src/model.rs`);
 - `status`: `complete`, `partial`, or `unsupported`;
 - machine-readable `coverage`;
 - capability evidence and limitations;
@@ -130,7 +130,13 @@ cc-uax project <PROJECT_OR_CONTENT_DIR>
   [--mount <PACKAGE_PREFIX=RELATIVE_DIR>]...
   [--allow-partial]
   [--cache-file <FILE> | --no-cache]
+
+Global options (apply to both commands):
+  [--compact]              # Emit compact JSON (no pretty-printing)
+  [--output <FILE>]       # Write JSON report to FILE instead of stdout
 ```
+
+`--view` defaults to `full` for the `asset` command.
 
 Keep the command surface centered on the explicit `asset` and `project` workflows; do not add alternate content-selection APIs.
 
@@ -153,11 +159,7 @@ An empty diagnostics array alone does not prove completeness. Status is computed
 
 ## Validation
 
-[docs/validation.md](docs/validation.md) and the machine-checked `validation/stackobot/manifest.json` are the authoritative locations for exact external-corpus inventory and semantic acceptance counts. README files may state the verified scope but must not advertise a target count as a current passing result.
-
-The StackOBot corpus is external and must not be copied into this repository. Repository manifests use relative package paths only. Machine paths, Unreal source, generated reports, caches, and game binaries remain local.
-
-One important fixture correction: `PlayerSaveObject` contains a legitimate empty comment node. Validation must preserve that fact and must not require non-zero pins for it.
+Real-corpus acceptance is separate from ordinary workspace tests. When a real-corpus harness is needed, it should be built as an external consumer of the workspace crates, not as a workspace member. Do not commit external assets, generated corpus reports, caches, absolute local paths, or secrets.
 
 ## Conventions
 

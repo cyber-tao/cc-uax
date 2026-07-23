@@ -114,18 +114,40 @@ Run `cc-uax asset --help` and `cc-uax project --help` for output formatting opti
 
 Reports are typed internally and rendered to JSON only at the CLI boundary. Asset reports expose `coverage`, `capabilities`, and `diagnostics` directly. Project reports expose the same accounting through aggregate `analysis`, compact per-inventory analyses, and optional full `focused` analyses:
 
+**Asset report (abbreviated):**
+
 ```jsonc
 {
   "schema_version": 1,
   "status": "complete",
-  "coverage_or_analysis": {
+  "view": "full",
+  "summary": { /* package name, class, file version, … */ },
+  "coverage": {
     /* requested, decoded, opaque, unsupported, and failed evidence */
   },
   "capabilities": [
     /* capability-specific evidence and limitations */
   ],
   "diagnostics": [],
-  /* remaining typed asset-view or project-index fields */
+  "exports": [], "graphs": [], "references": {}, "known_opaque": []
+}
+```
+
+**Project report (abbreviated):**
+
+```jsonc
+{
+  "schema_version": 1,
+  "status": "complete",
+  "layout": {}, "mounts": {}, "entry_points": {},
+  "stats": { "discovered": 1961, "indexed": 1961, "failed": 0, "skipped": 0 },
+  "analysis": {
+    /* aggregate coverage, capabilities, and per-asset summaries */
+  },
+  "focused": [
+    /* full AssetAnalysis for packages matching --focus */
+  ],
+  "failures": [], "diagnostics": []
 }
 ```
 
@@ -151,10 +173,6 @@ cc-uax/
 │   ├── cc-uax-core/       # byte-bound package parsing, typed values, graphs, coverage
 │   ├── cc-uax-project/    # project discovery, inventory, adjacency, ownership, cache policy
 │   └── cc-uax-cli/        # asset/project commands and JSON rendering
-├── validation/
-│   └── stackobot/         # relative manifest and external-corpus harness
-├── docs/
-│   └── validation.md      # corpus contract and acceptance gates
 └── skills/
     └── cc-uax/            # full Claude Code/Codex skill package
 ```
@@ -186,9 +204,9 @@ The supporting `agents/` and `references/` content is part of the skill contract
 
 ## Validation and support boundary
 
-Serialization decisions are checked against UE5.7 source and the parser is exercised against external, real editor assets. Exact corpus inventory, expected semantic evidence, and release gates live in [docs/validation.md](docs/validation.md).
+Serialization decisions are checked against UE5.7 source and the parser is exercised against external, real editor assets. Validation acceptance gates are defined by the real-corpus harness, which is maintained separately from the workspace crates and is not committed as a workspace member.
 
-The StackOBot corpus and Unreal Engine source are external inputs; their binaries and machine-specific absolute paths are not committed. The validation harness is a release gate, but this README intentionally does not turn an acceptance target into a claim that the current checkout has passed it.
+External assets and machine-specific absolute paths remain local. The workspace does not commit them.
 
 Current limitations include:
 
@@ -207,8 +225,6 @@ cargo clippy --workspace --all-targets --all-features --locked
 cargo test --workspace --locked
 cargo build --workspace --release --locked
 ```
-
-Real-corpus acceptance is a separate required gate; see [docs/validation.md](docs/validation.md).
 
 ## License
 
