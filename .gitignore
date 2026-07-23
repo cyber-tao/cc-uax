@@ -26,3 +26,5 @@ Thumbs.db
 /.codex/
 /out_*.json
 /names_only.json
+/.qoder/
+/.codebuddy/
