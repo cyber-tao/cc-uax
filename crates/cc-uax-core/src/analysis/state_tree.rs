@@ -2,10 +2,10 @@ use super::typed::{
     array, boolean, float, nested_properties, nested_property, object, object_ref_index,
     object_ref_indices, object_ref_path, property, string,
 };
-use crate::model::{AssetExport, AssetProperty, DecodedValue};
-use crate::semantic_model::{
+use crate::graph_models::{
     StateTreeCondition, StateTreeGraph, StateTreeState, StateTreeTask, StateTreeTransition,
 };
+use crate::model::{AssetExport, AssetProperty, DecodedValue};
 use std::collections::{BTreeMap, BTreeSet};
 
 const STATE_TREE_CLASS: &str = "/Script/StateTreeModule.StateTree";
@@ -168,35 +168,53 @@ fn build_state(state: &AssetExport) -> StateTreeState {
 }
 
 fn build_task(value: &DecodedValue) -> StateTreeTask {
-    let node = nested_property(value, "Node");
-    let instance = nested_property(value, "Instance");
-    let node_properties = node.map(nested_properties).unwrap_or_default();
-    let instance_properties = instance.map(nested_properties).unwrap_or_default();
+    let inst = build_node_instance(value, "bTaskEnabled");
     StateTreeTask {
-        id: nested_property(value, "ID")
-            .and_then(string)
-            .map(str::to_owned),
-        name: asset_property(&node_properties, "Name")
-            .and_then(string)
-            .map(str::to_owned),
-        type_name: node.and_then(instanced_struct_type),
-        instance_type_name: instance.and_then(instanced_struct_type),
-        instance_object: non_null(nested_property(value, "InstanceObject")),
-        enabled: asset_property(&node_properties, "bTaskEnabled").and_then(boolean),
-        node_properties,
-        instance_properties,
+        id: inst.id,
+        name: inst.name,
+        type_name: inst.type_name,
+        instance_type_name: inst.instance_type_name,
+        instance_object: inst.instance_object,
+        enabled: inst.enabled,
+        node_properties: inst.node_properties,
+        instance_properties: inst.instance_properties,
     }
 }
 
 fn build_condition(value: &DecodedValue) -> StateTreeCondition {
+    let inst = build_node_instance(value, "bConditionEnabled");
+    StateTreeCondition {
+        id: inst.id,
+        name: inst.name,
+        type_name: inst.type_name,
+        instance_type_name: inst.instance_type_name,
+        instance_object: inst.instance_object,
+        enabled: inst.enabled,
+        node_properties: inst.node_properties,
+        instance_properties: inst.instance_properties,
+    }
+}
+
+struct NodeInstance {
+    id: Option<String>,
+    name: Option<String>,
+    type_name: Option<String>,
+    instance_type_name: Option<String>,
+    instance_object: Option<DecodedValue>,
+    enabled: Option<bool>,
+    node_properties: Vec<AssetProperty>,
+    instance_properties: Vec<AssetProperty>,
+}
+
+fn build_node_instance(value: &DecodedValue, primary_enabled_field: &str) -> NodeInstance {
     let node = nested_property(value, "Node");
     let instance = nested_property(value, "Instance");
     let node_properties = node.map(nested_properties).unwrap_or_default();
     let instance_properties = instance.map(nested_properties).unwrap_or_default();
-    let enabled = asset_property(&node_properties, "bConditionEnabled")
+    let enabled = asset_property(&node_properties, primary_enabled_field)
         .or_else(|| asset_property(&node_properties, "bEnabled"))
         .and_then(boolean);
-    StateTreeCondition {
+    NodeInstance {
         id: nested_property(value, "ID")
             .and_then(string)
             .map(str::to_owned),

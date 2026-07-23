@@ -1,4 +1,4 @@
-use crate::semantic_model::{PcgGraph, StateTreeGraph};
+use crate::graph_models::{PcgGraph, StateTreeGraph};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

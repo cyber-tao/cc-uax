@@ -7,7 +7,7 @@ use crate::structured_value::json;
 const RIGVM_DEVELOPER_PREFIX: &str = "/Script/RigVMDeveloper.";
 const RIGVM_GRAPH_CLASS: &str = "/Script/RigVMDeveloper.RigVMGraph";
 const RIGVM_FUNCTION_LIBRARY_CLASS: &str = "/Script/RigVMDeveloper.RigVMFunctionLibrary";
-const RIGVM_PIN_CLASS: &str = "/Script/RigVMDeveloper.RigVMPin";
+pub(crate) const RIGVM_PIN_CLASS: &str = "/Script/RigVMDeveloper.RigVMPin";
 const RIGVM_LINK_CLASS: &str = "/Script/RigVMDeveloper.RigVMLink";
 const RIGVM_INJECTION_INFO_CLASS: &str = "/Script/RigVMDeveloper.RigVMInjectionInfo";
 

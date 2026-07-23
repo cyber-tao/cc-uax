@@ -1,6 +1,7 @@
 mod analysis;
 mod decode;
 mod diagnostic;
+mod graph_models;
 mod model;
 mod name;
 mod object;
@@ -9,14 +10,13 @@ mod pin;
 mod property;
 mod reader;
 mod references;
-mod semantic_model;
 mod structured_value;
 mod summary;
 mod version;
 
 pub use analysis::PackageView;
+pub use graph_models::*;
 pub use model::*;
-pub use semantic_model::*;
 
 #[cfg(test)]
 pub(crate) use diagnostic::{ByteRangePreview, Diagnostic, Severity};

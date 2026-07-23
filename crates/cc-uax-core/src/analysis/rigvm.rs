@@ -554,7 +554,7 @@ fn rigvm_pin_path(report: &DecodeReport<'_>, pin_index: i32) -> String {
             segments.push(export.identity.name.clone());
             break;
         }
-        if export.identity.class == "/Script/RigVMDeveloper.RigVMPin" {
+        if export.identity.class == crate::decode::rigvm::RIGVM_PIN_CLASS {
             segments.push(export.identity.name.clone());
         }
         let Some(raw) = report.package.exports.get((current - 1) as usize) else {
