@@ -135,21 +135,23 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
     let capabilities = build_capabilities(
         &report,
         package,
-        wants_references,
-        wants_properties,
-        wants_logic,
-        &property_coverage,
-        property_partial,
-        &graph_coverage,
-        graph_partial,
-        &rigvm_adapter,
-        rigvm_coverage,
-        &state_tree_adapter,
-        state_tree_partial,
-        &state_tree_coverage,
-        &pcg_adapter,
-        pcg_partial,
-        &pcg_coverage,
+        CapabilityInputs {
+            wants_references,
+            wants_properties,
+            wants_logic,
+            property_coverage: &property_coverage,
+            property_partial,
+            graph_coverage: &graph_coverage,
+            graph_partial,
+            rigvm_adapter: &rigvm_adapter,
+            rigvm_coverage,
+            state_tree_adapter: &state_tree_adapter,
+            state_tree_partial,
+            state_tree_coverage: &state_tree_coverage,
+            pcg_adapter: &pcg_adapter,
+            pcg_partial,
+            pcg_coverage: &pcg_coverage,
+        },
         &mut known_opaque,
     );
 
@@ -196,8 +198,6 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         package,
         diagnostic_errors,
         diagnostic_warnings,
-        property_partial,
-        graph_partial,
         known_opaque_regions,
         &capabilities,
     );
@@ -521,27 +521,49 @@ fn compute_rigvm_coverage(adapter: &rigvm::RigVmAdapterResult) -> RigVmCoverage 
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_capabilities(
-    report: &DecodeReport<'_>,
-    package: &Package,
+/// Grouped coverage/adapter inputs for capability aggregation, so the single
+/// call site does not need a long positional argument list.
+struct CapabilityInputs<'a> {
     wants_references: bool,
     wants_properties: bool,
     wants_logic: bool,
-    property_coverage: &PropertyCoverage,
+    property_coverage: &'a PropertyCoverage,
     property_partial: bool,
-    graph_coverage: &GraphCoverage,
+    graph_coverage: &'a GraphCoverage,
     graph_partial: bool,
-    rigvm_adapter: &rigvm::RigVmAdapterResult,
+    rigvm_adapter: &'a rigvm::RigVmAdapterResult,
     rigvm_coverage: RigVmCoverage,
-    state_tree_adapter: &state_tree::StateTreeAdapterResult,
+    state_tree_adapter: &'a state_tree::StateTreeAdapterResult,
     state_tree_partial: bool,
-    state_tree_coverage: &StateTreeCoverage,
-    pcg_adapter: &pcg::PcgAdapterResult,
+    state_tree_coverage: &'a StateTreeCoverage,
+    pcg_adapter: &'a pcg::PcgAdapterResult,
     pcg_partial: bool,
-    pcg_coverage: &PcgCoverage,
+    pcg_coverage: &'a PcgCoverage,
+}
+
+fn build_capabilities(
+    report: &DecodeReport<'_>,
+    package: &Package,
+    input: CapabilityInputs<'_>,
     known_opaque: &mut Vec<KnownOpaque>,
 ) -> Vec<AnalysisCapability> {
+    let CapabilityInputs {
+        wants_references,
+        wants_properties,
+        wants_logic,
+        property_coverage,
+        property_partial,
+        graph_coverage,
+        graph_partial,
+        rigvm_adapter,
+        rigvm_coverage,
+        state_tree_adapter,
+        state_tree_partial,
+        state_tree_coverage,
+        pcg_adapter,
+        pcg_partial,
+        pcg_coverage,
+    } = input;
     let mut capabilities = vec![AnalysisCapability {
         kind: CapabilityKind::PackageTables,
         status: if report.diagnostics.iter().any(|diagnostic| {
@@ -698,12 +720,12 @@ fn determine_analysis_status(
     package: &Package,
     diagnostic_errors: usize,
     diagnostic_warnings: usize,
-    property_partial: bool,
-    graph_partial: bool,
     known_opaque_regions: usize,
     capabilities: &[AnalysisCapability],
 ) -> AnalysisStatus {
     let unsupported_version = package.summary.file_version_ue5 > ue5::IMPORT_TYPE_HIERARCHIES;
+    // Property/graph partiality is already surfaced as a non-complete capability,
+    // so it is covered by `has_incomplete_capability` rather than passed in.
     let has_incomplete_capability = capabilities
         .iter()
         .any(|capability| capability.status != AnalysisStatus::Complete);
@@ -711,8 +733,6 @@ fn determine_analysis_status(
         AnalysisStatus::Unsupported
     } else if diagnostic_errors > 0
         || diagnostic_warnings > 0
-        || property_partial
-        || graph_partial
         || known_opaque_regions > 0
         || has_incomplete_capability
     {
