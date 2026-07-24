@@ -4,7 +4,6 @@ use super::window::{ExportSerialWindow, preview_range};
 use crate::diagnostic::Diagnostic;
 use crate::property::{
     ParseCtx, PropertyParse, PropertyParseStatus, parse_object_properties_report,
-    read_soft_object_path,
 };
 use crate::reader::Reader;
 use crate::structured_value::{Map, Value, json};
@@ -127,23 +126,33 @@ fn parse_package_metadata_tail(
     ctx: &ParseCtx,
     end: u64,
 ) -> anyhow::Result<Value> {
+    // UDEPRECATED_MetaData::Serialize (UE5.7):
+    //   ObjectMetaDataMap: TMap<FWeakObjectPtr, TMap<FName, FString>>
+    //   RootMetaDataMap:   TMap<FName, FString>  (gated by FEditorObjectVersion::RootMetaDataSupport)
+    // A serialized FWeakObjectPtr is `Ar << UObject*`, i.e. an FPackageIndex (i32)
+    // in a linker-saved package — not a soft object path. The root map follows the
+    // full object map; there is no second count read up front.
     let object_count = reader.read_i32()?;
     validate_metadata_count(object_count, reader, end, "object metadata")?;
-    let root_count = reader.read_i32()?;
-    validate_metadata_count(root_count, reader, end, "root metadata")?;
 
     let mut object_metadata = Vec::with_capacity(object_count as usize);
     for _ in 0..object_count {
-        let object = read_soft_object_path(reader, ctx.names)?;
+        let object = (ctx.resolve_object)(reader.read_i32()?);
         let values = parse_metadata_name_string_map(reader, ctx, end)?;
         object_metadata.push(json!({ "object": object, "values": values }));
     }
 
+    // RootMetaDataMap is present in every editor package new enough to carry
+    // FEditorObjectVersion::RootMetaDataSupport; read it when payload remains.
     let mut root_metadata = Map::new();
-    for _ in 0..root_count {
-        let key = ctx.names.resolve_raw(reader.read_raw_name()?);
-        let value = reader.read_fstring()?;
-        root_metadata.insert(key, json!(value));
+    if reader.pos() < end {
+        let root_count = reader.read_i32()?;
+        validate_metadata_count(root_count, reader, end, "root metadata")?;
+        for _ in 0..root_count {
+            let key = ctx.names.resolve_raw(reader.read_raw_name()?);
+            let value = reader.read_fstring()?;
+            root_metadata.insert(key, json!(value));
+        }
     }
 
     Ok(json!({
@@ -178,4 +187,73 @@ fn validate_metadata_count(
         anyhow::bail!("{label} count out of range: {count}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    use crate::name::NameMap;
+    use crate::pin::PinSerCtx;
+    use crate::version::{SerializationPolicy, ue4, ue5};
+
+    fn push_i32(v: &mut Vec<u8>, x: i32) {
+        v.extend_from_slice(&x.to_le_bytes());
+    }
+
+    fn push_name(v: &mut Vec<u8>, index: i32) {
+        push_i32(v, index);
+        push_i32(v, 0);
+    }
+
+    fn push_fstring(v: &mut Vec<u8>, s: &str) {
+        push_i32(v, (s.len() + 1) as i32);
+        v.extend_from_slice(s.as_bytes());
+        v.push(0);
+    }
+
+    // UDEPRECATED_MetaData::Serialize writes the whole object map (keyed by an
+    // FWeakObjectPtr = FPackageIndex i32), then the root map. The regression this
+    // guards: reading the root count up front, or reading the object key as a
+    // soft object path, both misalign the stream.
+    #[test]
+    fn package_metadata_reads_object_map_then_root_map() {
+        let names = NameMap {
+            names: vec![
+                "BlueprintType".to_string(),
+                "PackageLocalizationNamespace".to_string(),
+            ],
+        };
+        let mut data = Vec::new();
+        push_i32(&mut data, 1); // object_count
+        push_i32(&mut data, 2); // FWeakObjectPtr key = FPackageIndex(2)
+        push_i32(&mut data, 1); // value map count
+        push_name(&mut data, 0); // FName "BlueprintType"
+        push_fstring(&mut data, "true");
+        push_i32(&mut data, 1); // root_count, after the object map
+        push_name(&mut data, 1); // FName "PackageLocalizationNamespace"
+        push_fstring(&mut data, "NS");
+
+        let ctx = ParseCtx {
+            names: &names,
+            resolve_object: &|index: i32| json!({ "index": index }),
+            pins: PinSerCtx::default(),
+            soft_object_paths: &[],
+            serialization: SerializationPolicy::default(),
+            file_version_ue4: ue4::HIGHEST,
+            file_version_ue5: ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        };
+        let mut reader = Reader::new(&data);
+        let value = parse_package_metadata_tail(&mut reader, &ctx, data.len() as u64).unwrap();
+
+        let objects = value["object_metadata"].as_array().unwrap();
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0]["object"]["index"].as_i64(), Some(2));
+        assert_eq!(objects[0]["values"]["BlueprintType"].as_str(), Some("true"));
+        assert_eq!(
+            value["root_metadata"]["PackageLocalizationNamespace"].as_str(),
+            Some("NS")
+        );
+        // The full window is consumed with no misalignment.
+        assert_eq!(reader.pos(), data.len() as u64);
+    }
 }
