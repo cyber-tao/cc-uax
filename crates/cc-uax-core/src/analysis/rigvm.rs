@@ -624,7 +624,6 @@ mod tests {
                 class: "/Script/RigVMDeveloper.RigVMGraph".into(),
                 is_asset: false,
             },
-            layout: None,
             properties: Some(vec![PropertyEntry {
                 name: "Nodes".into(),
                 type_str: "ArrayProperty(ObjectProperty)".into(),

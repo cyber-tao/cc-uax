@@ -14,6 +14,7 @@ pub(crate) const CONTAINER_TYPE_NONE: u8 = 0;
 pub(crate) const CONTAINER_TYPE_ARRAY: u8 = 1;
 pub(crate) const CONTAINER_TYPE_SET: u8 = 2;
 pub(crate) const CONTAINER_TYPE_MAP: u8 = 3;
+#[cfg(test)]
 pub(crate) const PIN_DIRECTION_INPUT: u8 = 0;
 const FRAMEWORK_PINS_STORE_FNAME: i32 = 31;
 const FRAMEWORK_LATEST_UE57: i32 = 37;
@@ -188,7 +189,7 @@ pub(crate) fn locate_legacy_pin_start(
     })))
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn direction_label(direction: u8) -> &'static str {
     if direction == PIN_DIRECTION_INPUT {
         "input"

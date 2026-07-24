@@ -26,7 +26,6 @@ pub(crate) struct DecodeOptions {
     pub(crate) exports: bool,
     pub(crate) pins: bool,
     pub(crate) properties: bool,
-    pub(crate) layout: bool,
 }
 
 impl DecodeOptions {
@@ -35,7 +34,6 @@ impl DecodeOptions {
             exports: false,
             pins: false,
             properties: false,
-            layout: false,
         }
     }
 
@@ -44,23 +42,19 @@ impl DecodeOptions {
             exports: true,
             pins: true,
             properties: true,
-            layout: true,
         }
     }
 }
 
-#[allow(dead_code)]
 pub(crate) struct DecodeReport<'a> {
     pub(crate) package: &'a Package,
     pub(crate) exports: Vec<DecodedExport>,
     pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct DecodedExport {
     pub(crate) identity: DecodedExportIdentity,
-    pub(crate) layout: Option<DecodedExportLayout>,
     pub(crate) properties: Option<Vec<PropertyEntry>>,
     pub(crate) property_status: Option<PropertyParseStatus>,
     pub(crate) post_property_tail: Option<ByteRangePreview>,
@@ -78,20 +72,6 @@ pub(crate) struct DecodedExportIdentity {
     pub(crate) name: String,
     pub(crate) class: String,
     pub(crate) is_asset: bool,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub(crate) struct DecodedExportLayout {
-    pub(crate) super_name: String,
-    pub(crate) template_name: String,
-    pub(crate) outer_name: String,
-    pub(crate) full_name: String,
-    pub(crate) object_flags: u32,
-    pub(crate) serial_offset: i64,
-    pub(crate) serial_size: i64,
-    pub(crate) script_serialization_start: Option<i64>,
-    pub(crate) script_serialization_end: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -203,19 +183,6 @@ impl Package {
                     class: class_full.clone(),
                     is_asset: exp.is_asset,
                 },
-                layout: options.layout.then(|| DecodedExportLayout {
-                    super_name: self.resolve_full_name(exp.super_index.0),
-                    template_name: self.resolve_full_name(exp.template_index.0),
-                    outer_name: self.resolve_full_name(exp.outer_index.0),
-                    full_name: self.resolve_full_name(pkg_index),
-                    object_flags: exp.object_flags,
-                    serial_offset: exp.serial_offset,
-                    serial_size: exp.serial_size,
-                    script_serialization_start: has_script
-                        .then_some(exp.script_serialization_start_offset),
-                    script_serialization_end: has_script
-                        .then_some(exp.script_serialization_end_offset),
-                }),
                 properties: None,
                 property_status: None,
                 post_property_tail: None,

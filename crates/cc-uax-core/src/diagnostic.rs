@@ -62,6 +62,9 @@ impl Diagnostic {
         Self::new(Severity::Warning, code, path, message)
     }
 
+    // `Info` is part of the serialized diagnostic-severity contract
+    // (`DiagnosticSeverity::Info` and the project `info` counter), but no core
+    // decoder currently emits it. Kept as the sanctioned Info constructor.
     #[allow(dead_code)]
     pub fn info(
         code: impl Into<String>,

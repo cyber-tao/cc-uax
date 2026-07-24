@@ -267,7 +267,6 @@ mod tests {
                 class: RIGVM_LINK_CLASS.into(),
                 is_asset: false,
             },
-            layout: None,
             properties: None,
             property_status: None,
             post_property_tail: None,

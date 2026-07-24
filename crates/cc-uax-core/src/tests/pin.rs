@@ -764,7 +764,6 @@ fn decoded_export(index: i32, name: &str, pins: Option<Vec<Pin>>) -> DecodedExpo
             class: "/Script/BlueprintGraph.K2Node_Test".into(),
             is_asset: false,
         },
-        layout: None,
         properties: None,
         property_status: None,
         post_property_tail: None,
