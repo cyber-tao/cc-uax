@@ -1,10 +1,11 @@
 use super::property_to_model;
 use crate::decode::rigvm::{is_rigvm_graph_class, is_rigvm_node_class};
 use crate::decode::{DecodeReport, DecodedExport};
-use crate::model::{
-    AnalysisDiagnostic, AssetProperty, DiagnosticSeverity, RigVmGraph, RigVmInjection,
-    RigVmLinearColor, RigVmLink, RigVmNode, RigVmPin, RigVmPinDirection, RigVmVector2,
+use crate::graph_models::{
+    RigVmGraph, RigVmInjection, RigVmLinearColor, RigVmLink, RigVmNode, RigVmPin,
+    RigVmPinDirection, RigVmVector2,
 };
+use crate::model::{AnalysisDiagnostic, AssetProperty, DiagnosticSeverity};
 use crate::property::{PropertyEntry, PropertyParseStatus};
 use crate::structured_value::{Map, Value};
 use std::collections::{HashMap, HashSet};

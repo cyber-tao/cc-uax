@@ -7,6 +7,7 @@ use crate::decode::pins::is_graph_node_class;
 use crate::decode::rigvm::{is_rigvm_graph_class, is_rigvm_link_class};
 use crate::decode::{DecodeOptions, DecodeReport, DecodedExport};
 use crate::diagnostic::{Diagnostic, Severity};
+use crate::graph_models::*;
 use crate::model::*;
 use crate::package::Package;
 use crate::pin::{

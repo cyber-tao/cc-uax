@@ -2,10 +2,8 @@ use super::typed::{
     array, integer, nested_properties, nested_property, object, object_ref_index,
     object_ref_indices, object_ref_path, property, string, text,
 };
-use crate::graph_models::{PcgEdge, PcgGraph, PcgNode, PcgPin};
-use crate::model::{
-    AssetExport, DecodedValue, KnownOpaque, KnownOpaqueKind, OpaqueByteRange, PinDirection,
-};
+use crate::graph_models::{PcgEdge, PcgGraph, PcgNode, PcgPin, PinDirection};
+use crate::model::{AssetExport, DecodedValue, KnownOpaque, KnownOpaqueKind, OpaqueByteRange};
 use std::collections::{BTreeMap, BTreeSet};
 
 const PCG_GRAPH_CLASS: &str = "/Script/PCG.PCGGraph";

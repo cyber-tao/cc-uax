@@ -2,7 +2,7 @@ use super::common::*;
 use crate::analysis::build_logic_graphs;
 use crate::decode::pins::{consume_known_node_tail, is_editable_pin_class};
 use crate::decode::{DecodeReport, DecodedExport, DecodedExportIdentity};
-use crate::model::EdgeKind;
+use crate::graph_models::EdgeKind;
 use crate::name::NameMap;
 use crate::package::Package;
 use crate::pin::{
