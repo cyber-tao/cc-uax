@@ -164,13 +164,19 @@ fn normalize_package_root(value: &str) -> Result<String, MountTableError> {
     Ok(format!("/{}", value.trim_matches('/')))
 }
 
-fn strip_asset_extension(path: &str) -> &str {
-    let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".uasset") {
-        &path[..path.len() - 7]
-    } else if lower.ends_with(".umap") {
-        &path[..path.len() - 5]
-    } else {
-        path
+/// Strip a trailing `.uasset` or `.umap` extension (case-insensitive) if present.
+///
+/// Shared by mount-path normalization, project ownership matching, and CLI
+/// `--focus` pattern handling so the asset-extension rule lives in one place.
+pub fn strip_asset_extension(path: &str) -> &str {
+    for ext in [".uasset", ".umap"] {
+        if let Some(idx) = path.len().checked_sub(ext.len())
+            && path
+                .get(idx..)
+                .is_some_and(|tail| tail.eq_ignore_ascii_case(ext))
+        {
+            return &path[..idx];
+        }
     }
+    path
 }

@@ -4,7 +4,7 @@ use crate::{
     Adjacency, AssetAnalysisSummary, AssetKind, AssetOwnership, AssetRecord, CachePathPolicy,
     ExternalPackageKind, MountTable, ProjectAnalysisSummary, ProjectEntryPoints, ProjectIndex,
     ProjectLayout, ScanDiagnostic, ScanFailure, ScanFailureStage, ScanStats,
-    package_path_from_relative,
+    package_path_from_relative, strip_asset_extension,
 };
 use cc_uax_core::{AssetView, PackageView};
 use serde::{Deserialize, Serialize};
@@ -655,7 +655,7 @@ fn resolve_external_ownership(records: &mut [AssetRecord], failures: &mut Vec<Sc
     let mut owner_index: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for record in records.iter() {
         let key = record.mount_root.to_ascii_lowercase();
-        let relative = without_package_extension(&record.relative_path);
+        let relative = strip_asset_extension(&record.relative_path).to_string();
         owner_index
             .entry(key)
             .or_default()
@@ -729,17 +729,6 @@ fn path_has_prefix(path: &str, prefix: &str) -> bool {
         || path.get(prefix.len()..).is_some_and(|tail| {
             tail.starts_with('/') && path[..prefix.len()].eq_ignore_ascii_case(prefix)
         })
-}
-
-fn without_package_extension(path: &str) -> String {
-    let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".uasset") {
-        path[..path.len() - 7].to_string()
-    } else if lower.ends_with(".umap") {
-        path[..path.len() - 5].to_string()
-    } else {
-        path.to_string()
-    }
 }
 
 fn normalized_path(path: &Path) -> String {

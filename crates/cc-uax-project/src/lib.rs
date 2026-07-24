@@ -18,7 +18,9 @@ pub use model::{
     Adjacency, AssetKind, AssetOwnership, AssetRecord, ExternalPackageKind, ProjectIndex,
     ScanDiagnostic, ScanDiagnosticSeverity, ScanFailure, ScanFailureStage, ScanStats,
 };
-pub use mount::{MountSpec, MountTable, MountTableError, package_path_from_relative};
+pub use mount::{
+    MountSpec, MountTable, MountTableError, package_path_from_relative, strip_asset_extension,
+};
 pub use scanner::{ProjectScanError, ProjectScanner, ScanMode, ScanOptions};
 
 #[cfg(test)]

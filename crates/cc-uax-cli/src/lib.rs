@@ -6,6 +6,7 @@ use cc_uax_core::{AnalysisStatus, AssetAnalysis, AssetView, PackageView};
 use cc_uax_project::{
     AssetKind, AssetOwnership, CachePathPolicy, MountTable, ProjectIndex, ProjectLayout,
     ProjectScanner, ScanDiagnosticSeverity, ScanFailureStage, ScanMode, ScanOptions,
+    strip_asset_extension,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,8 +16,6 @@ use std::path::Path;
 use std::process::ExitCode;
 
 const PROJECT_REPORT_SCHEMA_VERSION: u32 = 1;
-const UASSET_EXT_LEN: usize = 7;
-const UMAP_EXT_LEN: usize = 5;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {
@@ -156,23 +155,9 @@ fn analyze_focused_assets(
 }
 
 fn package_matches(pattern: &str, package: &str) -> bool {
-    let pattern = strip_package_extension(pattern);
+    let pattern = strip_asset_extension(pattern);
     let pattern = strip_object_name(pattern);
     glob_match(pattern, package)
-}
-
-fn strip_package_extension(value: &str) -> &str {
-    if value.len() >= UASSET_EXT_LEN
-        && value[value.len() - UASSET_EXT_LEN..].eq_ignore_ascii_case(".uasset")
-    {
-        &value[..value.len() - UASSET_EXT_LEN]
-    } else if value.len() >= UMAP_EXT_LEN
-        && value[value.len() - UMAP_EXT_LEN..].eq_ignore_ascii_case(".umap")
-    {
-        &value[..value.len() - UMAP_EXT_LEN]
-    } else {
-        value
-    }
 }
 
 fn strip_object_name(value: &str) -> &str {
