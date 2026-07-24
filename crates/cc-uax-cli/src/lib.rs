@@ -39,16 +39,15 @@ fn execute(cli: &Cli) -> Result<ExitCode> {
         Command::Asset(args) => {
             let analysis = analyze_asset(args)?;
             write_json(&analysis, cli.compact, cli.output.as_deref())?;
-            Ok(if analysis.status == AnalysisStatus::Complete {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(2)
-            })
+            // A produced report exits 0. `status` carries evidence completeness;
+            // inherent partial/unsupported evidence is not a process failure. Only
+            // an unreadable or unparseable file (the `?` above) exits nonzero.
+            Ok(ExitCode::SUCCESS)
         }
         Command::Project(args) => {
-            let (report, strict_failure) = analyze_project(args)?;
+            let (report, hard_failure) = analyze_project(args)?;
             write_json(&report, cli.compact, cli.output.as_deref())?;
-            Ok(if strict_failure {
+            Ok(if hard_failure {
                 ExitCode::from(2)
             } else {
                 ExitCode::SUCCESS
@@ -78,15 +77,17 @@ fn analyze_project(args: &ProjectArgs) -> Result<(ProjectReport, bool)> {
         },
         cache: cache_policy(args),
     };
-    let (index, strict_failure) = match scanner.scan(options) {
+    // Strict exit 2 is reserved for hard scan failures (read/parse/index/mount/
+    // cache). Inherent partial evidence — e.g. known-opaque compiled RigVM
+    // bytecode or an unsupported package version — keeps a truthful non-complete
+    // status but is not a process failure.
+    let (index, hard_failure) = match scanner.scan(options) {
         Ok(index) => (index, false),
         Err(error) => (error.into_index(), true),
     };
     let focused = analyze_focused_assets(&index, &args.focus)?;
     let report = ProjectReport::from_index(&index, focused);
-    let strict_failure =
-        strict_failure || (!args.allow_partial && report.status != AnalysisStatus::Complete);
-    Ok((report, strict_failure))
+    Ok((report, hard_failure))
 }
 
 fn project_mounts(layout: &ProjectLayout, requested: &[String]) -> Result<MountTable> {

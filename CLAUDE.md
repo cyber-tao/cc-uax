@@ -116,7 +116,7 @@ The index contains:
 - LevelInstance/PackedLevelActor and external-package ownership closure;
 - per-asset logic, capability, and coverage summaries needed by the requested focus.
 
-Strict mode is the default. Any mapped read/index/parse failure returns the partial index as a structured error; any requested project evidence that remains partial or unsupported also causes a non-zero CLI exit. `--allow-partial` changes exit acceptance only; it must not change report truth.
+Strict mode is the default. Any mapped read/index/parse failure returns the partial index as a structured error and causes a non-zero CLI exit. Inherent partial or unsupported evidence (for example known-opaque compiled RigVM bytecode, or an unsupported package version) keeps a truthful non-complete `status` but does not by itself fail the process. `--allow-partial` downgrades a hard scan failure to a zero exit; it must not change report truth.
 
 Project cache data defaults to the operating system cache directory. Never create a cache inside the analyzed project by default. Fresh cache entries may reuse validated references and compact per-asset analysis summaries for unchanged packages. `--cache-file` explicitly selects a file and `--no-cache` disables caching.
 

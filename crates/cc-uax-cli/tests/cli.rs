@@ -104,6 +104,54 @@ fn allow_partial_is_an_explicit_zero_exit_override() {
     assert_eq!(report["stats"]["failed"], 1);
 }
 
+#[test]
+fn strict_project_scan_without_hard_failures_exits_zero_despite_partial() {
+    // A package that parses cleanly but reports a non-complete status (here an
+    // unsupported future version) is inherent partial evidence, not a hard scan
+    // failure. Strict mode must exit 0 and keep the truthful non-complete status.
+    let root = temp_dir("inherent");
+    let content = root.join("Content");
+    write_future_package(&content.join("Future.uasset"));
+    let output = bin()
+        .args(["project", root.to_str().unwrap(), "--no-cache"])
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_ne!(report["status"], "complete");
+    assert_eq!(report["stats"]["indexed"], 1);
+    assert_eq!(report["stats"]["failed"], 0);
+    assert!(report["failures"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn asset_with_inherent_partial_status_still_exits_zero() {
+    // A cleanly parsed but unsupported package yields a truthful non-complete
+    // status; producing that report is a success, not a process failure.
+    let root = temp_dir("asset_partial");
+    let package = root.join("Future.uasset");
+    write_future_package(&package);
+    let output = bin()
+        .args(["asset", package.to_str().unwrap(), "--view", "summary"])
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_ne!(report["status"], "complete");
+}
+
 fn push_u16(bytes: &mut Vec<u8>, value: u16) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
@@ -168,5 +216,21 @@ fn minimal_package() -> Vec<u8> {
     }
     push_i64(&mut bytes, 0);
     push_i32(&mut bytes, 0);
+    bytes
+}
+
+fn write_future_package(path: &Path) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(path, future_version_package()).unwrap();
+}
+
+fn future_version_package() -> Vec<u8> {
+    // minimal_package targets the highest supported FileVersionUE5 (1018) at
+    // bytes 16..20. Bumping it past the supported ceiling makes analysis report
+    // `unsupported` while the package still parses cleanly (no hard failure).
+    let mut bytes = minimal_package();
+    bytes[16..20].copy_from_slice(&1019_i32.to_le_bytes());
     bytes
 }

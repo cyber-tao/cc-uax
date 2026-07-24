@@ -32,4 +32,4 @@ Project reports expose one inventory and bidirectional adjacency for all scanned
 
 `reachability.unreachable_project_assets` and `reachability.isolated_project_assets` are scanned graph facts, not deletion proof. They still require review for primary asset rules, localization, runtime-generated names, soft loads outside scanned mounts, and failed or unsupported evidence.
 
-Strict mode returns nonzero for mapped read/parse failures and for a requested project result that remains partial or unsupported. `--allow-partial` changes process acceptance only; it does not erase `status`, coverage gaps, or `failures`.
+Strict mode returns nonzero only for hard scan failures (mapped read/index/parse/mount/cache errors). Inherent partial or unsupported evidence — for example known-opaque compiled RigVM bytecode or an unsupported package version — keeps a truthful non-complete `status` but exits zero. `--allow-partial` downgrades a hard scan failure to a zero exit; it does not erase `status`, coverage gaps, or `failures`.

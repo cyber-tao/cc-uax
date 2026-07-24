@@ -23,7 +23,7 @@ cc-uax project "<PROJECT_OR_CONTENT_DIR>" --output "<REPORT.json>"
 
 Add each nonstandard content root with `--mount <PACKAGE=RELATIVE>`. Use `--focus <PACKAGE_OR_GLOB>` to attach full typed analyses for selected packages while retaining the single project inventory and reference graph.
 
-Keep strict mode enabled. Use `--allow-partial` only when the user explicitly accepts incomplete evidence, and carry every failure into the conclusion.
+Keep strict mode enabled: it exits nonzero only for hard scan failures (unreadable, unparseable, or unindexable mapped assets), while inherent partial or unsupported evidence keeps a truthful non-complete `status` and exits zero. Use `--allow-partial` only when the user explicitly accepts hard failures with a zero exit, and carry every failure and non-complete status into the conclusion.
 
 4. Inspect `schema_version`, `status`, `stats`, `reachability`, aggregate `analysis`, per-asset coverage/capabilities, `failures`, and `diagnostics` before analyzing gameplay. Read [references/report-contract.md](references/report-contract.md) when interpreting these fields.
 

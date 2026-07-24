@@ -104,7 +104,7 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
 cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 ```
 
-Project analysis is **strict by default**. A mapped asset that cannot be read, indexed, or parsed produces a structured failure, and any project report whose requested evidence remains `partial` or `unsupported` exits non-zero. `--allow-partial` permits a successful process exit while preserving the real status, failures, and reduced coverage in the report.
+Project analysis is **strict by default**. A mapped asset that cannot be read, indexed, or parsed produces a structured failure and a non-zero exit. Inherent partial or unsupported evidence (for example known-opaque compiled RigVM bytecode, or an unsupported package version) keeps a truthful non-complete `status` but does not by itself fail the process. `--allow-partial` downgrades a hard scan failure to a successful exit while preserving the real status, failures, and reduced coverage in the report.
 
 Project cache data defaults to the operating system's cache directory, never the analyzed project. Fresh cache entries reuse validated references and compact per-asset analysis summaries for unchanged packages. Use `--cache-file` for an explicit location or `--no-cache` for a cache-free run.
 
@@ -139,7 +139,7 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
 {
   "schema_version": 2,
   "status": "complete",
-  "layout": {}, "mounts": {}, "entry_points": {},
+  "layout": {}, "mounts": [], "entry_points": {},
   "reachability": {
     /* configured roots, reachable runtime packages, closure members, isolated packages, and coverage gaps */
   },

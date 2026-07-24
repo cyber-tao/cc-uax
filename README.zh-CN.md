@@ -104,7 +104,7 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
 cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 ```
 
-项目分析默认采用 **strict** 模式。任何已映射资产读取、索引或解析失败都会生成结构化 failure；只要请求的项目证据仍为 `partial` 或 `unsupported`，进程也会以非零状态退出。`--allow-partial` 只改变进程是否接受该结果，不会粉饰报告；真实 status、失败项和降低后的 coverage 都会保留。
+项目分析默认采用 **strict** 模式。任何已映射资产读取、索引或解析失败都会生成结构化 failure 并以非零状态退出。固有的 partial 或 unsupported 证据（例如已知不可解的编译期 RigVM 字节码，或不受支持的包版本）会如实保留非 complete 的 status，但本身不会使进程失败。`--allow-partial` 只是把 hard scan failure 降级为零退出，不会粉饰报告；真实 status、失败项和降低后的 coverage 都会保留。
 
 项目缓存默认放在操作系统缓存目录，不写入被分析项目。对未变化的包，fresh cache entry 会复用已验证的引用列表和紧凑逐资产分析摘要。使用 `--cache-file` 指定位置，或用 `--no-cache` 完全禁用缓存。
 
@@ -139,7 +139,7 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 {
   "schema_version": 2,
   "status": "complete",
-  "layout": {}, "mounts": {}, "entry_points": {},
+  "layout": {}, "mounts": [], "entry_points": {},
   "reachability": {
     /* 配置根、运行时可达包、closure 成员、孤立包和 coverage 缺口 */
   },
