@@ -41,7 +41,7 @@ pub struct AssetAnalysis {
     pub known_opaque: Vec<KnownOpaque>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ParseCoverage {
     pub bytes_total: u64,
     pub exports_total: usize,
@@ -73,11 +73,8 @@ pub struct ParseCoverage {
     pub state_tree_graphs_decoded: usize,
     pub state_tree_states_total: usize,
     pub state_tree_states_decoded: usize,
-    pub state_tree_tasks_total: usize,
     pub state_tree_tasks_decoded: usize,
-    pub state_tree_conditions_total: usize,
     pub state_tree_conditions_decoded: usize,
-    pub state_tree_transitions_total: usize,
     pub state_tree_transitions_decoded: usize,
     pub known_opaque_regions: usize,
     pub diagnostic_errors: usize,

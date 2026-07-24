@@ -319,7 +319,7 @@ impl ProjectAnalysisSummary {
             partial_assets: 0,
             unsupported_assets: 0,
             scan_failures,
-            coverage: empty_coverage(),
+            coverage: ParseCoverage::default(),
         };
         for summary in summaries {
             aggregate.assets += 1;
@@ -340,50 +340,6 @@ impl ProjectAnalysisSummary {
             AnalysisStatus::Partial
         };
         aggregate
-    }
-}
-
-fn empty_coverage() -> ParseCoverage {
-    ParseCoverage {
-        bytes_total: 0,
-        exports_total: 0,
-        exports_analyzed: 0,
-        property_exports_total: 0,
-        property_exports_complete: 0,
-        properties_decoded: 0,
-        graph_nodes_total: 0,
-        graph_nodes_decoded: 0,
-        pins_decoded: 0,
-        graph_edges_decoded: 0,
-        rigvm_graphs_total: 0,
-        rigvm_graphs_decoded: 0,
-        rigvm_nodes_total: 0,
-        rigvm_nodes_decoded: 0,
-        rigvm_pins_total: 0,
-        rigvm_pins_decoded: 0,
-        rigvm_links_total: 0,
-        rigvm_links_decoded: 0,
-        pcg_graphs_total: 0,
-        pcg_graphs_decoded: 0,
-        pcg_nodes_total: 0,
-        pcg_nodes_decoded: 0,
-        pcg_pins_total: 0,
-        pcg_pins_decoded: 0,
-        pcg_edges_total: 0,
-        pcg_edges_decoded: 0,
-        state_tree_graphs_total: 0,
-        state_tree_graphs_decoded: 0,
-        state_tree_states_total: 0,
-        state_tree_states_decoded: 0,
-        state_tree_tasks_total: 0,
-        state_tree_tasks_decoded: 0,
-        state_tree_conditions_total: 0,
-        state_tree_conditions_decoded: 0,
-        state_tree_transitions_total: 0,
-        state_tree_transitions_decoded: 0,
-        known_opaque_regions: 0,
-        diagnostic_errors: 0,
-        diagnostic_warnings: 0,
     }
 }
 
@@ -466,21 +422,12 @@ fn add_coverage(total: &mut ParseCoverage, value: &ParseCoverage) {
     total.state_tree_states_decoded = total
         .state_tree_states_decoded
         .saturating_add(value.state_tree_states_decoded);
-    total.state_tree_tasks_total = total
-        .state_tree_tasks_total
-        .saturating_add(value.state_tree_tasks_total);
     total.state_tree_tasks_decoded = total
         .state_tree_tasks_decoded
         .saturating_add(value.state_tree_tasks_decoded);
-    total.state_tree_conditions_total = total
-        .state_tree_conditions_total
-        .saturating_add(value.state_tree_conditions_total);
     total.state_tree_conditions_decoded = total
         .state_tree_conditions_decoded
         .saturating_add(value.state_tree_conditions_decoded);
-    total.state_tree_transitions_total = total
-        .state_tree_transitions_total
-        .saturating_add(value.state_tree_transitions_total);
     total.state_tree_transitions_decoded = total
         .state_tree_transitions_decoded
         .saturating_add(value.state_tree_transitions_decoded);

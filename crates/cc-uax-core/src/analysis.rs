@@ -185,11 +185,8 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         state_tree_graphs_decoded: state_tree_coverage.graphs_decoded,
         state_tree_states_total: state_tree_adapter.state_exports_total,
         state_tree_states_decoded: state_tree_coverage.states_decoded,
-        state_tree_tasks_total: state_tree_coverage.tasks_decoded,
         state_tree_tasks_decoded: state_tree_coverage.tasks_decoded,
-        state_tree_conditions_total: state_tree_coverage.conditions_decoded,
         state_tree_conditions_decoded: state_tree_coverage.conditions_decoded,
-        state_tree_transitions_total: state_tree_coverage.transitions_decoded,
         state_tree_transitions_decoded: state_tree_coverage.transitions_decoded,
         known_opaque_regions,
         diagnostic_errors,
@@ -457,6 +454,7 @@ impl StateTreeCoverage {
     fn is_partial(&self, adapter: &state_tree::StateTreeAdapterResult) -> bool {
         self.graphs_decoded < adapter.graph_exports_total
             || self.states_decoded < adapter.state_exports_total
+            || adapter.states_incomplete > 0
             || adapter
                 .graphs
                 .iter()

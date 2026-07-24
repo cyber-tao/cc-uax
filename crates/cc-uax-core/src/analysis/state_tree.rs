@@ -5,7 +5,7 @@ use super::typed::{
 use crate::graph_models::{
     StateTreeCondition, StateTreeGraph, StateTreeState, StateTreeTask, StateTreeTransition,
 };
-use crate::model::{AssetExport, AssetProperty, DecodedValue};
+use crate::model::{AssetExport, AssetProperty, DecodedValue, PropertyDecodeStatus};
 use std::collections::{BTreeMap, BTreeSet};
 
 const STATE_TREE_CLASS: &str = "/Script/StateTreeModule.StateTree";
@@ -15,6 +15,7 @@ const STATE_TREE_STATE_CLASS: &str = "/Script/StateTreeEditorModule.StateTreeSta
 pub(crate) struct StateTreeAdapterResult {
     pub(crate) graph_exports_total: usize,
     pub(crate) state_exports_total: usize,
+    pub(crate) states_incomplete: usize,
     pub(crate) graphs: Vec<StateTreeGraph>,
 }
 
@@ -31,6 +32,19 @@ pub(crate) fn build_state_tree_graphs(exports: &[AssetExport]) -> StateTreeAdapt
         .iter()
         .filter(|export| export.class == STATE_TREE_STATE_CLASS)
         .count();
+    let states_incomplete = exports
+        .iter()
+        .filter(|export| {
+            export.class == STATE_TREE_STATE_CLASS
+                && matches!(
+                    export.property_status,
+                    Some(
+                        PropertyDecodeStatus::NonTaggedPayload
+                            | PropertyDecodeStatus::FailedAfterEntries
+                    )
+                )
+        })
+        .count();
     let mut graphs = graph_exports
         .iter()
         .map(|export| build_graph(export, exports, &by_index))
@@ -40,6 +54,7 @@ pub(crate) fn build_state_tree_graphs(exports: &[AssetExport]) -> StateTreeAdapt
     StateTreeAdapterResult {
         graph_exports_total: graph_exports.len(),
         state_exports_total,
+        states_incomplete,
         graphs,
     }
 }
@@ -412,6 +427,48 @@ mod tests {
         assert_eq!(transition.target_name.as_deref(), Some("Root"));
         assert_eq!(transition.conditions.len(), 1);
         assert_eq!(transition.delay_seconds, Some(0.25));
+    }
+
+    #[test]
+    fn truncated_state_property_block_is_counted_as_incomplete() {
+        let mut complete_state = export(
+            3,
+            "State_0",
+            STATE_TREE_STATE_CLASS,
+            2,
+            vec![prop("Name", text_value("Root"))],
+        );
+        complete_state.property_status = Some(PropertyDecodeStatus::Complete);
+        let mut truncated_state = export(
+            4,
+            "State_1",
+            STATE_TREE_STATE_CLASS,
+            2,
+            vec![prop("Name", text_value("Child"))],
+        );
+        truncated_state.property_status = Some(PropertyDecodeStatus::FailedAfterEntries);
+        let exports = vec![
+            export(
+                1,
+                "Tree",
+                STATE_TREE_CLASS,
+                0,
+                vec![prop("EditorData", object_ref(2, "Tree.EditorData"))],
+            ),
+            export(
+                2,
+                "EditorData",
+                STATE_TREE_EDITOR_DATA_CLASS,
+                1,
+                vec![prop("SubTrees", refs(&[(3, "Tree.EditorData.Root")]))],
+            ),
+            complete_state,
+            truncated_state,
+        ];
+
+        let result = build_state_tree_graphs(&exports);
+        assert_eq!(result.state_exports_total, 2);
+        assert_eq!(result.states_incomplete, 1);
     }
 
     fn editor_node(type_name: &str, name: &str, id: &str, enabled_name: &str) -> DecodedValue {
