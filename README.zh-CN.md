@@ -110,6 +110,8 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 输出格式选项以 `cc-uax asset --help` 和 `cc-uax project --help` 为准。
 
+当调用方（如 AI 工具）上下文窗口有限时，可用全局参数 `--max-output-bytes <N>` 把渲染出的 JSON 限制在 N 个 UTF-8 字节内。输出仍是合法 JSON，并完整保留证据骨架（`status`、`coverage`、`capabilities`、`diagnostics`、`known_opaque`）；顶层新增 `output` 块记录 `truncated` 及每个被省略的区段，便于据此改用更窄的 `--focus`/`--view` 复查被丢弃的细节。
+
 ## 报告契约
 
 解析层内部使用强类型结果，只在 CLI 边界渲染 JSON。资产报告直接包含 `coverage`、`capabilities` 和 `diagnostics`；项目报告通过聚合 `analysis`、inventory 中的紧凑分析、生成的 `reachability` 以及可选的完整 `focused` 分析提供同类证据：

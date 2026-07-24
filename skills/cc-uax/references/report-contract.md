@@ -12,6 +12,10 @@ Read this reference when interpreting `asset` or `project` JSON.
 
 Counts describe the requested scope; they are not interchangeable. An indexed package is not necessarily semantically analyzed or complete.
 
+## Output budgeting
+
+`--max-output-bytes <N>` caps the rendered JSON at N UTF-8 bytes. Budgeting is a presentation concern: it never changes evidence. The skeleton — `schema_version`, `status`, `summary`, `coverage`, `capabilities`, `diagnostics`, `known_opaque`, and (for projects) `reachability`, `stats`, `analysis`, `layout`, `mounts`, `entry_points` — is always preserved. Heavy detail is elided in a fixed priority order: tagged-property values, then pins, then graph elements (nodes/states/edges/links), then whole top-level sections (`exports`, graphs, `inventory`, `focused`, adjacency), then large `reachability` package lists (keeping `configured_roots` and counts). A top-level `output` block records `truncated`, `budget_bytes`, `emitted_bytes`, and `elided` (each dropped section with its element count). An elided array or map is replaced by an `{"@elided": <count>}` marker. `output.truncated=true` means the report is size-reduced, not evidence-incomplete; re-query a narrower `--focus`/`--view` for the dropped detail.
+
 ## Evidence identities
 
 Use package path plus adapter and graph/model identity as the namespace. Within it, use stable node/pin/state identifiers and explicit edges. Display names are labels, not identities.

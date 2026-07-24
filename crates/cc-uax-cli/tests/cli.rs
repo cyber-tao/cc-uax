@@ -152,6 +152,64 @@ fn asset_with_inherent_partial_status_still_exits_zero() {
     assert_ne!(report["status"], "complete");
 }
 
+#[test]
+fn max_output_bytes_adds_output_block_and_respects_budget() {
+    let root = temp_dir("budget");
+    let package = root.join("Test.uasset");
+    write_package(&package);
+    let output = bin()
+        .args([
+            "asset",
+            package.to_str().unwrap(),
+            "--view",
+            "summary",
+            "--compact",
+            "--max-output-bytes",
+            "100000",
+        ])
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.len() <= 100_000 + 1);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    // Opting into a budget adds the truncation block; the skeleton is intact.
+    assert_eq!(report["status"], "complete");
+    assert_eq!(report["summary"]["package_name"], "TestPkg");
+    assert_eq!(report["output"]["truncated"], false);
+}
+
+#[test]
+fn max_output_bytes_below_skeleton_still_emits_valid_json() {
+    // A budget too small for even the skeleton must never produce invalid JSON.
+    let root = temp_dir("budget_tiny");
+    let package = root.join("Test.uasset");
+    write_package(&package);
+    let output = bin()
+        .args([
+            "asset",
+            package.to_str().unwrap(),
+            "--view",
+            "full",
+            "--compact",
+            "--max-output-bytes",
+            "20",
+        ])
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["output"]["truncated"], true);
+    assert!(report["status"].is_string());
+}
+
 fn push_u16(bytes: &mut Vec<u8>, value: u16) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }

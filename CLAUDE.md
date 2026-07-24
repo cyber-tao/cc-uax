@@ -134,6 +134,7 @@ cc-uax project <PROJECT_OR_CONTENT_DIR>
 
 Global options (apply to both commands):
   [--compact]              # Emit compact JSON (no pretty-printing)
+  [--max-output-bytes <BYTES>]  # Cap rendered JSON at N UTF-8 bytes; elides heavy detail and adds an `output` truncation block. Never elides status/coverage/capabilities/diagnostics/known_opaque.
   [--output <FILE>]       # Write JSON report to FILE instead of stdout
 ```
 

@@ -1,4 +1,5 @@
 pub mod args;
+mod budget;
 
 use crate::args::{AssetArgs, AssetViewArg, Cli, Command, ProjectArgs};
 use anyhow::{Context, Result};
@@ -38,7 +39,12 @@ fn execute(cli: &Cli) -> Result<ExitCode> {
     match &cli.command {
         Command::Asset(args) => {
             let analysis = analyze_asset(args)?;
-            write_json(&analysis, cli.compact, cli.output.as_deref())?;
+            write_json(
+                &analysis,
+                cli.compact,
+                cli.max_output_bytes,
+                cli.output.as_deref(),
+            )?;
             // A produced report exits 0. `status` carries evidence completeness;
             // inherent partial/unsupported evidence is not a process failure. Only
             // an unreadable or unparseable file (the `?` above) exits nonzero.
@@ -46,7 +52,12 @@ fn execute(cli: &Cli) -> Result<ExitCode> {
         }
         Command::Project(args) => {
             let (report, hard_failure) = analyze_project(args)?;
-            write_json(&report, cli.compact, cli.output.as_deref())?;
+            write_json(
+                &report,
+                cli.compact,
+                cli.max_output_bytes,
+                cli.output.as_deref(),
+            )?;
             Ok(if hard_failure {
                 ExitCode::from(2)
             } else {
@@ -194,8 +205,16 @@ fn glob_match(pattern: &str, value: &str) -> bool {
     prev[value_len]
 }
 
-fn write_json<T: Serialize>(value: &T, compact: bool, output: Option<&Path>) -> Result<()> {
-    let text = render_json(value, compact)?;
+fn write_json<T: Serialize>(
+    value: &T,
+    compact: bool,
+    max_output_bytes: Option<usize>,
+    output: Option<&Path>,
+) -> Result<()> {
+    let text = match max_output_bytes {
+        Some(budget) => budget::render_within_budget(value, budget, compact)?,
+        None => render_json(value, compact)?,
+    };
     match output {
         Some(path) => fs::write(path, format!("{text}\n"))
             .with_context(|| format!("failed to write {}", path.display())),

@@ -110,6 +110,8 @@ Project cache data defaults to the operating system's cache directory, never the
 
 Run `cc-uax asset --help` and `cc-uax project --help` for output formatting options.
 
+When a consumer's context window is limited, pass the global `--max-output-bytes <N>` to cap the rendered JSON at N UTF-8 bytes. Output stays valid JSON with the evidence skeleton (`status`, `coverage`, `capabilities`, `diagnostics`, `known_opaque`) intact; a top-level `output` block records `truncated` and every elided section so you can re-query a narrower `--focus`/`--view` for the dropped detail.
+
 ## Report contract
 
 Reports are typed internally and rendered to JSON only at the CLI boundary. Asset reports expose `coverage`, `capabilities`, and `diagnostics` directly. Project reports expose the same accounting through aggregate `analysis`, compact per-inventory analyses, generated `reachability`, and optional full `focused` analyses:

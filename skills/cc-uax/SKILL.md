@@ -52,6 +52,8 @@ cc-uax asset "<FILE.uasset>" --view references --output "<ASSET.json>"
 
 Use `--view full` only for a bounded asset; it can be large.
 
+When the caller's context window is limited, pass `--max-output-bytes <N>` (UTF-8 bytes) to cap any `asset` or `project` render to the space that is actually available. The report stays valid JSON and preserves the evidence skeleton (`status`, `coverage`, `capabilities`, `diagnostics`, `known_opaque`); a top-level `output` block reports `truncated` and every elided section with its dropped-element count. If `output.truncated` is `true`, do not treat the report as complete — re-query a narrower `--focus` or `--view` for the missing detail.
+
 ## Build an evidence-backed explanation
 
 For each gameplay claim, retain:

@@ -10,6 +10,14 @@ pub struct Cli {
     #[arg(long, global = true, help = "Emit compact JSON")]
     pub compact: bool,
 
+    #[arg(
+        long,
+        global = true,
+        value_name = "BYTES",
+        help = "Cap rendered JSON at N UTF-8 bytes by eliding heavy detail; adds a top-level `output` truncation block. Evidence fields (status, coverage, capabilities, diagnostics, known_opaque) are never elided."
+    )]
+    pub max_output_bytes: Option<usize>,
+
     #[arg(short, long, global = true, value_name = "FILE")]
     pub output: Option<PathBuf>,
 }
