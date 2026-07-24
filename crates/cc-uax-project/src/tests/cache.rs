@@ -22,7 +22,7 @@ fn disabled_and_custom_cache_policies_are_deterministic() {
 
     let system = CachePathPolicy::System.resolve(&layout).unwrap().unwrap();
     assert!(!system.starts_with(layout.project_root()));
-    assert_eq!(system.file_name().unwrap(), "project-index-v1.sqlite");
+    assert_eq!(system.file_name().unwrap(), "project-index-v2.sqlite");
 
     std::fs::remove_dir_all(root).unwrap();
 }

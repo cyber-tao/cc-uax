@@ -15,7 +15,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-const PROJECT_REPORT_SCHEMA_VERSION: u32 = 1;
+const PROJECT_REPORT_SCHEMA_VERSION: u32 = 2;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {
@@ -238,8 +238,10 @@ struct CommandFailure {
 struct ProjectReport {
     schema_version: u32,
     status: AnalysisStatus,
-    project_file: Option<String>,
+    layout: ProjectLayoutReport,
+    mounts: Vec<ProjectMountReport>,
     entry_points: cc_uax_project::ProjectEntryPoints,
+    reachability: cc_uax_project::ProjectReachability,
     analysis: cc_uax_project::ProjectAnalysisSummary,
     stats: cc_uax_project::ScanStats,
     inventory: Vec<ProjectAsset>,
@@ -273,11 +275,6 @@ impl ProjectReport {
             .values()
             .map(ProjectAsset::from_record)
             .collect();
-        let project_file = index
-            .layout
-            .project_file()
-            .and_then(Path::file_name)
-            .map(|name| name.to_string_lossy().into_owned());
         let failures = index
             .failures
             .iter()
@@ -301,8 +298,18 @@ impl ProjectReport {
         Self {
             schema_version: PROJECT_REPORT_SCHEMA_VERSION,
             status,
-            project_file,
+            layout: ProjectLayoutReport::from_index(index),
+            mounts: index
+                .mounts
+                .mounts()
+                .iter()
+                .map(|mount| ProjectMountReport {
+                    package_root: mount.package_root().to_string(),
+                    relative_path: project_relative_path(index, mount.disk_root()),
+                })
+                .collect(),
             entry_points: index.entry_points.clone(),
+            reachability: index.reachability.clone(),
             analysis: index.analysis.clone(),
             stats: index.stats.clone(),
             inventory,
@@ -314,6 +321,33 @@ impl ProjectReport {
             focused,
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectLayoutReport {
+    project_root: String,
+    content_root: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_file: Option<String>,
+}
+
+impl ProjectLayoutReport {
+    fn from_index(index: &ProjectIndex) -> Self {
+        Self {
+            project_root: project_relative_path(index, index.layout.project_root()),
+            content_root: project_relative_path(index, index.layout.content_root()),
+            project_file: index
+                .layout
+                .project_file()
+                .map(|path| project_relative_path(index, path)),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectMountReport {
+    package_root: String,
+    relative_path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -349,10 +383,22 @@ struct ProjectIssue {
 }
 
 fn report_path(index: &ProjectIndex, path: &Path) -> String {
-    path.strip_prefix(index.layout.project_root())
+    project_relative_path(index, path)
+}
+
+fn project_relative_path(index: &ProjectIndex, path: &Path) -> String {
+    let relative = path
+        .strip_prefix(index.layout.project_root())
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
+        .trim_matches('/')
+        .to_string();
+    if relative.is_empty() {
+        ".".to_string()
+    } else {
+        relative
+    }
 }
 
 #[cfg(test)]

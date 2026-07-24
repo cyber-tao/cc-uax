@@ -106,13 +106,13 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 项目分析默认采用 **strict** 模式。任何已映射资产读取、索引或解析失败都会生成结构化 failure；只要请求的项目证据仍为 `partial` 或 `unsupported`，进程也会以非零状态退出。`--allow-partial` 只改变进程是否接受该结果，不会粉饰报告；真实 status、失败项和降低后的 coverage 都会保留。
 
-项目缓存默认放在操作系统缓存目录，不写入被分析项目。使用 `--cache-file` 指定位置，或用 `--no-cache` 完全禁用缓存。
+项目缓存默认放在操作系统缓存目录，不写入被分析项目。对未变化的包，fresh cache entry 会复用已验证的引用列表和紧凑逐资产分析摘要。使用 `--cache-file` 指定位置，或用 `--no-cache` 完全禁用缓存。
 
 输出格式选项以 `cc-uax asset --help` 和 `cc-uax project --help` 为准。
 
 ## 报告契约
 
-解析层内部使用强类型结果，只在 CLI 边界渲染 JSON。资产报告直接包含 `coverage`、`capabilities` 和 `diagnostics`；项目报告通过聚合 `analysis`、inventory 中的紧凑分析以及可选的完整 `focused` 分析提供同类证据：
+解析层内部使用强类型结果，只在 CLI 边界渲染 JSON。资产报告直接包含 `coverage`、`capabilities` 和 `diagnostics`；项目报告通过聚合 `analysis`、inventory 中的紧凑分析、生成的 `reachability` 以及可选的完整 `focused` 分析提供同类证据：
 
 **资产报告（缩略）：**
 
@@ -137,9 +137,12 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "complete",
   "layout": {}, "mounts": {}, "entry_points": {},
+  "reachability": {
+    /* 配置根、运行时可达包、closure 成员、孤立包和 coverage 缺口 */
+  },
   "stats": { "discovered": 1961, "indexed": 1961, "failed": 0, "skipped": 0 },
   "analysis": {
     /* 聚合 coverage、capabilities 及逐资产摘要 */
@@ -185,7 +188,7 @@ cc-uax-cli ──> cc-uax-project ──> cc-uax-core
 ```
 
 - `cc-uax-core` 不负责文件系统扫描、SQLite、CLI 参数或 JSON 呈现策略。
-- `cc-uax-project` 负责 mount、项目发现、共享清单扫描、引用邻接、World Partition 归属和缓存位置。
+- `cc-uax-project` 负责 mount、项目发现、共享清单扫描、引用邻接、World Partition 归属、reachability/resource 摘要和缓存位置。
 - `cc-uax-cli` 负责选择 view/focus、附加请求的完整资产分析、退出语义和强类型报告渲染。
 
 贡献者应同时阅读 [CLAUDE.md](CLAUDE.md) 中的解析约束。

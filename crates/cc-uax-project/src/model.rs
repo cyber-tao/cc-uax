@@ -43,6 +43,30 @@ pub struct AssetRecord {
     pub analysis: AssetAnalysisSummary,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectReachability {
+    pub configured_roots: Vec<ProjectReachabilityRoot>,
+    pub reachable_runtime_packages: BTreeSet<String>,
+    pub ownership_closure_members: BTreeSet<String>,
+    pub unreachable_project_assets: BTreeSet<String>,
+    pub isolated_project_assets: BTreeSet<String>,
+    pub partial_packages: BTreeSet<String>,
+    pub unsupported_packages: BTreeSet<String>,
+    pub failed_assets: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectReachabilityRoot {
+    pub key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    pub source: String,
+    pub object_path: String,
+    pub package_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_package: Option<String>,
+}
+
 impl AssetRecord {
     pub fn is_external(&self) -> bool {
         matches!(self.ownership, AssetOwnership::External { .. })
@@ -147,6 +171,7 @@ pub struct ProjectIndex {
     pub reverse: Adjacency,
     pub ownership: BTreeMap<String, BTreeSet<String>>,
     pub ownership_closure: BTreeMap<String, BTreeSet<String>>,
+    pub reachability: ProjectReachability,
     pub stats: ScanStats,
     pub failures: Vec<ScanFailure>,
     pub diagnostics: Vec<ScanDiagnostic>,

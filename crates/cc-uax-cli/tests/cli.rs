@@ -59,7 +59,21 @@ fn strict_project_scan_emits_a_partial_report_and_fails() {
 
     assert_eq!(output.status.code(), Some(2));
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema_version"], 2);
     assert_eq!(report["status"], "partial");
+    assert_eq!(report["layout"]["project_root"], ".");
+    assert_eq!(report["layout"]["content_root"], "Content");
+    assert_eq!(report["mounts"][0]["package_root"], "/Game");
+    assert_eq!(report["mounts"][0]["relative_path"], "Content");
+    assert!(report.get("project_file").is_none());
+    assert_eq!(report["reachability"]["failed_assets"], 1);
+    assert!(
+        report["reachability"]["isolated_project_assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|package| package == "/Game/Good")
+    );
     assert_eq!(report["stats"]["discovered"], 2);
     assert_eq!(report["stats"]["indexed"], 1);
     assert_eq!(report["stats"]["failed"], 1);

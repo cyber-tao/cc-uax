@@ -115,6 +115,7 @@ dependencies = [
  "cc-uax-core",
  "rusqlite",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -106,13 +106,13 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 Project analysis is **strict by default**. A mapped asset that cannot be read, indexed, or parsed produces a structured failure, and any project report whose requested evidence remains `partial` or `unsupported` exits non-zero. `--allow-partial` permits a successful process exit while preserving the real status, failures, and reduced coverage in the report.
 
-Project cache data defaults to the operating system's cache directory, never the analyzed project. Use `--cache-file` for an explicit location or `--no-cache` for a cache-free run.
+Project cache data defaults to the operating system's cache directory, never the analyzed project. Fresh cache entries reuse validated references and compact per-asset analysis summaries for unchanged packages. Use `--cache-file` for an explicit location or `--no-cache` for a cache-free run.
 
 Run `cc-uax asset --help` and `cc-uax project --help` for output formatting options.
 
 ## Report contract
 
-Reports are typed internally and rendered to JSON only at the CLI boundary. Asset reports expose `coverage`, `capabilities`, and `diagnostics` directly. Project reports expose the same accounting through aggregate `analysis`, compact per-inventory analyses, and optional full `focused` analyses:
+Reports are typed internally and rendered to JSON only at the CLI boundary. Asset reports expose `coverage`, `capabilities`, and `diagnostics` directly. Project reports expose the same accounting through aggregate `analysis`, compact per-inventory analyses, generated `reachability`, and optional full `focused` analyses:
 
 **Asset report (abbreviated):**
 
@@ -137,9 +137,12 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "complete",
   "layout": {}, "mounts": {}, "entry_points": {},
+  "reachability": {
+    /* configured roots, reachable runtime packages, closure members, isolated packages, and coverage gaps */
+  },
   "stats": { "discovered": 1961, "indexed": 1961, "failed": 0, "skipped": 0 },
   "analysis": {
     /* aggregate coverage, capabilities, and per-asset summaries */
@@ -185,7 +188,7 @@ cc-uax-cli ──> cc-uax-project ──> cc-uax-core
 ```
 
 - `cc-uax-core` does not own filesystem scanning, SQLite, CLI arguments, or JSON presentation policy.
-- `cc-uax-project` owns mounts, project discovery, the shared inventory scan, reference adjacency, World Partition ownership, and cache placement.
+- `cc-uax-project` owns mounts, project discovery, the shared inventory scan, reference adjacency, World Partition ownership, reachability/resource summaries, and cache placement.
 - `cc-uax-cli` selects views/focuses, attaches requested full asset analyses, enforces exit behavior, and renders typed reports.
 
 See [CLAUDE.md](CLAUDE.md) for contributor-level parsing rules.

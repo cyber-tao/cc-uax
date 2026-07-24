@@ -110,6 +110,7 @@ The index contains:
 
 - asset inventory and canonical package paths;
 - forward and reverse reference adjacency;
+- configured-root reachability and resource classification summaries;
 - read/index/parse failures with paths and stages;
 - World Partition `ExternalActors`/`ExternalObjects` ownership;
 - LevelInstance/PackedLevelActor and external-package ownership closure;
@@ -117,7 +118,7 @@ The index contains:
 
 Strict mode is the default. Any mapped read/index/parse failure returns the partial index as a structured error; any requested project evidence that remains partial or unsupported also causes a non-zero CLI exit. `--allow-partial` changes exit acceptance only; it must not change report truth.
 
-Project cache data defaults to the operating system cache directory. Never create a cache inside the analyzed project by default. `--cache-file` explicitly selects a file and `--no-cache` disables caching.
+Project cache data defaults to the operating system cache directory. Never create a cache inside the analyzed project by default. Fresh cache entries may reuse validated references and compact per-asset analysis summaries for unchanged packages. `--cache-file` explicitly selects a file and `--no-cache` disables caching.
 
 ## CLI contract
 

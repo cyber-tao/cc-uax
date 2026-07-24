@@ -3,11 +3,12 @@ use crate::entry_points::load_project_entry_points;
 use crate::{
     Adjacency, AssetAnalysisSummary, AssetKind, AssetOwnership, AssetRecord, CachePathPolicy,
     ExternalPackageKind, MountTable, ProjectAnalysisSummary, ProjectEntryPoints, ProjectIndex,
-    ProjectLayout, ScanDiagnostic, ScanFailure, ScanFailureStage, ScanStats,
-    package_path_from_relative, strip_asset_extension,
+    ProjectLayout, ProjectReachability, ProjectReachabilityRoot, ScanDiagnostic, ScanFailure,
+    ScanFailureStage, ScanStats, package_path_from_relative, strip_asset_extension,
 };
-use cc_uax_core::{AssetView, PackageView};
+use cc_uax_core::{AnalysisStatus, AssetView, PackageView};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::fs;
@@ -105,6 +106,14 @@ impl ProjectScanner {
             }
             seen_packages.insert(duplicate_key, file.path.clone());
 
+            let Some(asset_kind) = asset_kind(&file.path) else {
+                failures.push(ScanFailure::new(
+                    &file.path,
+                    ScanFailureStage::Index,
+                    "mapped file has no supported asset extension",
+                ));
+                continue;
+            };
             let (mtime, size) = match file_stamp(&file.path) {
                 Ok(stamp) => stamp,
                 Err(error) => {
@@ -117,11 +126,24 @@ impl ProjectScanner {
                 .as_ref()
                 .and_then(|cache| cache.lookup(&cache_key, mtime, size))
                 .cloned();
-            let cached_references = match cached {
+            match cached {
                 Some(entry) => {
                     cache_hits += 1;
                     if entry.parse_ok {
-                        Some(entry.references)
+                        if let Some(analysis) = entry.analysis.clone() {
+                            records.push(AssetRecord {
+                                package_path,
+                                mount_root: file.package_root,
+                                file_path: file.path,
+                                relative_path: file.relative_path.clone(),
+                                asset_kind,
+                                ownership: classify_ownership(&file.relative_path),
+                                forward_references: entry.references.iter().cloned().collect(),
+                                analysis,
+                            });
+                            current_cache.insert(cache_key, entry);
+                            continue;
+                        }
                     } else {
                         cached_parse_failures += 1;
                         failures.push(ScanFailure::new(
@@ -140,10 +162,9 @@ impl ProjectScanner {
                     if cache.is_some() {
                         cache_misses += 1;
                     }
-                    None
                 }
             };
-            let parsed = match read_asset(&file.path, cached_references) {
+            let parsed = match read_asset(&file.path) {
                 Ok(parsed) => parsed,
                 Err(ParseFileError::Read(message)) => {
                     failures.push(ScanFailure::new(
@@ -167,6 +188,7 @@ impl ProjectScanner {
                                 size,
                                 parse_ok: false,
                                 references: Vec::new(),
+                                analysis: None,
                                 parse_error: Some(message),
                             },
                         );
@@ -182,18 +204,11 @@ impl ProjectScanner {
                         size,
                         parse_ok: true,
                         references: parsed.references.clone(),
+                        analysis: Some(parsed.analysis.clone()),
                         parse_error: None,
                     },
                 );
             }
-            let Some(asset_kind) = asset_kind(&file.path) else {
-                failures.push(ScanFailure::new(
-                    &file.path,
-                    ScanFailureStage::Index,
-                    "mapped file has no supported asset extension",
-                ));
-                continue;
-            };
             records.push(AssetRecord {
                 package_path,
                 mount_root: file.package_root,
@@ -343,8 +358,6 @@ pub(crate) fn build_project_index(
             }
         }
     }
-    let ownership_closure = build_ownership_closure(&assets, &ownership);
-    stats.failed = failures.len();
     let failed_asset_count = failures
         .iter()
         .filter(|failure| {
@@ -356,6 +369,17 @@ pub(crate) fn build_project_index(
         .map(|failure| normalized_path(&failure.path))
         .collect::<BTreeSet<_>>()
         .len();
+    let ownership_closure = build_ownership_closure(&assets, &ownership);
+    let reachability = build_project_reachability(
+        &entry_points,
+        &assets,
+        &forward,
+        &reverse,
+        &ownership_closure,
+        failed_asset_count,
+        &canonical,
+    );
+    stats.failed = failures.len();
     stats.skipped = discovered.saturating_sub(assets.len() + failed_asset_count);
     let analysis = ProjectAnalysisSummary::aggregate(
         assets.values().map(|record| &record.analysis),
@@ -372,12 +396,124 @@ pub(crate) fn build_project_index(
         reverse,
         ownership,
         ownership_closure,
+        reachability,
         stats,
         failures,
         diagnostics,
         canonical_lookup: HashMap::new(),
     }
     .with_canonical_lookup()
+}
+
+fn build_project_reachability(
+    entry_points: &ProjectEntryPoints,
+    assets: &BTreeMap<String, AssetRecord>,
+    forward: &Adjacency,
+    reverse: &Adjacency,
+    ownership_closure: &BTreeMap<String, BTreeSet<String>>,
+    failed_assets: usize,
+    canonical: &HashMap<String, String>,
+) -> ProjectReachability {
+    let configured_roots = configured_roots(entry_points, canonical);
+    let mut reachable_runtime_packages = BTreeSet::new();
+    let mut ownership_closure_members = BTreeSet::new();
+    let mut queue = configured_roots
+        .iter()
+        .filter_map(|root| root.resolved_package.clone())
+        .collect::<VecDeque<_>>();
+
+    while let Some(package) = queue.pop_front() {
+        if !reachable_runtime_packages.insert(package.clone()) {
+            continue;
+        }
+        if let Some(closure) = ownership_closure.get(&package) {
+            for member in closure {
+                if member != &package {
+                    ownership_closure_members.insert(member.clone());
+                }
+                queue.push_back(member.clone());
+            }
+        }
+        if let Some(references) = forward.get(&package) {
+            for reference in references {
+                if let Some(resolved) = canonical_package(canonical, reference) {
+                    queue.push_back(resolved);
+                }
+            }
+        }
+    }
+
+    let mut unreachable_project_assets = BTreeSet::new();
+    let mut isolated_project_assets = BTreeSet::new();
+    let mut partial_packages = BTreeSet::new();
+    let mut unsupported_packages = BTreeSet::new();
+    for (package, record) in assets {
+        match record.analysis.status {
+            AnalysisStatus::Partial => {
+                partial_packages.insert(package.clone());
+            }
+            AnalysisStatus::Unsupported => {
+                unsupported_packages.insert(package.clone());
+            }
+            AnalysisStatus::Complete => {}
+        }
+        if matches!(record.ownership, AssetOwnership::ProjectAsset)
+            && !reachable_runtime_packages.contains(package)
+        {
+            unreachable_project_assets.insert(package.clone());
+            let no_forward = forward.get(package).is_none_or(BTreeSet::is_empty);
+            let no_reverse = reverse.get(package).is_none_or(BTreeSet::is_empty);
+            if no_forward && no_reverse {
+                isolated_project_assets.insert(package.clone());
+            }
+        }
+    }
+
+    ProjectReachability {
+        configured_roots,
+        reachable_runtime_packages,
+        ownership_closure_members,
+        unreachable_project_assets,
+        isolated_project_assets,
+        partial_packages,
+        unsupported_packages,
+        failed_assets,
+    }
+}
+
+fn configured_roots(
+    entry_points: &ProjectEntryPoints,
+    canonical: &HashMap<String, String>,
+) -> Vec<ProjectReachabilityRoot> {
+    let mut roots = Vec::new();
+    for reference in entry_points.defaults.values() {
+        roots.push(reachability_root(None, reference, canonical));
+    }
+    for (platform, references) in &entry_points.platforms {
+        for reference in references.values() {
+            roots.push(reachability_root(Some(platform), reference, canonical));
+        }
+    }
+    roots
+}
+
+fn reachability_root(
+    platform: Option<&String>,
+    reference: &crate::ConfigReference,
+    canonical: &HashMap<String, String>,
+) -> ProjectReachabilityRoot {
+    ProjectReachabilityRoot {
+        key: reference.key.clone(),
+        platform: platform.cloned(),
+        source: reference.source.clone(),
+        object_path: reference.object_path.clone(),
+        package_path: reference.package_path.clone(),
+        resolved_package: canonical_package(canonical, &reference.package_path),
+    }
+}
+
+fn canonical_package(canonical: &HashMap<String, String>, package: &str) -> Option<String> {
+    canonical.get(&package.to_ascii_lowercase()).cloned()
 }
 
 #[derive(Debug)]
@@ -598,24 +734,19 @@ struct ParsedAsset {
     analysis: AssetAnalysisSummary,
 }
 
-fn read_asset(
-    path: &Path,
-    cached_references: Option<Vec<String>>,
-) -> Result<ParsedAsset, ParseFileError> {
+fn read_asset(path: &Path) -> Result<ParsedAsset, ParseFileError> {
     let data = fs::read(path).map_err(|error| ParseFileError::Read(error.to_string()))?;
     let view =
         PackageView::parse(&data).map_err(|error| ParseFileError::Parse(format!("{error:#}")))?;
-    let references = cached_references.unwrap_or_else(|| {
-        let references = view.references();
-        references
-            .assets
-            .into_iter()
-            .chain(references.scripts)
-            .chain(references.soft)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect()
-    });
+    let references = view.references();
+    let references = references
+        .assets
+        .into_iter()
+        .chain(references.scripts)
+        .chain(references.soft)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let analysis = view.analyze(AssetView::Full);
     Ok(ParsedAsset {
         references,

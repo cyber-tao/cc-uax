@@ -1,4 +1,4 @@
-use crate::ProjectLayout;
+use crate::{AssetAnalysisSummary, ProjectLayout};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -8,8 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const CACHE_NAMESPACE: &str = "cc-uax/projects";
-const CACHE_FILE_NAME: &str = "project-index-v1.sqlite";
-const CACHE_SCHEMA_VERSION: i64 = 1;
+const CACHE_FILE_NAME: &str = "project-index-v2.sqlite";
+const CACHE_SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "policy", content = "path", rename_all = "snake_case")]
@@ -53,6 +53,7 @@ pub(crate) struct CacheEntry {
     pub(crate) size: i64,
     pub(crate) parse_ok: bool,
     pub(crate) references: Vec<String>,
+    pub(crate) analysis: Option<AssetAnalysisSummary>,
     pub(crate) parse_error: Option<String>,
 }
 
@@ -97,6 +98,7 @@ impl ProjectCache {
                     size        INTEGER NOT NULL,
                     parse_ok    INTEGER NOT NULL,
                     refs        TEXT NOT NULL,
+                    analysis    TEXT,
                     parse_error TEXT
                 )",
                 [],
@@ -107,7 +109,7 @@ impl ProjectCache {
         {
             let mut statement = connection
                 .prepare(
-                    "SELECT file_path, mtime, size, parse_ok, refs, parse_error FROM package_refs",
+                    "SELECT file_path, mtime, size, parse_ok, refs, analysis, parse_error FROM package_refs",
                 )
                 .map_err(|error| format!("prepare cache load: {error}"))?;
             let rows = statement
@@ -119,13 +121,22 @@ impl ProjectCache {
                             size: row.get(2)?,
                             parse_ok: row.get::<_, i64>(3)? != 0,
                             references: split_references(&row.get::<_, String>(4)?),
-                            parse_error: row.get(5)?,
+                            analysis: None,
+                            parse_error: row.get(6)?,
                         },
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 })
                 .map_err(|error| format!("query cache entries: {error}"))?;
             for row in rows {
-                let (path, entry) = row.map_err(|error| format!("decode cache entry: {error}"))?;
+                let (path, mut entry, analysis) =
+                    row.map_err(|error| format!("decode cache entry: {error}"))?;
+                if let Some(analysis) = analysis {
+                    entry.analysis =
+                        Some(serde_json::from_str(&analysis).map_err(|error| {
+                            format!("decode cache analysis for {path}: {error}")
+                        })?);
+                }
                 loaded.insert(path, entry);
             }
         }
@@ -153,11 +164,17 @@ impl ProjectCache {
             let mut statement = transaction
                 .prepare(
                     "INSERT INTO package_refs
-                     (file_path, mtime, size, parse_ok, refs, parse_error)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                     (file_path, mtime, size, parse_ok, refs, analysis, parse_error)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 )
                 .map_err(|error| format!("prepare cache store: {error}"))?;
             for (path, entry) in current {
+                let analysis = entry
+                    .analysis
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()
+                    .map_err(|error| format!("encode cache analysis for {path}: {error}"))?;
                 statement
                     .execute(params![
                         path,
@@ -165,6 +182,7 @@ impl ProjectCache {
                         entry.size,
                         entry.parse_ok as i64,
                         join_references(&entry.references),
+                        analysis.as_deref(),
                         entry.parse_error.as_deref(),
                     ])
                     .map_err(|error| format!("store cache entry for {path}: {error}"))?;

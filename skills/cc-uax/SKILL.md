@@ -7,6 +7,8 @@ description: Analyze versioned, uncooked Unreal Engine 5 editor assets and proje
 
 Use `cc-uax` as the binary-evidence source. Treat its structured graph, reference, diagnostic, and coverage fields as evidence; never infer connectivity from rendered text or node names alone.
 
+When analyzing a cc-uax checkout that is under active development, run the checkout binary with `cargo run -p cc-uax-cli -- ...` or an explicit `target/release/cc-uax` path so results do not come from an older installed binary on `PATH`.
+
 Scope the result to versioned, uncooked UE5 editor packages. Report cooked, unversioned, unsupported, missing, or corrupt inputs as limitations instead of guessing.
 
 ## Establish the project report
@@ -23,13 +25,13 @@ Add each nonstandard content root with `--mount <PACKAGE=RELATIVE>`. Use `--focu
 
 Keep strict mode enabled. Use `--allow-partial` only when the user explicitly accepts incomplete evidence, and carry every failure into the conclusion.
 
-4. Inspect `schema_version`, `status`, `stats`, aggregate `analysis`, per-asset coverage/capabilities, `failures`, and `diagnostics` before analyzing gameplay. Read [references/report-contract.md](references/report-contract.md) when interpreting these fields.
+4. Inspect `schema_version`, `status`, `stats`, `reachability`, aggregate `analysis`, per-asset coverage/capabilities, `failures`, and `diagnostics` before analyzing gameplay. Read [references/report-contract.md](references/report-contract.md) when interpreting these fields.
 
 Do not run one reverse scan per asset. Reuse the project report's inventory and bidirectional adjacency.
 
 ## Trace gameplay from configured roots
 
-Start with configured maps and runtime classes, then traverse both graph edges and asset references:
+Start with the report's generated `reachability.configured_roots` and `reachability.reachable_runtime_packages`, then traverse both graph edges and asset references where focused evidence is needed:
 
 1. Resolve the startup map and `GameInstance`/`GameMode` chain.
 2. Include World Partition `ExternalActors`/`ExternalObjects`, Level Instances, and Packed Level Actors from the reported closure.
@@ -73,7 +75,7 @@ Do not upgrade `partial` to `confirmed` from naming conventions, screenshots, re
 
 ## Audit resource use
 
-Use project adjacency to distinguish configured roots, reachable runtime dependencies, editor-only assets, isolated assets, and failed/unsupported assets. Treat “unreferenced” as a graph fact under the scanned mounts, not proof that deletion is safe; account for soft loads, primary asset rules, config paths, localization, and runtime-generated names.
+Use project `reachability` and adjacency to distinguish configured roots, reachable runtime dependencies, editor-only assets, isolated assets, and failed/unsupported assets. Treat “unreferenced” as a graph fact under the scanned mounts, not proof that deletion is safe; account for soft loads, primary asset rules, config paths, localization, and runtime-generated names.
 
 When proposing deletion, require both no reachable hard/soft/config reference and adequate scan coverage.
 

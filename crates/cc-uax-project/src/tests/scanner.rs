@@ -162,6 +162,71 @@ fn resolves_world_partition_actor_and_object_ownership_closure() {
 }
 
 #[test]
+fn reachability_starts_from_configured_roots_and_includes_ownership_closure() {
+    let root = temp_project("reachability");
+    let content = root.join("Content");
+    let map = content.join("Maps/World.umap");
+    let actor = content.join("__ExternalActors__/Maps/World/0/AA/Actor.uasset");
+    let isolated = content.join("Props/Unused.uasset");
+    let config = root.join("Config/DefaultEngine.ini");
+    std::fs::create_dir_all(map.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(actor.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(isolated.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(&map, minimal_package()).unwrap();
+    std::fs::write(&actor, minimal_package()).unwrap();
+    std::fs::write(&isolated, minimal_package()).unwrap();
+    std::fs::write(
+        &config,
+        "[/Script/EngineSettings.GameMapsSettings]\nGameDefaultMap=/Game/Maps/World.World\n",
+    )
+    .unwrap();
+
+    let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
+    let index = scanner.scan(scan_options(ScanMode::Strict)).unwrap();
+
+    assert_eq!(index.reachability.configured_roots.len(), 1);
+    assert_eq!(
+        index.reachability.configured_roots[0]
+            .resolved_package
+            .as_deref(),
+        Some("/Game/Maps/World")
+    );
+    assert!(
+        index
+            .reachability
+            .reachable_runtime_packages
+            .contains("/Game/Maps/World")
+    );
+    assert!(
+        index
+            .reachability
+            .ownership_closure_members
+            .contains("/Game/__ExternalActors__/Maps/World/0/AA/Actor")
+    );
+    assert!(
+        index
+            .reachability
+            .reachable_runtime_packages
+            .contains("/Game/__ExternalActors__/Maps/World/0/AA/Actor")
+    );
+    assert!(
+        index
+            .reachability
+            .unreachable_project_assets
+            .contains("/Game/Props/Unused")
+    );
+    assert!(
+        index
+            .reachability
+            .isolated_project_assets
+            .contains("/Game/Props/Unused")
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 #[ignore = "requires CC_UAX_TEST_PROJECT to point at a local UE project"]
 fn scans_real_project_from_environment() {
     let project = std::env::var_os("CC_UAX_TEST_PROJECT")
@@ -244,6 +309,43 @@ fn stale_cache_entries_are_reparsed_and_negative_hits_remain_failures() {
     assert_eq!(strict.index().stats.cache_hits, 1);
     assert_eq!(strict.index().stats.cached_parse_failures, 1);
     assert_eq!(strict.index().failures.len(), 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn fresh_positive_cache_reuses_cached_analysis_summary() {
+    let root = temp_project("cache_analysis_summary");
+    let asset = root.join("Content/Cached.uasset");
+    let cache_file = root.join("scan-cache.sqlite");
+    std::fs::write(&asset, minimal_package()).unwrap();
+    let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
+    let options = || ScanOptions {
+        mode: ScanMode::AllowPartial,
+        cache: CachePathPolicy::CustomFile(cache_file.clone()),
+    };
+
+    let first = scanner.scan(options()).unwrap();
+    assert_eq!(first.stats.cache_hits, 0);
+    let mut cached_analysis = first.asset("/Game/Cached").unwrap().analysis.clone();
+    cached_analysis.status = cc_uax_core::AnalysisStatus::Partial;
+    cached_analysis.coverage.bytes_total = 12345;
+    let connection = rusqlite::Connection::open(&cache_file).unwrap();
+    connection
+        .execute(
+            "UPDATE package_refs SET analysis = ?1",
+            [serde_json::to_string(&cached_analysis).unwrap()],
+        )
+        .unwrap();
+    drop(connection);
+
+    let cached = scanner.scan(options()).unwrap();
+    let summary = &cached.asset("/Game/Cached").unwrap().analysis;
+    assert_eq!(cached.stats.cache_hits, 1);
+    assert_eq!(cached.stats.cache_misses, 0);
+    assert_eq!(summary.status, cc_uax_core::AnalysisStatus::Partial);
+    assert_eq!(summary.coverage.bytes_total, 12345);
+    assert_eq!(cached.analysis.status, cc_uax_core::AnalysisStatus::Partial);
 
     std::fs::remove_dir_all(root).unwrap();
 }
