@@ -1,6 +1,7 @@
 # ---- Rust / Cargo ----
 # build artifacts
 /target
+/target2
 
 # rustfmt backup files
 **/*.rs.bk
