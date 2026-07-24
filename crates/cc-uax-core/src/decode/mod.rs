@@ -158,6 +158,10 @@ impl Package {
                     .summary
                     .custom_version(custom::FORTNITE_RELEASE_BRANCH_OBJECT_VERSION)
                     .unwrap_or(-1),
+                property_bag_version: self
+                    .summary
+                    .custom_version(custom::PROPERTY_BAG_VERSION)
+                    .unwrap_or(-1),
             },
             file_version_ue4: self.summary.file_version_ue4,
             file_version_ue5: self.summary.file_version_ue5,

@@ -65,6 +65,7 @@ pub struct SerializationPolicy {
     pub instanced_struct_version: i32,
     pub state_tree_instance_storage_version: i32,
     pub fortnite_release_version: i32,
+    pub property_bag_version: i32,
 }
 
 impl Default for SerializationPolicy {
@@ -75,6 +76,7 @@ impl Default for SerializationPolicy {
             instanced_struct_version: -1,
             state_tree_instance_storage_version: -1,
             fortnite_release_version: -1,
+            property_bag_version: -1,
         }
     }
 }
@@ -98,6 +100,8 @@ pub mod custom {
         Guid([0xE21E_1CAA, 0xAF47_425E, 0x89BF_6AD4, 0x4C44_A8BB]);
     pub const STATE_TREE_INSTANCE_STORAGE_VERSION: Guid =
         Guid([0x60C4_F0DE, 0x8B26_4C34, 0xAA93_7201, 0x5DFF_09CC]);
+    pub const PROPERTY_BAG_VERSION: Guid =
+        Guid([0x134A_157E, 0xD5E2_49A3, 0x8D4E_843C, 0x98FE_9E31]);
 
     pub const EDGRAPH_PIN_SOURCE_INDEX: i32 = 50;
     /// FFortniteMainBranchObjectVersion::SerializeFloatChannelShowCurve — from this
@@ -119,6 +123,17 @@ pub mod custom {
     pub const STATE_TREE_INSTANCE_STORAGE_ADDED_CUSTOM_SERIALIZATION: i32 = 1;
     /// FFortniteReleaseBranchCustomObjectVersion::PCGPointStructuredSerializer.
     pub const PCG_POINT_STRUCTURED_SERIALIZER: i32 = 13;
+
+    // FPropertyBagCustomVersion (GUID 134A157E-D5E249A3-8D4E843C-98FE9E31).
+    /// FPropertyBagCustomVersion::ContainerTypes — from here property descs carry
+    /// container-type info; earlier bags do not.
+    pub const PROPERTY_BAG_CONTAINER_TYPES: i32 = 1;
+    /// FPropertyBagCustomVersion::NestedContainerTypes — container types become a
+    /// counted array rather than a single legacy byte.
+    pub const PROPERTY_BAG_NESTED_CONTAINER_TYPES: i32 = 2;
+    /// FPropertyBagCustomVersion::MetaClass — per-desc metadata gains a trailing
+    /// MetaClass object reference.
+    pub const PROPERTY_BAG_META_CLASS: i32 = 3;
 }
 
 pub const PACKAGE_FILE_TAG: u32 = 0x9E2A_83C1;

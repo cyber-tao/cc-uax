@@ -4,6 +4,7 @@ use crate::property::{
 };
 use crate::reader::Reader;
 use crate::structured_value::{Map, Value, json};
+use crate::version::custom;
 use anyhow::Result;
 
 // Mesh / cloth / property-bag structs (sampled or hex-tailed payloads).
@@ -22,7 +23,7 @@ pub(super) fn parse_mesh_cloth_struct(
         "GroomDataflowSettings" => {
             parse_tagged_struct_with_payload(r, name, ctx, value_end, "rest_collection")?
         }
-        "InstancedPropertyBag" => parse_instanced_property_bag(r, value_end)?,
+        "InstancedPropertyBag" => parse_instanced_property_bag(r, ctx, value_end)?,
         _ => return Ok(None),
     };
     Ok(Some(v))
@@ -168,29 +169,131 @@ fn parse_cloth_tether_tuple(r: &mut Reader) -> Result<Value> {
     }))
 }
 
-fn parse_instanced_property_bag(r: &mut Reader, value_end: u64) -> Result<Value> {
-    let has_data = r.read_bool32()?;
+fn parse_instanced_property_bag(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Value> {
+    let version = ctx.serialization.property_bag_version;
     let mut o = Map::new();
+
+    // FInstancedPropertyBag::Serialize writes bHasData first (a pre-ContainerTypes
+    // archive prefixes a uint8 EVersion, but such bags predate structured support
+    // and fall through to the opaque preview below, so we do not special-case it).
+    let has_data = r.read_bool32()?;
     o.insert("has_data".into(), json!(has_data));
-    if r.pos() < value_end {
-        let payload_start = r.pos();
-        let payload_size = value_end - r.pos();
-        let preview_len = payload_size.min(PREVIEW_MAX as u64) as usize;
-        let preview = r.read_bytes(preview_len)?;
-        if r.pos() < value_end {
-            r.seek(value_end)?;
-        }
-        o.insert(
-            "serialized_data".into(),
-            json!({
-                "start": payload_start,
-                "end": value_end,
-                "size": payload_size,
-                "preview": to_hex(&preview)
-            }),
-        );
+    if !has_data {
+        return Ok(Value::Object(o));
     }
+
+    // The body ends with an int32 SerialSize followed by exactly that many bytes
+    // of tagged-property data, so the desc parse is self-checking: if the window
+    // left after SerialSize does not equal it, the parse drifted and we fall back
+    // to the historical opaque preview instead of misreporting bytes.
+    let body_start = r.pos();
+    if let Some((descs, properties)) = decode_property_bag_body(r, ctx, value_end, version) {
+        o.insert("property_descs".into(), descs);
+        o.insert("properties".into(), properties);
+        return Ok(Value::Object(o));
+    }
+
+    r.seek(body_start)?;
+    let payload_size = value_end.saturating_sub(r.pos());
+    let preview_len = payload_size.min(PREVIEW_MAX as u64) as usize;
+    let preview = r.read_bytes(preview_len)?;
+    if r.pos() < value_end {
+        r.seek(value_end)?;
+    }
+    o.insert(
+        "serialized_data".into(),
+        json!({
+            "start": body_start,
+            "end": value_end,
+            "size": payload_size,
+            "preview": to_hex(&preview)
+        }),
+    );
     Ok(Value::Object(o))
+}
+
+/// Decode the modern (>= NestedContainerTypes) property-bag body: property descs,
+/// the serial size, and the tagged-property data. Returns `None` when the layout
+/// does not validate so the caller can fall back to an opaque preview.
+fn decode_property_bag_body(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    value_end: u64,
+    version: i32,
+) -> Option<(Value, Value)> {
+    if version < custom::PROPERTY_BAG_NESTED_CONTAINER_TYPES {
+        return None;
+    }
+    let descs = read_property_bag_descs(r, ctx, value_end, version).ok()?;
+    let serial_size = r.read_i32().ok()?;
+    if serial_size < 0 {
+        return None;
+    }
+    // Self-check: the remaining window must be exactly the declared serial size.
+    if value_end.saturating_sub(r.pos()) != serial_size as u64 {
+        return None;
+    }
+    let entries = parse_properties(r, ctx, value_end);
+    Some((Value::Array(descs), entries_to_values(&entries)))
+}
+
+fn read_property_bag_descs(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    value_end: u64,
+    version: i32,
+) -> Result<Vec<Value>> {
+    let count = r.read_i32()?;
+    // Each desc is at least object(4) + guid(16) + name(8) + type(1) + hasMeta(4).
+    validate_count(
+        count,
+        value_end.saturating_sub(r.pos()),
+        33,
+        "property bag descs",
+    )?;
+    let mut descs = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let value_type_object = r.read_i32()?;
+        let id = r.read_guid()?;
+        let name = ctx.names.resolve_raw(r.read_raw_name()?);
+        let value_type = r.read_u8()?;
+
+        let mut container_types = Vec::new();
+        if version >= custom::PROPERTY_BAG_CONTAINER_TYPES {
+            // NestedContainerTypes stores a counted array of container-type bytes.
+            let num_containers = r.read_u8()?;
+            for _ in 0..num_containers {
+                container_types.push(json!(r.read_u8()?));
+            }
+        }
+
+        let has_meta_data = r.read_bool32()?;
+        if has_meta_data {
+            let meta_count = r.read_i32()?;
+            validate_count(
+                meta_count,
+                value_end.saturating_sub(r.pos()),
+                8,
+                "property bag meta",
+            )?;
+            for _ in 0..meta_count {
+                let _key = r.read_raw_name()?;
+                let _value = r.read_fstring()?;
+            }
+            if version >= custom::PROPERTY_BAG_META_CLASS {
+                let _meta_class = r.read_i32()?;
+            }
+        }
+
+        descs.push(json!({
+            "name": name,
+            "id": id.to_hex(),
+            "value_type": value_type,
+            "value_type_object": (ctx.resolve_object)(value_type_object),
+            "container_types": container_types,
+        }));
+    }
+    Ok(descs)
 }
 
 fn parse_mesh_to_mesh_vert_data_array(

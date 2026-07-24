@@ -864,6 +864,121 @@ fn native_struct_instanced_struct_decodes() {
 }
 
 #[test]
+fn native_struct_instanced_property_bag_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Data".to_string(),                 // 0
+            "StructProperty".to_string(),       // 1
+            "InstancedPropertyBag".to_string(), // 2
+            "Temperature".to_string(),          // 3
+            "FloatProperty".to_string(),        // 4
+            "None".to_string(),                 // 5
+        ],
+    };
+
+    // Tagged-property data: one FloatProperty "Temperature" = 42.0, then None.
+    let mut data = Vec::new();
+    push_raw_name(&mut data, 3); // Temperature
+    push_raw_name(&mut data, 4); // FloatProperty
+    push_i32(&mut data, 0); // type name inner param count
+    push_i32(&mut data, 4); // value size
+    data.push(0); // flags
+    push_f32(&mut data, 42.0);
+    push_raw_name(&mut data, 5); // None
+
+    // FInstancedPropertyBag body: bHasData, one property desc, serial size, data.
+    let mut value = Vec::new();
+    push_i32(&mut value, 1); // bHasData (bool32) = true
+    push_i32(&mut value, 1); // desc count
+    push_i32(&mut value, 0); // ValueTypeObject (null)
+    value.extend_from_slice(&[0u8; 16]); // ID (FGuid)
+    push_raw_name(&mut value, 3); // Name = Temperature
+    value.push(8); // ValueType byte
+    value.push(0); // ContainerTypes: NumContainers = 0
+    push_i32(&mut value, 0); // bHasMetaData (bool32) = false
+    push_i32(&mut value, data.len() as i32); // SerialSize
+    value.extend_from_slice(&data);
+
+    let d = build_struct_property(2, 5, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy {
+            property_bag_version: crate::version::custom::PROPERTY_BAG_META_CLASS,
+            ..Default::default()
+        },
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["has_data"].as_bool(), Some(true));
+    let descs = v["property_descs"].as_array().unwrap();
+    assert_eq!(descs.len(), 1);
+    assert_eq!(descs[0]["name"].as_str(), Some("Temperature"));
+    let props = v["properties"].as_array().unwrap();
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0]["name"].as_str(), Some("Temperature"));
+    assert_eq!(props[0]["value"].as_f64(), Some(42.0));
+    // A validated body is decoded structurally rather than kept as opaque bytes.
+    assert!(v.get("serialized_data").is_none());
+}
+
+#[test]
+fn native_struct_instanced_property_bag_bad_size_falls_back_to_opaque() {
+    let names = NameMap {
+        names: vec![
+            "Data".to_string(),
+            "StructProperty".to_string(),
+            "InstancedPropertyBag".to_string(),
+            "Temperature".to_string(),
+            "None".to_string(),
+        ],
+    };
+    // Declare a serial size that does not match the remaining window; the decoder
+    // must self-check and fall back to an opaque preview instead of misreporting.
+    let mut value = Vec::new();
+    push_i32(&mut value, 1); // bHasData
+    push_i32(&mut value, 1); // desc count
+    push_i32(&mut value, 0); // ValueTypeObject
+    value.extend_from_slice(&[0u8; 16]); // ID
+    push_raw_name(&mut value, 3); // Name
+    value.push(8); // ValueType
+    value.push(0); // NumContainers
+    push_i32(&mut value, 0); // bHasMetaData
+    push_i32(&mut value, 999); // SerialSize (wrong)
+    value.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+
+    let d = build_struct_property(2, 4, &value);
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy {
+            property_bag_version: crate::version::custom::PROPERTY_BAG_META_CLASS,
+            ..Default::default()
+        },
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["has_data"].as_bool(), Some(true));
+    assert!(v.get("serialized_data").is_some());
+    assert!(v.get("property_descs").is_none());
+}
+
+#[test]
 fn native_struct_instanced_struct_missing_version_uses_legacy_prefix() {
     let names = NameMap {
         names: vec![
