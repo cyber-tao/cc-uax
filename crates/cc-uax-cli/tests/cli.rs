@@ -59,7 +59,7 @@ fn strict_project_scan_emits_a_partial_report_and_fails() {
 
     assert_eq!(output.status.code(), Some(2));
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], 2);
+    assert_eq!(report["schema_version"], 3);
     assert_eq!(report["status"], "partial");
     assert_eq!(report["layout"]["project_root"], ".");
     assert_eq!(report["layout"]["content_root"], "Content");
@@ -127,7 +127,11 @@ fn strict_project_scan_without_hard_failures_exits_zero_despite_partial() {
     assert_ne!(report["status"], "complete");
     assert_eq!(report["stats"]["indexed"], 1);
     assert_eq!(report["stats"]["failed"], 0);
-    assert!(report["failures"].as_array().unwrap().is_empty());
+    assert!(
+        report["failures"]
+            .as_array()
+            .is_none_or(|failures| failures.is_empty())
+    );
 }
 
 #[test]

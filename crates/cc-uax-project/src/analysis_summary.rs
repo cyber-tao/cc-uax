@@ -6,6 +6,12 @@ use cc_uax_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// serde `skip_serializing_if` helper: drop zero counts from per-asset summaries
+/// so a project report only carries the non-zero accounting for each asset.
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilitySummary {
     pub kind: CapabilityKind,
@@ -20,7 +26,9 @@ pub struct GraphSummary {
     pub nodes: usize,
     pub pins: usize,
     pub edges: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub excluded_cross_graph_links: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub unresolved_links: usize,
 }
 
@@ -32,8 +40,11 @@ pub struct RigVmGraphSummary {
     pub nodes: usize,
     pub pins: usize,
     pub links: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub unresolved_node_references: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub unresolved_pin_references: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub unresolved_link_references: usize,
 }
 
@@ -48,8 +59,11 @@ pub struct PcgGraphSummary {
     pub nodes: usize,
     pub pins: usize,
     pub edges: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub unresolved_node_references: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub unresolved_pin_references: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub unresolved_edge_references: usize,
 }
 
@@ -64,31 +78,55 @@ pub struct StateTreeGraphSummary {
     pub transitions: usize,
     pub transition_conditions: usize,
     pub child_links: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub unresolved_state_references: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalysisDiagnosticSummary {
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub errors: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub warnings: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub info: usize,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub codes: BTreeMap<String, usize>,
+}
+
+impl AnalysisDiagnosticSummary {
+    fn is_empty(&self) -> bool {
+        self.errors == 0 && self.warnings == 0 && self.info == 0 && self.codes.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnownOpaqueSummary {
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub total: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub property_values: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub post_property_tails: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub metadata: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub capabilities: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub identities: Vec<KnownOpaqueIdentity>,
+}
+
+impl KnownOpaqueSummary {
+    fn is_empty(&self) -> bool {
+        self.total == 0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnownOpaqueIdentity {
     pub path: String,
     pub kind: KnownOpaqueKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_name: Option<String>,
     pub reason: String,
 }
@@ -97,12 +135,19 @@ pub struct KnownOpaqueIdentity {
 pub struct AssetAnalysisSummary {
     pub status: AnalysisStatus,
     pub coverage: ParseCoverage,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<CapabilitySummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub graphs: Vec<GraphSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rigvm_graphs: Vec<RigVmGraphSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pcg_graphs: Vec<PcgGraphSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub state_tree_graphs: Vec<StateTreeGraphSummary>,
+    #[serde(default, skip_serializing_if = "AnalysisDiagnosticSummary::is_empty")]
     pub diagnostics: AnalysisDiagnosticSummary,
+    #[serde(default, skip_serializing_if = "KnownOpaqueSummary::is_empty")]
     pub known_opaque: KnownOpaqueSummary,
 }
 

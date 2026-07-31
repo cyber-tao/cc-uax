@@ -74,42 +74,76 @@ pub struct AssetAnalysis {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct ParseCoverage {
     pub bytes_total: u64,
     pub exports_total: usize,
     pub exports_analyzed: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub property_exports_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub property_exports_complete: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub properties_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub graph_nodes_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub graph_nodes_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub pins_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub graph_edges_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub rigvm_graphs_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub rigvm_graphs_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub rigvm_nodes_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub rigvm_nodes_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub rigvm_pins_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub rigvm_pins_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub rigvm_links_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub rigvm_links_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub pcg_graphs_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub pcg_graphs_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub pcg_nodes_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub pcg_nodes_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub pcg_pins_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub pcg_pins_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub pcg_edges_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub pcg_edges_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub state_tree_graphs_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub state_tree_graphs_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub state_tree_states_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub state_tree_states_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub state_tree_tasks_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub state_tree_conditions_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub state_tree_transitions_decoded: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub known_opaque_regions: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub diagnostic_errors: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     pub diagnostic_warnings: usize,
 }
 

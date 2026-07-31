@@ -16,7 +16,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-const PROJECT_REPORT_SCHEMA_VERSION: u32 = 2;
+const PROJECT_REPORT_SCHEMA_VERSION: u32 = 3;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {
@@ -264,12 +264,19 @@ struct ProjectReport {
     reachability: cc_uax_project::ProjectReachability,
     analysis: cc_uax_project::ProjectAnalysisSummary,
     stats: cc_uax_project::ScanStats,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     inventory: Vec<ProjectAsset>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     forward: BTreeMap<String, BTreeSet<String>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     reverse: BTreeMap<String, BTreeSet<String>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     ownership_closure: BTreeMap<String, BTreeSet<String>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     failures: Vec<ProjectIssue>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     diagnostics: Vec<ProjectIssue>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     focused: BTreeMap<String, AssetAnalysis>,
 }
 
@@ -376,6 +383,7 @@ struct ProjectAsset {
     relative_path: String,
     kind: AssetKind,
     ownership: AssetOwnership,
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     references: BTreeSet<String>,
     analysis: cc_uax_project::AssetAnalysisSummary,
 }

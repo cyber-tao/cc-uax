@@ -45,12 +45,19 @@ pub struct AssetRecord {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectReachability {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub configured_roots: Vec<ProjectReachabilityRoot>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub reachable_runtime_packages: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub ownership_closure_members: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub unreachable_project_assets: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub isolated_project_assets: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub partial_packages: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub unsupported_packages: BTreeSet<String>,
     pub failed_assets: usize,
 }
