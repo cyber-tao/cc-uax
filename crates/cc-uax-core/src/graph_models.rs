@@ -396,6 +396,17 @@ pub struct GraphPinEditorFlags {
     pub orphaned_pin: bool,
 }
 
+impl GraphPinEditorFlags {
+    pub(crate) fn is_empty(&self) -> bool {
+        !(self.hidden
+            || self.not_connectable
+            || self.default_value_read_only
+            || self.default_value_ignored
+            || self.advanced_view
+            || self.orphaned_pin)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserDefinedGraphPin {
     pub name: String,

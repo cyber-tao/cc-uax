@@ -1332,13 +1332,16 @@ fn graph_pin_from_pin(package: &Package, pin: &Pin) -> GraphPin {
             .persistent_guid
             .filter(|guid| !guid.is_zero())
             .map(|guid| guid.to_hex()),
-        editor_flags: pin.editor_flags.as_ref().map(|flags| GraphPinEditorFlags {
-            hidden: flags.hidden,
-            not_connectable: flags.not_connectable,
-            default_value_read_only: flags.default_value_read_only,
-            default_value_ignored: flags.default_value_ignored,
-            advanced_view: flags.advanced_view,
-            orphaned_pin: flags.orphaned_pin,
+        editor_flags: pin.editor_flags.as_ref().and_then(|flags| {
+            let mapped = GraphPinEditorFlags {
+                hidden: flags.hidden,
+                not_connectable: flags.not_connectable,
+                default_value_read_only: flags.default_value_read_only,
+                default_value_ignored: flags.default_value_ignored,
+                advanced_view: flags.advanced_view,
+                orphaned_pin: flags.orphaned_pin,
+            };
+            (!mapped.is_empty()).then_some(mapped)
         }),
     }
 }
