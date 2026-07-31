@@ -1,6 +1,6 @@
 use super::typed::{
-    array, integer, nested_properties, nested_property, object, object_ref_index,
-    object_ref_indices, object_ref_path, property, string, text,
+    array, integer, nested_property, object, object_ref_index, object_ref_indices, object_ref_path,
+    property, string, text,
 };
 use crate::graph_models::{PcgEdge, PcgGraph, PcgNode, PcgPin, PinDirection};
 use crate::model::{AssetExport, DecodedValue, KnownOpaque, KnownOpaqueKind, OpaqueByteRange};
@@ -201,7 +201,6 @@ fn build_node(
             settings_index: settings.and_then(object_ref_index),
             settings_path: settings.and_then(object_ref_path).map(str::to_owned),
             pins,
-            properties: node.properties.clone(),
         },
         unresolved_pin_references,
         edge_refs,
@@ -250,7 +249,6 @@ fn build_pin(
             status,
             tooltip,
             edge_indices: edge_indices.clone(),
-            properties: pin_properties.map(nested_properties).unwrap_or_default(),
         },
         edge_indices,
         missing_edges,

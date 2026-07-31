@@ -37,8 +37,6 @@ pub struct PcgNode {
     pub settings_path: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pins: Vec<PcgPin>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub properties: Vec<AssetProperty>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,8 +56,6 @@ pub struct PcgPin {
     pub tooltip: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edge_indices: Vec<i32>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub properties: Vec<AssetProperty>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,8 +107,6 @@ pub struct StateTreeState {
     pub enter_conditions: Vec<StateTreeCondition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transitions: Vec<StateTreeTransition>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub properties: Vec<AssetProperty>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -233,8 +227,6 @@ pub struct RigVmNode {
     pub pins: Vec<RigVmPin>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub orphaned_pins: Vec<RigVmPin>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub properties: Vec<AssetProperty>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -273,8 +265,6 @@ pub struct RigVmPin {
     pub sub_pins: Vec<RigVmPin>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub injections: Vec<RigVmInjection>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub properties: Vec<AssetProperty>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -289,8 +279,6 @@ pub struct RigVmInjection {
     pub output_pin_index: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node: Option<Box<RigVmNode>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub properties: Vec<AssetProperty>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

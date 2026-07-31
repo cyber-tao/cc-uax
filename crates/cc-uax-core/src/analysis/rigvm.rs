@@ -1,11 +1,10 @@
-use super::property_to_model;
 use crate::decode::rigvm::{is_rigvm_graph_class, is_rigvm_node_class};
 use crate::decode::{DecodeReport, DecodedExport};
 use crate::graph_models::{
     RigVmGraph, RigVmInjection, RigVmLinearColor, RigVmLink, RigVmNode, RigVmPin,
     RigVmPinDirection, RigVmVector2,
 };
-use crate::model::{AnalysisDiagnostic, AssetProperty, DiagnosticSeverity};
+use crate::model::{AnalysisDiagnostic, DiagnosticSeverity};
 use crate::property::{PropertyEntry, PropertyParseStatus};
 use crate::structured_value::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -221,7 +220,6 @@ fn node_from_export(
         color: color_property(export, "NodeColor"),
         pins,
         orphaned_pins,
-        properties: properties_to_model(export),
     }
 }
 
@@ -331,7 +329,6 @@ fn pin_from_index(
         index_in_category: integer_property(export, "IndexInCategory"),
         sub_pins,
         injections,
-        properties: properties_to_model(export),
     })
 }
 
@@ -422,7 +419,6 @@ fn injection_from_index(
         input_pin_index: object_index_property(injection_export, "InputPin"),
         output_pin_index: object_index_property(injection_export, "OutputPin"),
         node: injected_node,
-        properties: properties_to_model(injection_export),
     })
 }
 
@@ -431,16 +427,6 @@ fn properties_are_complete(export: &DecodedExport) -> bool {
         export.property_status,
         Some(PropertyParseStatus::Complete | PropertyParseStatus::Empty)
     )
-}
-
-fn properties_to_model(export: &DecodedExport) -> Vec<AssetProperty> {
-    export
-        .properties
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .map(property_to_model)
-        .collect()
 }
 
 fn property<'a>(export: &'a DecodedExport, name: &str) -> Option<&'a PropertyEntry> {

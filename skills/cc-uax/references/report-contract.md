@@ -14,6 +14,8 @@ Reports are **sparse**: empty and default-valued fields are omitted rather than 
 
 Pin `direction` and pin-type `container` render as plain strings (for example `"output"`, `"array"`); an out-of-range value renders as `{"unknown": <n>}`. Export byte placement (`object_flags`, `serial_offset`, `serial_size`, and the script-serialization range) is grouped under an optional `serialization` object emitted only in the `full` asset view; the focused `summary`/`logic`/`properties`/`references` views omit it.
 
+Typed graph nodes and pins (PCG, RigVM, StateTree) carry distilled semantic fields plus their stable `index`; they do not repeat the raw tagged-property block. Read a node's full properties from the matching `exports[]` entry by `index`. StateTree task/condition `node_properties`/`instance_properties` and transition data remain on the typed node because they are distilled from nested arrays, not a whole export.
+
 Counts describe the requested scope; they are not interchangeable. An indexed package is not necessarily semantically analyzed or complete.
 
 ## Output budgeting

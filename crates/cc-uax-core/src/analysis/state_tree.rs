@@ -178,7 +178,6 @@ fn build_state(state: &AssetExport) -> StateTreeState {
             .flatten()
             .map(build_transition)
             .collect(),
-        properties: state.properties.clone(),
     }
 }
 
