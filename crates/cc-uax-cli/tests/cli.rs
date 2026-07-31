@@ -39,7 +39,7 @@ fn asset_summary_uses_the_new_subcommand_and_typed_schema() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["schema_version"], 2);
     assert_eq!(report["view"], "summary");
     assert_eq!(report["status"], "complete");
     assert_eq!(report["summary"]["package_name"], "TestPkg");
