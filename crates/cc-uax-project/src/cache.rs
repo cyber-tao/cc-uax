@@ -1,5 +1,5 @@
 use crate::{AssetAnalysisSummary, ProjectLayout};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 const CACHE_NAMESPACE: &str = "cc-uax/projects";
 const CACHE_FILE_NAME: &str = "project-index-v2.sqlite";
 const CACHE_SCHEMA_VERSION: i64 = 2;
+// Cached analysis is only valid for the binary that produced it: a tool upgrade
+// can change decoded values without changing a file's mtime/size. Bind cache
+// validity to the crate version so a new release invalidates stale analysis.
+const CACHE_TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "policy", content = "path", rename_all = "snake_case")]
@@ -104,6 +108,34 @@ impl ProjectCache {
                 [],
             )
             .map_err(|error| format!("create cache table: {error}"))?;
+        connection
+            .execute(
+                "CREATE TABLE IF NOT EXISTS cache_meta (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )",
+                [],
+            )
+            .map_err(|error| format!("create cache meta table: {error}"))?;
+        let cached_tool_version: Option<String> = connection
+            .query_row(
+                "SELECT value FROM cache_meta WHERE key = 'tool_version'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("read cache tool version: {error}"))?;
+        if cached_tool_version.as_deref() != Some(CACHE_TOOL_VERSION) {
+            connection
+                .execute("DELETE FROM package_refs", [])
+                .map_err(|error| format!("reset cache for new tool version: {error}"))?;
+            connection
+                .execute(
+                    "INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('tool_version', ?1)",
+                    params![CACHE_TOOL_VERSION],
+                )
+                .map_err(|error| format!("record cache tool version: {error}"))?;
+        }
 
         let mut loaded = HashMap::new();
         {

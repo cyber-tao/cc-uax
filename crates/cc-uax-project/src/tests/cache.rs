@@ -49,6 +49,39 @@ fn incremental_store_upserts_changes_and_deletes_removed_entries() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// A tool upgrade can change decoded analysis for an unchanged file (same
+// mtime/size), so a cache written by a different tool version must be dropped.
+#[test]
+fn cache_is_invalidated_when_the_tool_version_changes() {
+    let root = temp_project("cache_toolver");
+    let path = root.join("cache/index.sqlite");
+
+    {
+        let mut cache = ProjectCache::open(&path).unwrap();
+        let mut current = HashMap::new();
+        current.insert("A".to_string(), cache_entry(1, 10, &["/Game/X"]));
+        assert!(cache.store(&current).unwrap());
+    }
+
+    // Simulate a cache produced by an older binary with different decoders.
+    {
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('tool_version', '0.0.0-old')",
+                [],
+            )
+            .unwrap();
+    }
+
+    // Re-opening with the current tool version drops the stale analysis rows.
+    let cache = ProjectCache::open(&path).unwrap();
+    assert!(cache.lookup("A", 1, 10).is_none());
+    drop(cache);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn disabled_and_custom_cache_policies_are_deterministic() {
     let root = temp_project("cache");
