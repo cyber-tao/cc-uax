@@ -46,14 +46,33 @@ pub(crate) fn render_within_budget<T: Serialize>(
 
     let target = budget.saturating_sub(OUTPUT_BLOCK_RESERVE);
     let mut elided: Vec<Value> = Vec::new();
-    let steps: [ElisionTier; 5] = [
+    let detail_steps: [ElisionTier; 3] = [
         ("property_values", tier_property_values),
         ("pins", tier_pins),
         ("graph_elements", tier_graph_elements),
+    ];
+    for (label, step) in detail_steps {
+        if measure(&root, compact) <= target {
+            break;
+        }
+        let dropped = step(&mut root);
+        if dropped > 0 {
+            elided.push(json!({ "section": label, "dropped_elements": dropped }));
+        }
+    }
+    // Budget-aware: keep as many leading section elements as fit before the next
+    // tier drops whole sections, so a tight budget still returns leading detail.
+    if measure(&root, compact) > target {
+        let dropped = tier_truncate_sections(&mut root, target, compact);
+        if dropped > 0 {
+            elided.push(json!({ "section": "section_truncation", "dropped_elements": dropped }));
+        }
+    }
+    let tail_steps: [ElisionTier; 2] = [
         ("sections", tier_sections),
         ("reachability_sets", tier_reachability_sets),
     ];
-    for (label, step) in steps {
+    for (label, step) in tail_steps {
         if measure(&root, compact) <= target {
             break;
         }
@@ -163,25 +182,132 @@ fn tier_graph_elements(value: &mut Value) -> usize {
     elide_keyed_collections(value, &["nodes", "states", "edges", "links"], false)
 }
 
+/// Top-level detail sections, in priority order, that the truncation and
+/// wholesale-elision tiers operate on. The evidence skeleton
+/// (status/coverage/capabilities/diagnostics/known_opaque/reachability) is not
+/// listed here and is therefore always preserved.
+const DETAIL_SECTION_KEYS: [&str; 10] = [
+    "exports",
+    "graphs",
+    "rigvm_graphs",
+    "pcg_graphs",
+    "state_tree_graphs",
+    "inventory",
+    "focused",
+    "forward",
+    "reverse",
+    "ownership_closure",
+];
+
 /// Tier 4 (skeleton): drop whole top-level detail sections, keeping the evidence
 /// skeleton (status/coverage/capabilities/diagnostics/known_opaque/reachability).
 fn tier_sections(value: &mut Value) -> usize {
-    elide_keyed_collections(
-        value,
-        &[
-            "exports",
-            "graphs",
-            "rigvm_graphs",
-            "pcg_graphs",
-            "state_tree_graphs",
-            "inventory",
-            "focused",
-            "forward",
-            "reverse",
-            "ownership_closure",
-        ],
-        true,
-    )
+    elide_keyed_collections(value, &DETAIL_SECTION_KEYS, true)
+}
+
+/// Number of elements in a section, whether it is a JSON array or object.
+fn section_len(section: &Value) -> usize {
+    match section {
+        Value::Array(items) => items.len(),
+        Value::Object(entries) => entries.len(),
+        _ => 0,
+    }
+}
+
+/// Truncate a section to its first `cap` elements, appending an `{"@elided": n}`
+/// marker (a trailing array element, or an `@elided` key for an object) that
+/// records the dropped count. Returns `None` when the section already fits `cap`.
+fn truncate_section(section: &Value, cap: usize) -> Option<Value> {
+    match section {
+        Value::Array(items) if items.len() > cap => {
+            let mut kept: Vec<Value> = items.iter().take(cap).cloned().collect();
+            kept.push(json!({ "@elided": items.len() - cap }));
+            Some(Value::Array(kept))
+        }
+        Value::Object(entries) if entries.len() > cap => {
+            let mut kept = serde_json::Map::new();
+            for (key, child) in entries.iter().take(cap) {
+                kept.insert(key.clone(), child.clone());
+            }
+            kept.insert("@elided".to_string(), json!(entries.len() - cap));
+            Some(Value::Object(kept))
+        }
+        _ => None,
+    }
+}
+
+fn restore_sections(root: &mut Value, originals: &[(String, Value)]) {
+    if let Value::Object(map) = root {
+        for (key, original) in originals {
+            map.insert(key.clone(), original.clone());
+        }
+    }
+}
+
+fn apply_section_cap(root: &mut Value, originals: &[(String, Value)], cap: usize) -> usize {
+    let mut dropped = 0;
+    if let Value::Object(map) = root {
+        for (key, original) in originals {
+            if let Some(truncated) = truncate_section(original, cap) {
+                dropped += section_len(original) - cap;
+                map.insert(key.clone(), truncated);
+            }
+        }
+    }
+    dropped
+}
+
+/// Budget-aware truncation tier: keep as many leading elements of the large
+/// top-level sections as fit within `target`, appending `{"@elided": n}` markers.
+/// A binary search finds the largest uniform per-section element cap whose render
+/// fits, so a tight budget returns leading structural detail instead of nothing.
+/// Sections that cannot fit even at cap 0 are left for the wholesale `sections`
+/// tier. Returns the number of dropped elements.
+fn tier_truncate_sections(root: &mut Value, target: usize, compact: bool) -> usize {
+    let Value::Object(map) = root else {
+        return 0;
+    };
+    let mut originals: Vec<(String, Value)> = Vec::new();
+    for key in DETAIL_SECTION_KEYS {
+        if let Some(child) = map.get(key)
+            && section_len(child) > 1
+            && !is_elided(child)
+        {
+            originals.push((key.to_string(), child.clone()));
+        }
+    }
+    if originals.is_empty() {
+        return 0;
+    }
+    let max_len = originals
+        .iter()
+        .map(|(_, section)| section_len(section))
+        .max()
+        .unwrap_or(0);
+
+    // Largest cap in [0, max_len] whose render fits `target`.
+    let mut lo = 0usize;
+    let mut hi = max_len;
+    let mut best: Option<usize> = None;
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        restore_sections(root, &originals);
+        apply_section_cap(root, &originals, mid);
+        if measure(root, compact) <= target {
+            best = Some(mid);
+            lo = mid + 1;
+        } else if mid == 0 {
+            break;
+        } else {
+            hi = mid - 1;
+        }
+    }
+
+    restore_sections(root, &originals);
+    match best {
+        Some(cap) => apply_section_cap(root, &originals, cap),
+        None => 0,
+    }
 }
 
 /// Tier 5 (deepest): drop the large project `reachability` package lists, keeping
@@ -336,5 +462,58 @@ mod tests {
         assert_eq!(parsed["stats"]["indexed"], 3);
         // Skeleton preserved; large sections elided with counts.
         assert!(parsed["output"]["truncated"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn moderate_budget_truncates_sections_keeping_leading_elements() {
+        let exports: Vec<Value> = (0..500)
+            .map(|i| json!({ "index": i, "name": format!("Export_{i}"), "class": "SomeClass" }))
+            .collect();
+        let report = json!({
+            "schema_version": 3,
+            "status": "complete",
+            "summary": { "package_name": "Big" },
+            "coverage": { "exports_total": 500 },
+            "exports": exports,
+        });
+        let budget = 3000;
+        let text = render_within_budget(&report, budget, true).unwrap();
+        assert!(
+            text.len() <= budget,
+            "emitted {} exceeds budget {budget}",
+            text.len()
+        );
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        // Skeleton is preserved.
+        assert_eq!(parsed["status"], "complete");
+        assert_eq!(parsed["coverage"]["exports_total"], 500);
+        // Exports remain an array of leading elements plus a trailing marker,
+        // rather than being dropped wholesale.
+        let kept = parsed["exports"].as_array().unwrap();
+        assert!(
+            kept.len() >= 3,
+            "expected leading exports retained, got {}",
+            kept.len()
+        );
+        assert_eq!(kept[0]["index"], 0);
+        assert_eq!(kept[1]["index"], 1);
+        assert!(
+            kept.last().unwrap()["@elided"].is_number(),
+            "expected a trailing @elided marker"
+        );
+        assert_eq!(parsed["output"]["truncated"], true);
+        assert!(
+            parsed["output"]["elided"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["section"] == "section_truncation")
+        );
+        // The budget is used well rather than collapsing to the skeleton floor.
+        assert!(
+            text.len() >= budget / 2,
+            "truncation under-filled the budget: {} of {budget}",
+            text.len()
+        );
     }
 }
