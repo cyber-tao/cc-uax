@@ -51,7 +51,7 @@ Important public types:
 
 Every rendered report has:
 
-- `schema_version` (currently `1`, defined as `ASSET_ANALYSIS_SCHEMA_VERSION` in `cc-uax-core/src/model.rs`);
+- `schema_version` (asset reports `2` via `ASSET_ANALYSIS_SCHEMA_VERSION` in `cc-uax-core/src/model.rs`; project reports `3` via `PROJECT_REPORT_SCHEMA_VERSION` in `cc-uax-cli/src/lib.rs`);
 - `status`: `complete`, `partial`, or `unsupported`;
 - machine-readable `coverage`;
 - capability evidence and limitations;
