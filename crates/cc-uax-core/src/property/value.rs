@@ -6,6 +6,7 @@ use super::{
 use crate::name::NameMap;
 use crate::reader::Reader;
 use crate::structured_value::{Value, json};
+use crate::version::ue5;
 use anyhow::{Result, bail};
 
 pub(crate) fn parse_value(
@@ -233,18 +234,30 @@ fn parse_soft_object(r: &mut Reader, ctx: &ParseCtx) -> Result<Value> {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("soft object path index out of range: {index}"));
     }
-    read_soft_object_path(r, ctx.names)
+    read_soft_object_path(r, ctx.names, ctx.file_version_ue5)
 }
 
-pub(crate) fn read_soft_object_path(r: &mut Reader, names: &NameMap) -> Result<Value> {
-    let package_name = names.resolve_raw(r.read_raw_name()?);
-    let asset_name = names.resolve_raw(r.read_raw_name()?);
-    let sub_path = r.read_fstring()?;
-    let asset_path = if asset_name.is_empty() || asset_name == "None" {
-        package_name
+/// Decode an inline `FSoftObjectPath` (`SerializePathWithoutFixup`). Before
+/// `FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES` the path is a single FName holding
+/// the whole asset path; from that version on it is an `FTopLevelAssetPath`
+/// (package name, asset name) pair.
+pub(crate) fn read_soft_object_path(
+    r: &mut Reader,
+    names: &NameMap,
+    file_version_ue5: i32,
+) -> Result<Value> {
+    let asset_path = if file_version_ue5 >= ue5::FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES {
+        let package_name = names.resolve_raw(r.read_raw_name()?);
+        let asset_name = names.resolve_raw(r.read_raw_name()?);
+        if asset_name.is_empty() || asset_name == "None" {
+            package_name
+        } else {
+            format!("{package_name}.{asset_name}")
+        }
     } else {
-        format!("{package_name}.{asset_name}")
+        names.resolve_raw(r.read_raw_name()?)
     };
+    let sub_path = r.read_fstring()?;
     if sub_path.is_empty() {
         Ok(json!({ "asset_path": asset_path }))
     } else {

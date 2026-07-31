@@ -141,6 +141,57 @@ fn soft_object_property_resolves_list_index() {
     assert_eq!(entries[0].value["asset_path"].as_str(), Some("/Game/B.B"));
 }
 
+// FSoftObjectPath::SerializePathWithoutFixup: below FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES
+// an inline soft path is a single FName AssetPathName, not an FTopLevelAssetPath pair.
+// Test read_soft_object_path directly so the soft-path layout is isolated from the
+// property-tag format (both are version-gated on the same FileVersionUE5).
+#[test]
+fn read_soft_object_path_pre_1007_is_single_fname() {
+    let names = NameMap {
+        names: vec!["None".to_string(), "/Game/Curves/Foo.Foo".to_string()],
+    };
+    let mut data = Vec::new();
+    push_raw_name(&mut data, 1); // AssetPathName (single FName)
+    push_i32(&mut data, 0); // empty SubPathString
+    assert_eq!(data.len(), 12);
+
+    let mut r = Reader::new(&data);
+    let value = crate::property::read_soft_object_path(
+        &mut r,
+        &names,
+        crate::version::ue5::LARGE_WORLD_COORDINATES, // 1004 < 1007
+    )
+    .unwrap();
+    assert_eq!(value["asset_path"].as_str(), Some("/Game/Curves/Foo.Foo"));
+    assert_eq!(r.pos(), data.len() as u64);
+}
+
+// At and above the threshold the inline soft path is an FTopLevelAssetPath pair.
+#[test]
+fn read_soft_object_path_from_1007_is_top_level_asset_path_pair() {
+    let names = NameMap {
+        names: vec![
+            "None".to_string(),
+            "/Game/Curves".to_string(), // PackageName
+            "Foo".to_string(),          // AssetName
+        ],
+    };
+    let mut data = Vec::new();
+    push_raw_name(&mut data, 1); // PackageName
+    push_raw_name(&mut data, 2); // AssetName
+    push_i32(&mut data, 0); // empty SubPathString
+
+    let mut r = Reader::new(&data);
+    let value = crate::property::read_soft_object_path(
+        &mut r,
+        &names,
+        crate::version::ue5::FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES,
+    )
+    .unwrap();
+    assert_eq!(value["asset_path"].as_str(), Some("/Game/Curves.Foo"));
+    assert_eq!(r.pos(), data.len() as u64);
+}
+
 #[test]
 fn lazy_object_property_decodes_guid() {
     // FLinkerSave writes a LazyObjectProperty value as the 16-byte FUniqueObjectGuid,

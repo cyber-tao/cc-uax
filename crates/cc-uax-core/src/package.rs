@@ -57,6 +57,7 @@ impl Package {
             &names,
             summary.soft_object_paths_offset,
             summary.soft_object_paths_count,
+            ue5,
         );
 
         let (soft_package_references, soft_package_reference_error) = parse_soft_package_references(
@@ -139,6 +140,7 @@ fn parse_soft_object_path_table(
     names: &NameMap,
     offset: i32,
     count: i32,
+    file_version_ue5: i32,
 ) -> (Vec<Value>, Option<String>) {
     let mut out = Vec::new();
     if count < 0 {
@@ -165,7 +167,7 @@ fn parse_soft_object_path_table(
         );
     }
     for i in 0..count {
-        match read_soft_object_path(r, names) {
+        match read_soft_object_path(r, names, file_version_ue5) {
             Ok(v) => out.push(v),
             Err(err) => {
                 return (
