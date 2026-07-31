@@ -4,11 +4,13 @@ Read this reference when interpreting `asset` or `project` JSON.
 
 ## Completion fields
 
-- `schema_version`: Version of the report contract, independent from the CLI version.
+- `schema_version`: Version of the report contract, independent from the CLI version. Asset reports use schema version `2`; project reports use schema version `3`.
 - `status`: `complete`, `partial`, or `unsupported` for the requested analysis scope.
 - Asset reports expose `coverage` counters for exports, properties, EdGraph, RigVM, PCG, StateTree, opaque regions, and diagnostics within the requested view.
-- Project reports use schema version `2` and expose sanitized `layout`/`mounts`, filesystem/index accounting in `stats` (`discovered`, `indexed`, `failed`, `skipped`), generated runtime/resource `reachability`, and semantic accounting in aggregate `analysis` (`assets`, `complete_assets`, `partial_assets`, `unsupported_assets`, and summed `coverage`).
+- Project reports use schema version `3` and expose sanitized `layout`/`mounts`, filesystem/index accounting in `stats` (`discovered`, `indexed`, `failed`, `skipped`), generated runtime/resource `reachability`, and semantic accounting in aggregate `analysis` (`assets`, `complete_assets`, `partial_assets`, `unsupported_assets`, and summed `coverage`).
 - Each project inventory item retains its own compact analysis status, coverage, capabilities, graph counts, diagnostics, and opaque identities. Focused packages additionally appear under `focused` with their full typed analysis.
+
+Reports are **sparse**: empty and default-valued fields are omitted rather than emitted as `null`, `[]`, `false`, `""`, `"None"`, or `0`. A missing field therefore means the default value (no value, empty collection, `false`, or a zero count) — read it as absent, not as an error. `coverage` keeps its non-zero counters and always retains `bytes_total`, `exports_total`, and `exports_analyzed`; zero-valued counters are omitted.
 
 Counts describe the requested scope; they are not interchangeable. An indexed package is not necessarily semantically analyzed or complete.
 

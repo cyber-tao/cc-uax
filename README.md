@@ -120,18 +120,18 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "complete",
   "view": "full",
   "summary": { /* package name, class, file version, … */ },
   "coverage": {
-    /* requested, decoded, opaque, unsupported, and failed evidence */
+    /* non-zero requested/decoded/opaque/failed counters (zero counters omitted) */
   },
   "capabilities": [
     /* capability-specific evidence and limitations */
   ],
-  "diagnostics": [],
-  "exports": [], "graphs": [], "references": {}, "known_opaque": []
+  "exports": [ /* … */ ], "graphs": [ /* … */ ]
+  /* Sparse output: empty or default fields (null, [], false, "", "None", 0) are omitted. */
 }
 ```
 
@@ -139,7 +139,7 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
 
 ```jsonc
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "complete",
   "layout": {}, "mounts": [], "entry_points": {},
   "reachability": {
@@ -149,10 +149,9 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
   "analysis": {
     /* aggregate coverage, capabilities, and per-asset summaries */
   },
-  "focused": [
-    /* full AssetAnalysis for packages matching --focus */
-  ],
-  "failures": [], "diagnostics": []
+  "inventory": [ /* one compact analysis per package */ ],
+  "focused": { /* full AssetAnalysis for packages matching --focus */ }
+  /* Sparse output: empty adjacency, failures, diagnostics, and reachability sets are omitted. */
 }
 ```
 

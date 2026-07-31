@@ -120,18 +120,18 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "complete",
   "view": "full",
   "summary": { /* 包名、类、文件版本…… */ },
   "coverage": {
-    /* 请求、已解码、opaque、不支持和失败的证据 */
+    /* 非零的请求/已解码/opaque/失败计数（零值计数被省略） */
   },
   "capabilities": [
     /* 各能力的证据与限制 */
   ],
-  "diagnostics": [],
-  "exports": [], "graphs": [], "references": {}, "known_opaque": []
+  "exports": [ /* … */ ], "graphs": [ /* … */ ]
+  /* 稀疏输出：空值或默认字段（null、[]、false、""、"None"、0）被省略。 */
 }
 ```
 
@@ -139,7 +139,7 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 ```jsonc
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "complete",
   "layout": {}, "mounts": [], "entry_points": {},
   "reachability": {
@@ -149,10 +149,9 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
   "analysis": {
     /* 聚合 coverage、capabilities 及逐资产摘要 */
   },
-  "focused": [
-    /* 匹配 --focus 的完整 AssetAnalysis */
-  ],
-  "failures": [], "diagnostics": []
+  "inventory": [ /* 每个包一条紧凑分析 */ ],
+  "focused": { /* 匹配 --focus 的完整 AssetAnalysis */ }
+  /* 稀疏输出：空的邻接、failures、diagnostics 和 reachability 集合被省略。 */
 }
 ```
 
