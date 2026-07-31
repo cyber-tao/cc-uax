@@ -1239,13 +1239,26 @@ fn graph_from_exports(
         }
     }
 
+    // Intra-graph connectivity is fully carried by `edges`; keep only cross-graph
+    // and unresolved targets on each pin's `linked_to` so it is not duplicated.
+    let intra_graph_pins: HashSet<(i32, Guid)> = nodes
+        .iter()
+        .filter_map(|export| {
+            export
+                .pins
+                .as_ref()
+                .map(|pins| (export.identity.index, pins))
+        })
+        .flat_map(|(index, pins)| pins.iter().map(move |pin| (index, pin.pin_id)))
+        .collect();
+
     LogicGraph {
         index: graph_index,
         name: graph_name,
         full_name: report.package.resolve_full_name(graph_index),
         nodes: nodes
             .iter()
-            .map(|export| graph_node_from_export(report.package, export))
+            .map(|export| graph_node_from_export(report.package, export, &intra_graph_pins))
             .collect(),
         edges,
         excluded_cross_graph_links: cross_graph_links.len(),
@@ -1253,7 +1266,11 @@ fn graph_from_exports(
     }
 }
 
-fn graph_node_from_export(package: &Package, export: &DecodedExport) -> GraphNode {
+fn graph_node_from_export(
+    package: &Package,
+    export: &DecodedExport,
+    intra_graph_pins: &HashSet<(i32, Guid)>,
+) -> GraphNode {
     GraphNode {
         index: export.identity.index,
         name: export.identity.name.clone(),
@@ -1267,7 +1284,7 @@ fn graph_node_from_export(package: &Package, export: &DecodedExport) -> GraphNod
             .as_deref()
             .unwrap_or_default()
             .iter()
-            .map(|pin| graph_pin_from_pin(package, pin))
+            .map(|pin| graph_pin_from_pin(package, pin, intra_graph_pins))
             .collect(),
         user_defined_pins: export
             .user_defined_pins
@@ -1295,7 +1312,11 @@ fn ftext_is_empty(value: &Value) -> bool {
     }
 }
 
-fn graph_pin_from_pin(package: &Package, pin: &Pin) -> GraphPin {
+fn graph_pin_from_pin(
+    package: &Package,
+    pin: &Pin,
+    intra_graph_pins: &HashSet<(i32, Guid)>,
+) -> GraphPin {
     let pin_type = PinType {
         category: pin.category.clone(),
         sub_category: pin.sub_category.clone(),
@@ -1328,7 +1349,15 @@ fn graph_pin_from_pin(package: &Package, pin: &Pin) -> GraphPin {
         default_object: (pin.default_object != 0)
             .then(|| package.resolve_object_ref(pin.default_object)),
         default_text: Some(pin.default_text.clone()).filter(|value| !ftext_is_empty(value)),
-        linked_to: pin.linked_to.iter().map(pin_reference_to_model).collect(),
+        // Only cross-graph and unresolved links are kept; intra-graph links are in `edges`.
+        linked_to: pin
+            .linked_to
+            .iter()
+            .filter(|reference| {
+                !intra_graph_pins.contains(&(reference.node_index, reference.pin_id))
+            })
+            .map(pin_reference_to_model)
+            .collect(),
         sub_pins: pin.sub_pins.iter().map(pin_reference_to_model).collect(),
         parent_pin: pin.parent_pin.as_ref().map(pin_reference_to_model),
         reference_pass_through: pin

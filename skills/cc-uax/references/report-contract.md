@@ -26,7 +26,7 @@ Counts describe the requested scope; they are not interchangeable. An indexed pa
 
 Use package path plus adapter and graph/model identity as the namespace. Within it, use stable node/pin/state identifiers and explicit edges. Display names are labels, not identities.
 
-K2/EdGraph edges have `kind=exec|data`. A gameplay path normally needs ordered exec edges plus the data edges/defaults that determine branch inputs, call parameters, spawn classes, or object targets.
+K2/EdGraph edges have `kind=exec|data`. A gameplay path normally needs ordered exec edges plus the data edges/defaults that determine branch inputs, call parameters, spawn classes, or object targets. Intra-graph connectivity is carried once by the graph's `edges`; a pin's `linked_to` retains only cross-graph and unresolved connections (those a per-graph edge cannot express), so use `edges` for in-graph flow and `linked_to` only for links that leave the graph.
 
 RigVM links store both source and target pin paths. Count each canonical model link once. StateTree transitions must retain source, target, trigger, conditions, and task ownership. PCG edges must retain source/target node and pin identities.
 

@@ -721,6 +721,13 @@ fn logic_graphs_group_by_outer_and_never_emit_cross_graph_edges() {
         Some(crate::DecodedValue::String(ref value)) if value == "Amount"
     ));
     assert_eq!(typed_graphs[0].excluded_cross_graph_links, 1);
+    // Intra-graph connectivity lives in `edges`; a pin's `linked_to` keeps only
+    // the cross-graph link so the same connection is not duplicated.
+    let node_a_exec = &typed_graphs[0].nodes[0].pins[0];
+    assert_eq!(node_a_exec.linked_to.len(), 1);
+    assert_eq!(node_a_exec.linked_to[0].node_index, 5);
+    assert_eq!(node_a_exec.linked_to[0].pin_id, cross_id.to_hex());
+    assert!(typed_graphs[0].nodes[1].pins[0].linked_to.is_empty());
     let typed_round_trip: Vec<crate::LogicGraph> =
         serde_json_crate::from_str(&serde_json_crate::to_string(&typed_graphs).unwrap()).unwrap();
     assert_eq!(typed_round_trip, typed_graphs);
