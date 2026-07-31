@@ -715,6 +715,21 @@ fn logic_graphs_group_by_outer_and_never_emit_cross_graph_edges() {
     let typed_round_trip: Vec<crate::LogicGraph> =
         serde_json_crate::from_str(&serde_json_crate::to_string(&typed_graphs).unwrap()).unwrap();
     assert_eq!(typed_round_trip, typed_graphs);
+
+    // Sparse output: empty/default fields must not be emitted as noise.
+    let serialized = serde_json_crate::to_string(&typed_graphs).unwrap();
+    for noise in [
+        "\"tooltip\":\"\"",
+        "\"is_const\":false",
+        "\"is_reference\":false",
+        "\"linked_to\":[]",
+        "\"sub_pins\":[]",
+    ] {
+        assert!(
+            !serialized.contains(noise),
+            "unexpected noise field {noise}"
+        );
+    }
 }
 
 fn push_minimal_owned_pin(data: &mut Vec<u8>) {
