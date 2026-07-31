@@ -1,3 +1,4 @@
+mod anim;
 mod gameplay;
 mod graph;
 mod material;
@@ -33,8 +34,10 @@ pub(crate) fn is_tagged_fallback_struct(name: &str) -> bool {
             // carries the native flag), so both are tagged-property payloads.
             | "GameplayEffectModifierMagnitude"
             | "LandscapeLayerComponentData"
-            // FVMExternalFunctionBindingInfo::Serialize calls SerializeTaggedProperties.
+            // FVMExternalFunctionBindingInfo::Serialize and FAnimSyncMarker::Serialize
+            // both call SerializeTaggedProperties, so their payload is tagged properties.
             | "VMExternalFunctionBindingInfo"
+            | "AnimSyncMarker"
             | "NiagaraVariant"
             | "StateTreeStateLink"
             | "MetaSoundFrontendGraphComment"
@@ -54,6 +57,9 @@ pub(crate) fn parse_native_struct(
     ctx: &ParseCtx,
     value_end: u64,
 ) -> Result<Option<Value>> {
+    if let Some(v) = anim::parse_anim_struct(r, name, ctx)? {
+        return Ok(Some(v));
+    }
     if let Some(v) = math::parse_math_struct(r, name)? {
         return Ok(Some(v));
     }

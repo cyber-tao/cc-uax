@@ -13,7 +13,7 @@ use anyhow::{Result, bail};
 
 pub use tag::TypeName;
 pub(crate) use text::parse_text;
-pub(crate) use value::read_soft_object_path;
+pub(crate) use value::{parse_soft_object, read_soft_object_path};
 
 pub(crate) const PREVIEW_MAX: usize = 64;
 const MAX_DYNAMIC_COUNT: i32 = 1_000_000;

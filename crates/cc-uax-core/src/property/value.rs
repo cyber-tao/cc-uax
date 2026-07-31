@@ -218,10 +218,10 @@ fn parse_struct(
     Ok(json!({ "@struct": struct_name, "properties": entries_to_values(&nested) }))
 }
 
-/// Structs that declare `WithSerializer` (so their property tag carries the
-/// `HasBinaryOrNativeSerialize` flag) but whose `Serialize` returns `false` to
-/// only register a custom version — their payload is still tagged properties.
-fn parse_soft_object(r: &mut Reader, ctx: &ParseCtx) -> Result<Value> {
+/// Decode an `FSoftObjectPath` value. When the package carries a soft-object-path
+/// list the reference serializes as an int32 index into that list; otherwise the
+/// path is written inline (see [`read_soft_object_path`]).
+pub(crate) fn parse_soft_object(r: &mut Reader, ctx: &ParseCtx) -> Result<Value> {
     // When the package has a soft object path list, soft references serialize as
     // an int32 index into that list; otherwise the path is serialized inline.
     if !ctx.soft_object_paths.is_empty() {

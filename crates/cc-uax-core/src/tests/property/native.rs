@@ -1875,3 +1875,147 @@ fn cloth_tether_data_decodes_batches() {
         Some(27.47357177734375)
     );
 }
+
+#[test]
+fn native_struct_animation_attribute_identifier_decodes_inline_path() {
+    let names = NameMap {
+        names: vec![
+            "Identifier".to_string(),                   // 0 property name
+            "StructProperty".to_string(),               // 1
+            "AnimationAttributeIdentifier".to_string(), // 2 struct type
+            "MyAttribute".to_string(),                  // 3 Name
+            "spine_01".to_string(),                     // 4 BoneName
+            "None".to_string(),                         // 5 terminator
+            "/Script/Engine".to_string(),               // 6 ScriptStructPath package
+            "Vector".to_string(),                       // 7 ScriptStructPath asset
+        ],
+    };
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 3); // Name
+    push_raw_name(&mut value, 4); // BoneName
+    push_i32(&mut value, 7); // BoneIndex
+    push_raw_name(&mut value, 6); // ScriptStructPath package name
+    push_raw_name(&mut value, 7); // ScriptStructPath asset name
+    push_fstring(&mut value, ""); // ScriptStructPath sub-path (empty)
+    let d = build_struct_property(2, 5, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["name"].as_str(), Some("MyAttribute"));
+    assert_eq!(v["bone_name"].as_str(), Some("spine_01"));
+    assert_eq!(v["bone_index"].as_i64(), Some(7));
+    assert_eq!(
+        v["script_struct_path"]["asset_path"].as_str(),
+        Some("/Script/Engine.Vector")
+    );
+}
+
+#[test]
+fn native_struct_animation_attribute_identifier_uses_soft_object_path_list() {
+    let names = NameMap {
+        names: vec![
+            "Identifier".to_string(),                   // 0 property name
+            "StructProperty".to_string(),               // 1
+            "AnimationAttributeIdentifier".to_string(), // 2 struct type
+            "MyAttribute".to_string(),                  // 3 Name
+            "spine_01".to_string(),                     // 4 BoneName
+            "None".to_string(),                         // 5 terminator
+        ],
+    };
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 3); // Name
+    push_raw_name(&mut value, 4); // BoneName
+    push_i32(&mut value, 2); // BoneIndex
+    push_i32(&mut value, 0); // ScriptStructPath = index 0 into the soft-object-path list
+    let d = build_struct_property(2, 5, &value);
+
+    let soft_paths =
+        vec![crate::structured_value::json!({ "asset_path": "/Script/Engine.Transform" })];
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &soft_paths,
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["bone_index"].as_i64(), Some(2));
+    assert_eq!(
+        v["script_struct_path"]["asset_path"].as_str(),
+        Some("/Script/Engine.Transform")
+    );
+}
+
+#[test]
+fn native_struct_anim_sync_marker_falls_back_to_tagged_properties() {
+    let names = NameMap {
+        names: vec![
+            "AuthoredSyncMarkers".to_string(), // 0 property name
+            "StructProperty".to_string(),      // 1
+            "AnimSyncMarker".to_string(),      // 2 struct type
+            "MarkerName".to_string(),          // 3
+            "NameProperty".to_string(),        // 4
+            "Footstep_L".to_string(),          // 5 MarkerName value
+            "Time".to_string(),                // 6
+            "FloatProperty".to_string(),       // 7
+            "None".to_string(),                // 8
+        ],
+    };
+    // FAnimSyncMarker::Serialize calls SerializeTaggedProperties, so the payload
+    // is a tagged-property block (MarkerName, Time) ending in a None tag.
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 3); // MarkerName
+    push_raw_name(&mut value, 4); // NameProperty
+    push_i32(&mut value, 0); // type name inner param count
+    push_i32(&mut value, 8); // size
+    value.push(0); // flags
+    push_raw_name(&mut value, 5); // "Footstep_L"
+    push_raw_name(&mut value, 6); // Time
+    push_raw_name(&mut value, 7); // FloatProperty
+    push_i32(&mut value, 0); // type name inner param count
+    push_i32(&mut value, 4); // size
+    value.push(0); // flags
+    push_f32(&mut value, 0.5);
+    push_raw_name(&mut value, 8); // inner None
+    let d = build_struct_property(2, 8, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["@struct"].as_str(), Some("AnimSyncMarker"));
+    let props = v["properties"].as_array().unwrap();
+    assert_eq!(props.len(), 2);
+    assert_eq!(props[0]["name"].as_str(), Some("MarkerName"));
+    assert_eq!(props[0]["value"].as_str(), Some("Footstep_L"));
+    assert_eq!(props[1]["name"].as_str(), Some("Time"));
+    assert_eq!(props[1]["value"].as_f64(), Some(0.5));
+}
