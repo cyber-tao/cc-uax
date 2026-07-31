@@ -157,25 +157,36 @@ impl ProjectCache {
             .connection
             .transaction()
             .map_err(|error| format!("start cache transaction: {error}"))?;
-        transaction
-            .execute("DELETE FROM package_refs", [])
-            .map_err(|error| format!("clear cache entries: {error}"))?;
         {
-            let mut statement = transaction
+            let mut delete = transaction
+                .prepare("DELETE FROM package_refs WHERE file_path = ?1")
+                .map_err(|error| format!("prepare cache delete: {error}"))?;
+            for path in self.loaded.keys() {
+                if !current.contains_key(path) {
+                    delete
+                        .execute(params![path])
+                        .map_err(|error| format!("delete cache entry for {path}: {error}"))?;
+                }
+            }
+            let mut upsert = transaction
                 .prepare(
-                    "INSERT INTO package_refs
+                    "INSERT OR REPLACE INTO package_refs
                      (file_path, mtime, size, parse_ok, refs, analysis, parse_error)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 )
                 .map_err(|error| format!("prepare cache store: {error}"))?;
             for (path, entry) in current {
+                // Only rewrite rows that are new or actually changed.
+                if self.loaded.get(path) == Some(entry) {
+                    continue;
+                }
                 let analysis = entry
                     .analysis
                     .as_ref()
                     .map(serde_json::to_string)
                     .transpose()
                     .map_err(|error| format!("encode cache analysis for {path}: {error}"))?;
-                statement
+                upsert
                     .execute(params![
                         path,
                         entry.mtime,
