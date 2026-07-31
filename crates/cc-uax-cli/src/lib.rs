@@ -16,7 +16,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-const PROJECT_REPORT_SCHEMA_VERSION: u32 = 3;
+const PROJECT_REPORT_SCHEMA_VERSION: u32 = 4;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {

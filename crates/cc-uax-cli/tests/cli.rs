@@ -39,7 +39,7 @@ fn asset_summary_uses_the_new_subcommand_and_typed_schema() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], 2);
+    assert_eq!(report["schema_version"], 3);
     assert_eq!(report["view"], "summary");
     assert_eq!(report["status"], "complete");
     assert_eq!(report["summary"]["package_name"], "TestPkg");
@@ -59,7 +59,7 @@ fn strict_project_scan_emits_a_partial_report_and_fails() {
 
     assert_eq!(output.status.code(), Some(2));
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], 3);
+    assert_eq!(report["schema_version"], 4);
     assert_eq!(report["status"], "partial");
     assert_eq!(report["layout"]["project_root"], ".");
     assert_eq!(report["layout"]["content_root"], "Content");

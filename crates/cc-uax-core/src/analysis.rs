@@ -80,10 +80,11 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         Vec::new()
     };
     let mut known_opaque = collect_known_opaque(&report, wants_properties);
+    let include_serialization = matches!(view, AssetView::Full);
     let exports = report
         .exports
         .iter()
-        .map(|export| export_to_model(package, export))
+        .map(|export| export_to_model(package, export, include_serialization))
         .collect::<Vec<_>>();
     let pcg_adapter = build_pcg_graphs(if wants_logic { &exports } else { &[] });
     let state_tree_adapter = build_state_tree_graphs(if wants_logic { &exports } else { &[] });
@@ -811,7 +812,11 @@ fn imports_to_model(package: &Package) -> Vec<AssetImport> {
         .collect()
 }
 
-fn export_to_model(package: &Package, export: &DecodedExport) -> AssetExport {
+fn export_to_model(
+    package: &Package,
+    export: &DecodedExport,
+    include_serialization: bool,
+) -> AssetExport {
     let raw = package
         .exports
         .get((export.identity.index - 1).max(0) as usize);
@@ -830,15 +835,17 @@ fn export_to_model(package: &Package, export: &DecodedExport) -> AssetExport {
         outer_name: package.resolve_full_name(outer_index),
         full_name: package.resolve_full_name(export.identity.index),
         is_asset: export.identity.is_asset,
-        object_flags: raw.map_or(0, |raw| raw.object_flags),
-        serial_offset: raw.map_or(0, |raw| raw.serial_offset),
-        serial_size: raw.map_or(0, |raw| raw.serial_size),
-        script_serialization_start: raw
-            .filter(|_| package.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET)
-            .map(|raw| raw.script_serialization_start_offset),
-        script_serialization_end: raw
-            .filter(|_| package.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET)
-            .map(|raw| raw.script_serialization_end_offset),
+        serialization: include_serialization.then(|| ExportSerialization {
+            object_flags: raw.map_or(0, |raw| raw.object_flags),
+            serial_offset: raw.map_or(0, |raw| raw.serial_offset),
+            serial_size: raw.map_or(0, |raw| raw.serial_size),
+            script_serialization_start: raw
+                .filter(|_| package.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET)
+                .map(|raw| raw.script_serialization_start_offset),
+            script_serialization_end: raw
+                .filter(|_| package.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET)
+                .map(|raw| raw.script_serialization_end_offset),
+        }),
         object_guid: export.object_guid.clone(),
         property_status: export.property_status.map(property_status_to_model),
         properties: export

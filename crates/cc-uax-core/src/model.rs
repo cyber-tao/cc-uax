@@ -2,7 +2,7 @@ use crate::graph_models::{LogicGraph, PcgGraph, RigVmGraph, StateTreeGraph};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 2;
+pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 3;
 
 /// serde `skip_serializing_if` helper: drop `false` booleans from the rendered
 /// report so only set flags are emitted.
@@ -231,13 +231,8 @@ pub struct AssetExport {
     pub full_name: String,
     #[serde(default, skip_serializing_if = "crate::model::is_false")]
     pub is_asset: bool,
-    pub object_flags: u32,
-    pub serial_offset: i64,
-    pub serial_size: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub script_serialization_start: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub script_serialization_end: Option<i64>,
+    pub serialization: Option<ExportSerialization>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub object_guid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -248,6 +243,19 @@ pub struct AssetExport {
     pub metadata: Option<DecodedValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member: Option<MemberReference>,
+}
+
+/// Byte-level export placement, emitted only for the `full` view. Focused views
+/// (summary/logic/properties/references) omit this bookkeeping.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportSerialization {
+    pub object_flags: u32,
+    pub serial_offset: i64,
+    pub serial_size: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_serialization_start: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_serialization_end: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

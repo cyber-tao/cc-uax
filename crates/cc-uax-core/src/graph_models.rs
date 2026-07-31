@@ -457,7 +457,7 @@ pub struct GraphTerminalType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum PinDirection {
     Input,
     Output,
@@ -465,7 +465,7 @@ pub enum PinDirection {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum PinContainer {
     #[default]
     None,

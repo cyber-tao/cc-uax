@@ -120,7 +120,7 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 ```jsonc
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "complete",
   "view": "full",
   "summary": { /* 包名、类、文件版本…… */ },
@@ -139,7 +139,7 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 ```jsonc
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "status": "complete",
   "layout": {}, "mounts": [], "entry_points": {},
   "reachability": {

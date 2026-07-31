@@ -27,7 +27,7 @@ Keep strict mode enabled: it exits nonzero only for hard scan failures (unreadab
 
 4. Inspect `schema_version`, `status`, `stats`, `reachability`, aggregate `analysis`, per-asset coverage/capabilities, `failures`, and `diagnostics` before analyzing gameplay. Read [references/report-contract.md](references/report-contract.md) when interpreting these fields.
 
-Reports are sparse: empty or default fields (`null`, `[]`, `false`, `""`, `"None"`, `0`) are omitted. A missing field means the default — read it as absent, not as an error or an unfinished scan. Asset reports are `schema_version` 2; project reports are 3.
+Reports are sparse: empty or default fields (`null`, `[]`, `false`, `""`, `"None"`, `0`) are omitted. A missing field means the default — read it as absent, not as an error or an unfinished scan. Asset reports are `schema_version` 3; project reports are 4.
 
 Do not run one reverse scan per asset. Reuse the project report's inventory and bidirectional adjacency.
 
