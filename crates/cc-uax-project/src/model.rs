@@ -129,6 +129,19 @@ impl ScanDiagnostic {
             message: message.into(),
         }
     }
+
+    pub(crate) fn info(
+        path: impl Into<PathBuf>,
+        stage: ScanFailureStage,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            severity: ScanDiagnosticSeverity::Info,
+            stage,
+            path: path.into(),
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

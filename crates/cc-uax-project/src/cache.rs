@@ -61,15 +61,23 @@ pub(crate) struct CacheEntry {
     pub(crate) parse_error: Option<String>,
 }
 
+/// Sentinel mtime used when a file's modification time cannot be read reliably.
+/// An entry compared against an unknown mtime is never fresh, forcing a re-parse.
+pub(crate) const UNKNOWN_MTIME: i64 = i64::MIN;
+
 impl CacheEntry {
     pub(crate) fn is_fresh(&self, mtime: i64, size: i64) -> bool {
-        self.mtime == mtime && self.size == size
+        mtime != UNKNOWN_MTIME
+            && self.mtime != UNKNOWN_MTIME
+            && self.mtime == mtime
+            && self.size == size
     }
 }
 
 pub(crate) struct ProjectCache {
     connection: Connection,
     loaded: HashMap<String, CacheEntry>,
+    reset_reason: Option<String>,
 }
 
 impl ProjectCache {
@@ -83,6 +91,7 @@ impl ProjectCache {
         }
         let connection = Connection::open(path)
             .map_err(|error| format!("open cache database {}: {error}", path.display()))?;
+        let mut reset_reason: Option<String> = None;
         let version = connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .map_err(|error| format!("read cache schema version: {error}"))?;
@@ -93,6 +102,12 @@ impl ProjectCache {
             connection
                 .pragma_update(None, "user_version", CACHE_SCHEMA_VERSION)
                 .map_err(|error| format!("set cache schema version: {error}"))?;
+            // Version 0 is a brand-new database, not a discarded prior cache.
+            if version != 0 {
+                reset_reason = Some(format!(
+                    "cache schema version changed from {version} to {CACHE_SCHEMA_VERSION}; cached analysis was discarded"
+                ));
+            }
         }
         connection
             .execute(
@@ -135,6 +150,13 @@ impl ProjectCache {
                     params![CACHE_TOOL_VERSION],
                 )
                 .map_err(|error| format!("record cache tool version: {error}"))?;
+            if cached_tool_version.is_some() {
+                reset_reason.get_or_insert_with(|| {
+                    format!(
+                        "cache tool version changed to {CACHE_TOOL_VERSION}; cached analysis was discarded"
+                    )
+                });
+            }
         }
 
         let mut loaded = HashMap::new();
@@ -172,7 +194,17 @@ impl ProjectCache {
                 loaded.insert(path, entry);
             }
         }
-        Ok(Self { connection, loaded })
+        Ok(Self {
+            connection,
+            loaded,
+            reset_reason,
+        })
+    }
+
+    /// Reason the on-disk cache was cleared while opening (schema or tool-version
+    /// change), if any.
+    pub(crate) fn reset_reason(&self) -> Option<&str> {
+        self.reset_reason.as_deref()
     }
 
     pub(crate) fn lookup(&self, key: &str, mtime: i64, size: i64) -> Option<&CacheEntry> {

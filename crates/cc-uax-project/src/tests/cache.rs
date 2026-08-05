@@ -1,5 +1,5 @@
 use super::common::temp_project;
-use crate::cache::{CacheEntry, ProjectCache};
+use crate::cache::{CacheEntry, ProjectCache, UNKNOWN_MTIME};
 use crate::{CachePathPolicy, ProjectLayout};
 use std::collections::HashMap;
 
@@ -12,6 +12,16 @@ fn cache_entry(mtime: i64, size: i64, references: &[&str]) -> CacheEntry {
         analysis: None,
         parse_error: None,
     }
+}
+
+#[test]
+fn unknown_mtime_is_never_fresh() {
+    // A file whose mtime cannot be read must never satisfy the freshness check,
+    // so it is re-parsed rather than reused from a possibly stale cache row.
+    assert!(!cache_entry(UNKNOWN_MTIME, 10, &[]).is_fresh(UNKNOWN_MTIME, 10));
+    let normal = cache_entry(5, 10, &[]);
+    assert!(!normal.is_fresh(UNKNOWN_MTIME, 10));
+    assert!(normal.is_fresh(5, 10));
 }
 
 #[test]
@@ -77,6 +87,7 @@ fn cache_is_invalidated_when_the_tool_version_changes() {
     // Re-opening with the current tool version drops the stale analysis rows.
     let cache = ProjectCache::open(&path).unwrap();
     assert!(cache.lookup("A", 1, 10).is_none());
+    assert!(cache.reset_reason().is_some());
     drop(cache);
 
     std::fs::remove_dir_all(root).unwrap();

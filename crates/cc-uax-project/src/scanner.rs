@@ -693,10 +693,19 @@ fn open_cache(
         }
     };
     match ProjectCache::open(&path) {
-        Ok(cache) => CacheOpenResult {
-            cache: Some(cache),
-            fatal_error: false,
-        },
+        Ok(cache) => {
+            if let Some(reason) = cache.reset_reason() {
+                diagnostics.push(ScanDiagnostic::info(
+                    path.clone(),
+                    ScanFailureStage::Cache,
+                    reason.to_string(),
+                ));
+            }
+            CacheOpenResult {
+                cache: Some(cache),
+                fatal_error: false,
+            }
+        }
         Err(message) => {
             let fatal_error = record_cache_issue(policy, path, message, failures, diagnostics);
             CacheOpenResult {
@@ -737,7 +746,7 @@ fn file_stamp(path: &Path) -> Result<(i64, i64), String> {
         .ok()
         .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
         .and_then(|duration| i64::try_from(duration.as_nanos()).ok())
-        .unwrap_or(0);
+        .unwrap_or(crate::cache::UNKNOWN_MTIME);
     Ok((mtime, size))
 }
 
