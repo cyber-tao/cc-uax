@@ -1,4 +1,4 @@
-﻿#
+#
 # cc-uax dev installer (Windows / PowerShell) — rebuild from source and refresh local skills.
 #
 # Usage:
