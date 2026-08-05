@@ -412,6 +412,21 @@ mod tests {
     }
 
     #[test]
+    fn below_skeleton_budget_still_preserves_all_evidence() {
+        // A budget far smaller than the skeleton must still emit valid JSON that
+        // keeps every evidence field; only heavy detail is shed.
+        let report = sample_report();
+        let text = render_within_budget(&report, 10, true).unwrap();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["output"]["truncated"], true);
+        assert_eq!(parsed["schema_version"], 1);
+        assert_eq!(parsed["status"], "partial");
+        assert_eq!(parsed["coverage"]["exports_total"], 2);
+        assert_eq!(parsed["capabilities"][0]["kind"], "tagged_properties");
+        assert_eq!(parsed["known_opaque"][0]["kind"], "capability");
+    }
+
+    #[test]
     fn generous_budget_keeps_all_detail_but_marks_not_truncated() {
         let report = sample_report();
         let text = render_within_budget(&report, 100_000, false).unwrap();
