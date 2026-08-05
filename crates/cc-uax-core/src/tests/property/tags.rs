@@ -70,6 +70,54 @@ fn nested_struct_respects_declared_value_end() {
 }
 
 #[test]
+fn under_consumed_property_value_is_recorded_not_silently_dropped() {
+    let names = NameMap {
+        names: vec![
+            "Padded".to_string(),      // 0
+            "IntProperty".to_string(), // 1
+            "None".to_string(),        // 2
+        ],
+    };
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Padded
+    push_raw_name(&mut d, 1); // IntProperty
+    push_i32(&mut d, 0); // type name inner param count
+    push_i32(&mut d, 8); // declared size is 8, but IntProperty only reads 4
+    d.push(0); // flags
+    let value_start = d.len() as u64;
+    push_i32(&mut d, 123); // the decoded int (4 bytes)
+    push_i32(&mut d, 0); // 4 trailing bytes the decoder does not consume
+    push_raw_name(&mut d, 2); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let parsed = parse_properties_report(&mut r, &ctx, d.len() as u64, "/exports/0/properties");
+
+    assert_eq!(parsed.entries.len(), 1);
+    assert_eq!(parsed.entries[0].name, "Padded");
+    assert_eq!(parsed.entries[0].value.as_i64(), Some(123));
+    let diag = parsed
+        .diagnostics
+        .iter()
+        .find(|diag| diag.code == "property_value_incomplete")
+        .expect("under-consumed value should be recorded, not silently dropped");
+    assert_eq!(diag.path, "/exports/0/properties/Padded");
+    assert_eq!(diag.offset, Some(value_start + 4));
+    let context = diag.context.as_ref().unwrap();
+    assert_eq!(context["unconsumed_bytes"].as_u64(), Some(4));
+    assert_eq!(context["consumed_to"].as_u64(), Some(value_start + 4));
+    assert_eq!(context["declared_end"].as_u64(), Some(value_start + 8));
+}
+
+#[test]
 fn truncated_property_array_index_stops_parse() {
     let names = NameMap {
         names: vec![

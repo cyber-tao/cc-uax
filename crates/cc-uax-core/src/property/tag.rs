@@ -222,7 +222,36 @@ pub(crate) fn parse_properties_report(
             json!(tag.bool_val)
         } else {
             match parse_value(r, &tag.type_name, ctx, tag.is_binary_native, aligned) {
-                Ok(v) if r.pos() <= aligned => v,
+                Ok(v) if r.pos() == aligned => v,
+                Ok(v) if r.pos() < aligned => {
+                    // Decoder stopped before the declared window end; retain the gap as evidence.
+                    let consumed_to = r.pos();
+                    let gap = aligned - consumed_to;
+                    let preview_len = (gap as usize).min(PREVIEW_MAX);
+                    let preview = r.read_bytes(preview_len).unwrap_or_default();
+                    diagnostics.push(
+                        Diagnostic::warning(
+                            "property_value_incomplete",
+                            prop_path.clone(),
+                            format!(
+                                "decoded property '{}' as {} left {gap} undecoded byte(s): read to {consumed_to}, declared end {aligned}",
+                                tag.name,
+                                tag.type_name.display()
+                            ),
+                        )
+                        .with_offset(consumed_to)
+                        .with_context(json!({
+                            "property": tag.name.clone(),
+                            "type": tag.type_name.display(),
+                            "size": tag.size,
+                            "declared_end": aligned,
+                            "consumed_to": consumed_to,
+                            "unconsumed_bytes": gap,
+                            "preview": to_hex(&preview),
+                        })),
+                    );
+                    v
+                }
                 Ok(_) => {
                     let consumed_to = r.pos();
                     let _ = r.seek(value_start);
