@@ -123,6 +123,12 @@ fn parse_instanced_struct_container(
         items.push(Value::Object(item));
     }
 
+    if r.pos() != value_end {
+        bail!(
+            "InstancedStructContainer ended at byte {}, expected {value_end}",
+            r.pos()
+        );
+    }
     Ok(json!({
         "version": version,
         "item_count": count,

@@ -707,6 +707,50 @@ fn native_struct_per_platform_float_decodes() {
 }
 
 #[test]
+fn native_struct_per_platform_frame_rate_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Rate".to_string(),                 // 0 property name
+            "StructProperty".to_string(),       // 1
+            "PerPlatformFrameRate".to_string(), // 2 struct
+            "Mobile".to_string(),               // 3 platform
+            "None".to_string(),                 // 4
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, 0); // bCooked = false
+    push_i32(&mut value, 30); // default numerator
+    push_i32(&mut value, 1); // default denominator
+    push_i32(&mut value, 1); // map count
+    push_raw_name(&mut value, 3); // "Mobile"
+    push_i32(&mut value, 60); // override numerator
+    push_i32(&mut value, 1); // override denominator
+    let d = build_struct_property(2, 4, &value);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["default"]["numerator"].as_i64(), Some(30));
+    assert_eq!(v["default"]["denominator"].as_i64(), Some(1));
+    let pp = v["per_platform"].as_array().unwrap();
+    assert_eq!(pp.len(), 1);
+    assert_eq!(pp[0]["platform"].as_str(), Some("Mobile"));
+    assert_eq!(pp[0]["value"]["numerator"].as_i64(), Some(60));
+    assert_eq!(pp[0]["value"]["denominator"].as_i64(), Some(1));
+}
+
+#[test]
 fn native_struct_movie_scene_frame_range_decodes() {
     let names = NameMap {
         names: vec![

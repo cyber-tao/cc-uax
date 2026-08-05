@@ -32,6 +32,15 @@ enum ScalarKind {
     FrameRate,
 }
 
+impl ScalarKind {
+    fn size_bytes(self) -> u64 {
+        match self {
+            ScalarKind::F32 | ScalarKind::I32 | ScalarKind::Bool32 => 4,
+            ScalarKind::FrameRate => 8,
+        }
+    }
+}
+
 fn read_scalar(r: &mut Reader, kind: ScalarKind) -> Result<Value> {
     Ok(match kind {
         ScalarKind::F32 => json!(r.read_f32()? as f64),
@@ -55,7 +64,7 @@ fn parse_per_platform(
     if !cooked {
         let count = r.read_i32()?;
         let remaining = value_end.saturating_sub(r.pos());
-        validate_count(count, remaining, 12, "PerPlatform map")?;
+        validate_count(count, remaining, 8 + kind.size_bytes(), "PerPlatform map")?;
         for _ in 0..count {
             let key = names.resolve_raw(r.read_raw_name()?);
             let value = read_scalar(r, kind)?;
@@ -73,7 +82,7 @@ fn parse_per_quality_level(r: &mut Reader, kind: ScalarKind, value_end: u64) -> 
     if !cooked {
         let count = r.read_i32()?;
         let remaining = value_end.saturating_sub(r.pos());
-        validate_count(count, remaining, 8, "PerQualityLevel map")?;
+        validate_count(count, remaining, 4 + kind.size_bytes(), "PerQualityLevel map")?;
         for _ in 0..count {
             let quality_level = r.read_i32()?;
             let value = read_scalar(r, kind)?;
