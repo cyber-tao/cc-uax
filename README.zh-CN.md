@@ -48,7 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.sh 
 irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
 ```
 
-从源码构建 0.9 workspace 需要 Rust 1.88 或更高版本：
+从源码构建 workspace 需要 Rust 1.88 或更高版本：
 
 ```bash
 git clone https://github.com/cyber-tao/cc-uax.git
@@ -64,7 +64,7 @@ cargo install --path crates/cc-uax-cli --locked
 
 ## CLI
 
-0.9 CLI 使用两个明确的工作流。
+CLI 使用两个明确的工作流。
 
 ### 分析单个资产
 

@@ -48,7 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.sh 
 irm https://raw.githubusercontent.com/cyber-tao/cc-uax/master/install.ps1 | iex
 ```
 
-Build the 0.9 workspace from source with Rust 1.88 or newer:
+Build the workspace from source with Rust 1.88 or newer:
 
 ```bash
 git clone https://github.com/cyber-tao/cc-uax.git
@@ -64,7 +64,7 @@ cargo install --path crates/cc-uax-cli --locked
 
 ## CLI
 
-The 0.9 CLI has two explicit workflows.
+The CLI has two explicit workflows.
 
 ### Analyze one asset
 
