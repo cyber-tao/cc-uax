@@ -157,6 +157,11 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
     );
 
     let known_opaque_regions = known_opaque.len();
+    let opaque_bytes = known_opaque
+        .iter()
+        .filter_map(|region| region.byte_range.as_ref())
+        .map(|range| range.size)
+        .sum();
     let coverage = ParseCoverage {
         bytes_total: bytes.len() as u64,
         exports_total: package.exports.len(),
@@ -192,6 +197,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         state_tree_conditions_decoded: state_tree_coverage.conditions_decoded,
         state_tree_transitions_decoded: state_tree_coverage.transitions_decoded,
         known_opaque_regions,
+        opaque_bytes,
         diagnostic_errors,
         diagnostic_warnings,
     };

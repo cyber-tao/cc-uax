@@ -4,9 +4,9 @@ Read this reference when interpreting `asset` or `project` JSON.
 
 ## Completion fields
 
-- `schema_version`: Version of the report contract, independent from the CLI version. Asset reports use schema version `3`; project reports use schema version `4`.
+- `schema_version`: Version of the report contract, independent from the CLI version. Asset reports use schema version `4`; project reports use schema version `4`.
 - `status`: `complete`, `partial`, or `unsupported` for the requested analysis scope.
-- Asset reports expose `coverage` counters for exports, properties, EdGraph, RigVM, PCG, StateTree, opaque regions, and diagnostics within the requested view.
+- Asset reports expose `coverage` counters for exports, properties, EdGraph, RigVM, PCG, StateTree, opaque regions (count and `opaque_bytes` total), and diagnostics within the requested view.
 - Project reports use schema version `4` and expose sanitized `layout`/`mounts`, filesystem/index accounting in `stats` (`discovered`, `indexed`, `failed`, `skipped`), generated runtime/resource `reachability`, and semantic accounting in aggregate `analysis` (`assets`, `complete_assets`, `partial_assets`, `unsupported_assets`, and summed `coverage`).
 - Each project inventory item retains its own compact analysis status, coverage, capabilities, graph counts, diagnostics, and opaque identities. Focused packages additionally appear under `focused` with their full typed analysis.
 

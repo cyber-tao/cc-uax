@@ -79,6 +79,7 @@ fn opaque_tail_makes_analysis_partial_without_relying_on_diagnostics() {
     assert_eq!(analysis.status, AnalysisStatus::Partial);
     assert_eq!(analysis.coverage.property_exports_complete, 1);
     assert_eq!(analysis.coverage.known_opaque_regions, 1);
+    assert_eq!(analysis.coverage.opaque_bytes, 4);
     assert_eq!(
         analysis.known_opaque[0].kind,
         KnownOpaqueKind::PostPropertyTail

@@ -2,7 +2,7 @@ use crate::graph_models::{LogicGraph, PcgGraph, RigVmGraph, StateTreeGraph};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 3;
+pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 4;
 
 /// serde `skip_serializing_if` helper: drop `false` booleans from the rendered
 /// report so only set flags are emitted.
@@ -23,6 +23,11 @@ pub(crate) fn is_zero_i32(value: &i32) -> bool {
 
 /// serde `skip_serializing_if` helper: drop a zero `usize` (default unresolved count).
 pub(crate) fn is_zero_usize(value: &usize) -> bool {
+    *value == 0
+}
+
+/// serde `skip_serializing_if` helper: drop a zero `u64` byte total.
+pub(crate) fn is_zero_u64(value: &u64) -> bool {
     *value == 0
 }
 
@@ -141,6 +146,9 @@ pub struct ParseCoverage {
     pub state_tree_transitions_decoded: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub known_opaque_regions: usize,
+    /// Total bytes covered by `known_opaque` regions that carry a byte range.
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub opaque_bytes: u64,
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub diagnostic_errors: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
