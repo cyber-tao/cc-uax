@@ -82,7 +82,12 @@ fn parse_per_quality_level(r: &mut Reader, kind: ScalarKind, value_end: u64) -> 
     if !cooked {
         let count = r.read_i32()?;
         let remaining = value_end.saturating_sub(r.pos());
-        validate_count(count, remaining, 4 + kind.size_bytes(), "PerQualityLevel map")?;
+        validate_count(
+            count,
+            remaining,
+            4 + kind.size_bytes(),
+            "PerQualityLevel map",
+        )?;
         for _ in 0..count {
             let quality_level = r.read_i32()?;
             let value = read_scalar(r, kind)?;
