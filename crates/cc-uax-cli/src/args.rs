@@ -35,7 +35,12 @@ pub struct AssetArgs {
     #[arg(value_name = "FILE")]
     pub file: PathBuf,
 
-    #[arg(long, value_enum, default_value_t = AssetViewArg::Full)]
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = AssetViewArg::Full,
+        help = "Analysis view to render"
+    )]
     pub view: AssetViewArg,
 }
 

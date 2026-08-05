@@ -431,12 +431,16 @@ fn build_project_reachability(
                 if member != &package {
                     ownership_closure_members.insert(member.clone());
                 }
-                queue.push_back(member.clone());
+                if !reachable_runtime_packages.contains(member) {
+                    queue.push_back(member.clone());
+                }
             }
         }
         if let Some(references) = forward.get(&package) {
             for reference in references {
-                if let Some(resolved) = canonical_package(canonical, reference) {
+                if let Some(resolved) = canonical_package(canonical, reference)
+                    && !reachable_runtime_packages.contains(&resolved)
+                {
                     queue.push_back(resolved);
                 }
             }
