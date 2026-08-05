@@ -212,7 +212,9 @@ impl ProjectIndex {
             };
             current = self.canonical_package(owner)?;
         }
-        None
+        // Ownership formed a cycle (a data anomaly); treat the re-encountered
+        // package as its own root instead of dropping it.
+        Some(current)
     }
 
     pub fn closure_for(&self, package_path: &str) -> Option<BTreeSet<String>> {

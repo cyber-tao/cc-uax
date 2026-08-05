@@ -291,7 +291,7 @@ pub(crate) fn build_project_index(
     diagnostics: Vec<ScanDiagnostic>,
     discovered: usize,
 ) -> ProjectIndex {
-    let canonical = records
+    let mut canonical = records
         .iter()
         .map(|record| {
             (
@@ -300,6 +300,15 @@ pub(crate) fn build_project_index(
             )
         })
         .collect::<HashMap<_, _>>();
+    // Normalize repeated external references (no project record) to their first-seen
+    // casing so one target does not appear under multiple cases in adjacency.
+    for record in &records {
+        for reference in &record.forward_references {
+            canonical
+                .entry(reference.to_ascii_lowercase())
+                .or_insert_with(|| reference.clone());
+        }
+    }
     for record in &mut records {
         record.forward_references = record
             .forward_references
@@ -600,48 +609,52 @@ fn collect_mounted_files(mounts: &MountTable, failures: &mut Vec<ScanFailure>) -
 }
 
 fn collect_asset_files(root: &Path, files: &mut Vec<PathBuf>, failures: &mut Vec<ScanFailure>) {
-    let entries = match fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(error) => {
-            failures.push(ScanFailure::new(
-                root,
-                ScanFailureStage::Discovery,
-                error.to_string(),
-            ));
-            return;
-        }
-    };
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
+    // Iterative walk with an explicit stack so deeply nested trees cannot overflow the stack.
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
             Err(error) => {
                 failures.push(ScanFailure::new(
-                    root,
+                    &dir,
                     ScanFailureStage::Discovery,
                     error.to_string(),
                 ));
                 continue;
             }
         };
-        let path = entry.path();
-        let file_type = match entry.file_type() {
-            Ok(file_type) => file_type,
-            Err(error) => {
-                failures.push(ScanFailure::new(
-                    &path,
-                    ScanFailureStage::Discovery,
-                    error.to_string(),
-                ));
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    failures.push(ScanFailure::new(
+                        &dir,
+                        ScanFailureStage::Discovery,
+                        error.to_string(),
+                    ));
+                    continue;
+                }
+            };
+            let path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) => {
+                    failures.push(ScanFailure::new(
+                        &path,
+                        ScanFailureStage::Discovery,
+                        error.to_string(),
+                    ));
+                    continue;
+                }
+            };
+            if file_type.is_symlink() {
                 continue;
             }
-        };
-        if file_type.is_symlink() {
-            continue;
-        }
-        if file_type.is_dir() {
-            collect_asset_files(&path, files, failures);
-        } else if file_type.is_file() && asset_kind(&path).is_some() {
-            files.push(path);
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() && asset_kind(&path).is_some() {
+                files.push(path);
+            }
         }
     }
 }
