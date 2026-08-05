@@ -99,7 +99,7 @@ pub(super) fn decode_pins_for_export(
                                 "framework_pin_version_unsupported",
                                 format!("{path}/user_defined"),
                                 format!(
-                                    "Dev-Framework custom version {version} is newer than the supported UE5.7 layout"
+                                    "Dev-Framework custom version {version} is newer than the supported pin layout"
                                 ),
                             )
                             .with_offset(reader.pos())

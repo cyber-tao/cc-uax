@@ -1,9 +1,8 @@
 use crate::property::ParseCtx;
 use crate::reader::Reader;
 use crate::structured_value::{Map, Value, json};
+use crate::version::custom;
 use anyhow::Result;
-
-const MATERIAL_INPUT_USES_LINEAR_COLOR: i32 = 171;
 
 // Material expression inputs (FExpressionInput + FMaterialInput<T> constants).
 pub(super) fn parse_material_input_struct(
@@ -42,7 +41,7 @@ pub(super) fn parse_material_input_struct(
         "ColorMaterialInput" => {
             let mut o = parse_expression_input(r, ctx)?;
             o.insert("use_constant".into(), json!(r.read_bool32()?));
-            if ctx.serialization.fortnite_main_version < MATERIAL_INPUT_USES_LINEAR_COLOR {
+            if ctx.serialization.fortnite_main_version < custom::MATERIAL_INPUT_USES_LINEAR_COLOR {
                 o.insert("constant".into(), json!({ "packed_bgra": r.read_u32()? }));
             } else {
                 o.insert(

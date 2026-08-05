@@ -21,6 +21,10 @@ pub mod ue5 {
     pub const PACKAGE_SAVED_HASH: i32 = 1016;
     pub const OS_SUB_OBJECT_SHADOW_SERIALIZATION: i32 = 1017;
     pub const IMPORT_TYPE_HIERARCHIES: i32 = 1018;
+
+    /// Highest FileVersionUE5 supported by this parser.
+    /// UE5.7 and UE5.8 both share this value; UE5.6 is 1017.
+    pub const HIGHEST: i32 = 1018;
 }
 
 // Keep UE4 thresholds available for older UE5 package fields that still gate on
@@ -134,6 +138,10 @@ pub mod custom {
     /// FPropertyBagCustomVersion::MetaClass — per-desc metadata gains a trailing
     /// MetaClass object reference.
     pub const PROPERTY_BAG_META_CLASS: i32 = 3;
+
+    /// FFortniteMainBranchObjectVersion::MaterialInputUsesLinearColor — from this
+    /// version on, FMaterialInput stores the ExpressionGUID as a linear color value.
+    pub const MATERIAL_INPUT_USES_LINEAR_COLOR: i32 = 171;
 }
 
 pub const PACKAGE_FILE_TAG: u32 = 0x9E2A_83C1;

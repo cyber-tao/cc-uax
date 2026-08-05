@@ -6,7 +6,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/ci.yml?branch=master&label=CI)](https://github.com/cyber-tao/cc-uax/actions/workflows/ci.yml)
-[![UE5](https://img.shields.io/badge/reference-UE%205.7-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
+[![UE5](https://img.shields.io/badge/reference-UE%205.6–5.8-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
 [English](README.md) · **简体中文**
@@ -208,7 +208,7 @@ cc-uax-cli ──> cc-uax-project ──> cc-uax-core
 
 ## 验证与支持边界
 
-序列化判断以 UE5.7 源码为依据，解析器使用外部真实编辑器资产验证。验收门禁由外部语料 harness 定义，该 harness 独立于 workspace crate 维护，不作为 workspace 成员提交。
+序列化判断以 UE5.6–5.8 源码为依据，解析器使用外部真实编辑器资产验证。验收门禁由外部语料 harness 定义，该 harness 独立于 workspace crate 维护，不作为 workspace 成员提交。
 
 外部资产和机器相关的绝对路径均保留在本地，仓库不提交此类内容。
 
@@ -217,7 +217,7 @@ cc-uax-cli ──> cc-uax-project ──> cc-uax-core
 - Cooked/无版本包和 UE4 包格式；
 - RigVM 编译字节码、压缩 RigHierarchy 的源码级还原；
 - 无法由序列化图、属性、配置或引用证明的运行时行为；
-- 尚未核对 UE5.7 序列化契约的插件原生格式。
+- 尚未核对 UE5.6–5.8 序列化契约的插件原生格式。
 
 证据不完整时，下游结论必须保留 `partial`、`unsupported`、diagnostics 和 capability 限制。
 

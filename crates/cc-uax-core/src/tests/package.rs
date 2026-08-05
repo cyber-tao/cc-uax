@@ -58,6 +58,19 @@ fn package_view_analyzes_the_bound_minimal_package() {
 }
 
 #[test]
+fn package_view_parses_ue56_file_version_1017() {
+    let data = build_minimal_package_with_version(1017, 5, 6);
+    let view = PackageView::parse(&data).expect("UE5.6 package should parse");
+    let analysis = view.analyze(AssetView::Full);
+
+    assert_eq!(analysis.summary.file_version_ue5, 1017);
+    assert_eq!(analysis.summary.package_name, "TestPkg");
+    assert_eq!(analysis.summary.export_count, 0);
+    assert!(analysis.imports.is_empty());
+    assert!(analysis.exports.is_empty());
+}
+
+#[test]
 fn soft_object_path_table_error_is_structured() {
     let mut data = build_minimal_package();
     put_i32(&mut data, 76, 1);

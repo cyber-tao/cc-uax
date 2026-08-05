@@ -6,7 +6,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/ci.yml?branch=master&label=CI)](https://github.com/cyber-tao/cc-uax/actions/workflows/ci.yml)
-[![UE5](https://img.shields.io/badge/reference-UE%205.7-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
+[![UE5](https://img.shields.io/badge/reference-UE%205.6–5.8-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
 **English** · [简体中文](README.zh-CN.md)
@@ -208,7 +208,7 @@ The supporting `agents/` and `references/` content is part of the skill contract
 
 ## Validation and support boundary
 
-Serialization decisions are checked against UE5.7 source and the parser is exercised against external, real editor assets. Validation acceptance gates are defined by the real-corpus harness, which is maintained separately from the workspace crates and is not committed as a workspace member.
+Serialization decisions are checked against UE5.6–5.8 source and the parser is exercised against external, real editor assets. Validation acceptance gates are defined by the real-corpus harness, which is maintained separately from the workspace crates and is not committed as a workspace member.
 
 External assets and machine-specific absolute paths remain local. The workspace does not commit them.
 
@@ -217,7 +217,7 @@ Current limitations include:
 - cooked/unversioned packages and UE4 package formats;
 - source-level reconstruction of compiled RigVM bytecode and compressed RigHierarchy data;
 - runtime behavior not evidenced by serialized graphs, properties, configuration, or references;
-- plugin-native formats without a verified UE5.7 serialization contract.
+- plugin-native formats without a verified UE5.6–5.8 serialization contract.
 
 When evidence is incomplete, consumers must retain `partial`, `unsupported`, diagnostics, and capability limitations in their conclusions.
 

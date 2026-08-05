@@ -32,15 +32,26 @@ pub fn push_fstring(v: &mut Vec<u8>, s: &str) {
     v.push(0);
 }
 
-// Minimal versioned UE5 package header (legacy=-8, ue4=522, ue5=1018,
+// Minimal versioned UE5 package header (legacy=-8, ue4=522,
 // FilterEditorOnly set to skip editor-only fields, all tables empty).
 pub fn build_minimal_package() -> Vec<u8> {
+    build_minimal_package_with_version(1018, 5, 7)
+}
+
+/// Build a minimal package for a specific UE5 file version and engine version.
+/// `file_version_ue5` controls which summary fields are included; for 1017
+/// (UE5.6) the ImportTypeHierarchies fields are omitted.
+pub fn build_minimal_package_with_version(
+    file_version_ue5: i32,
+    major: u16,
+    minor: u16,
+) -> Vec<u8> {
     let mut d = Vec::new();
     push_u32(&mut d, 0x9E2A_83C1); // PACKAGE_FILE_TAG
     push_i32(&mut d, -8); // legacy_file_version
     push_i32(&mut d, 0); // legacy ue3 version (legacy != -4)
     push_i32(&mut d, 522); // file_version_ue4
-    push_i32(&mut d, 1018); // file_version_ue5
+    push_i32(&mut d, file_version_ue5); // file_version_ue5
     push_i32(&mut d, 0); // file_version_licensee
     d.extend_from_slice(&[0u8; 20]); // saved_hash (ue5 >= 1016)
     push_i32(&mut d, 0); // total_header_size
@@ -67,16 +78,18 @@ pub fn build_minimal_package() -> Vec<u8> {
     push_i32(&mut d, 0); // soft_package_references_offset
     push_i32(&mut d, 0); // searchable_names_offset (ue4 >= 510)
     push_i32(&mut d, 0); // thumbnail_table_offset
-    push_i32(&mut d, 0); // import_type_hierarchies_count (ue5 >= 1018)
-    push_i32(&mut d, 0); // import_type_hierarchies_offset
+    if file_version_ue5 >= 1018 {
+        push_i32(&mut d, 0); // import_type_hierarchies_count (ue5 >= 1018)
+        push_i32(&mut d, 0); // import_type_hierarchies_offset
+    }
     push_i32(&mut d, 0); // generation_count
-    push_u16(&mut d, 5); // engine_version.major (ue4 >= 336)
-    push_u16(&mut d, 7); // .minor
+    push_u16(&mut d, major); // engine_version.major (ue4 >= 336)
+    push_u16(&mut d, minor); // .minor
     push_u16(&mut d, 0); // .patch
     push_u32(&mut d, 0); // .changelist
     push_fstring(&mut d, ""); // .branch
-    push_u16(&mut d, 5); // compatible_engine_version (ue4 >= 444)
-    push_u16(&mut d, 7);
+    push_u16(&mut d, major); // compatible_engine_version (ue4 >= 444)
+    push_u16(&mut d, minor);
     push_u16(&mut d, 0);
     push_u32(&mut d, 0);
     push_fstring(&mut d, "");

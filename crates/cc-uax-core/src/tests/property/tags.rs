@@ -351,6 +351,67 @@ fn property_tag_extensions_are_byte_aligned() {
 }
 
 #[test]
+fn property_tag_extension_has_external_objects_is_parsed() {
+    // UE5.8 adds HasExternalsObjects (0x04) to EPropertyTagExtension. When set,
+    // a trailing bool32 (bExperimentalExternalObjects) follows. If not consumed,
+    // the value desyncs — so decoding the int proves correct alignment.
+    let names = NameMap {
+        names: vec![
+            "MyInt".to_string(),
+            "IntProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+
+    // Test 0x04 alone (HasExternalsObjects without OverridableInformation).
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // MyInt
+    push_raw_name(&mut d, 1); // IntProperty
+    push_i32(&mut d, 0); // type name inner param count
+    push_i32(&mut d, 4); // value size
+    d.push(0x04); // flags = HasPropertyExtensions
+    d.push(0x04); // extension flags = HasExternalsObjects
+    push_i32(&mut d, 1); // bExperimentalExternalObjects bool
+    push_i32(&mut d, 999); // IntProperty value
+    push_raw_name(&mut d, 2); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "MyInt");
+    assert_eq!(entries[0].value.as_i64(), Some(999));
+
+    // Test 0x06 (both OverridableInformation + HasExternalsObjects).
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // MyInt
+    push_raw_name(&mut d, 1); // IntProperty
+    push_i32(&mut d, 0); // type name inner param count
+    push_i32(&mut d, 4); // value size
+    d.push(0x04); // flags = HasPropertyExtensions
+    d.push(0x06); // extension flags = OverridableInformation | HasExternalsObjects
+    d.push(0x00); // override operation
+    push_i32(&mut d, 0); // bExperimentalOverridableLogic bool
+    push_i32(&mut d, 1); // bExperimentalExternalObjects bool
+    push_i32(&mut d, 777); // IntProperty value
+    push_raw_name(&mut d, 2); // None
+
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "MyInt");
+    assert_eq!(entries[0].value.as_i64(), Some(777));
+}
+
+#[test]
 fn skipped_serialize_property_is_marked_and_parsing_continues() {
     let names = NameMap {
         names: vec![

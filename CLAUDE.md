@@ -6,7 +6,7 @@ This file is the repository source of truth for engineering agents working on `c
 
 `cc-uax` analyzes versioned, uncooked Unreal Engine 5 editor packages (`.uasset` and `.umap`) without loading Unreal Editor. It serves AI engineering tools that need evidence about serialized properties, Blueprint and plugin graph logic, asset references, gameplay structure, and project resource usage.
 
-UE5.7 source is the serialization authority. Cooked/unversioned packages and UE4 packages are out of scope.
+UE5.6–5.8 source is the serialization authority (UE5.7/5.8 share `FileVersionUE5 = 1018`; UE5.6 is 1017). Cooked/unversioned packages and UE4 packages are out of scope.
 
 Development policy: this repository is in active development. Prefer the cleanest correct API and representation; do not retain obsolete 0.8 CLI/JSON compatibility unless a task explicitly requires it.
 
@@ -79,14 +79,15 @@ Never guess a cursor position after a failed parse. Never parse beyond an export
 
 `SerializationPolicy` carries package custom-version decisions into native decoders. A missing custom-version GUID is `-1` and normally selects the legacy layout.
 
-Important UE5.7-gated formats include:
+Important version-gated formats include:
 
 - `FInstancedStruct`: legacy optional editor header/version versus modern payload;
 - `FStateTreeInstanceData`: legacy tagged instance data versus custom instance storage;
 - `FPCGPoint`: legacy tagged properties versus structured field-mask serialization;
-- Niagara, Sequencer, and EdGraph pin fields controlled by their owning custom versions.
+- Niagara, Sequencer, and EdGraph pin fields controlled by their owning custom versions;
+- PropertyTag extensions: `OverridableInformation` (0x02, UE5.7+) and `HasExternalsObjects` (0x04, UE5.8+).
 
-Only classify a struct as native when UE5.7 actually provides binary/structured custom serialization. A `WithSerializer` function that returns `false` uses tagged-property fallback.
+Only classify a struct as native when UE5.6–5.8 actually provides binary/structured custom serialization. A `WithSerializer` function that returns `false` uses tagged-property fallback.
 
 Known native formats require exact consumption. Unknown registry-dependent or compiled payloads must retain type, byte range, size, reason, and preview as `known_opaque`; do not silently discard a tail.
 

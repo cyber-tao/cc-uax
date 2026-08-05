@@ -484,10 +484,16 @@ fn parse_extensions(r: &mut Reader) -> Result<()> {
     // OverridableInformation (0x02) is set, an EOverriddenPropertyOperation byte
     // (uint8) and a 4-byte bExperimentalOverridableLogic bool follow — UE serializes
     // `bool` as a 4-byte int32, hence read_bool32 rather than a single byte.
+    // If HasExternalsObjects (0x04) is set (UE5.8+, CPF_ExperimentalExternalObjects),
+    // a trailing bExperimentalExternalObjects bool32 follows.
+    const HAS_EXTERNAL_OBJECTS_BIT: u8 = 0x04;
     let ext = r.read_u8()?;
     if ext & OVERRIDABLE_SERIALIZATION_BIT != 0 {
         let _override_operation = r.read_u8()?;
         let _experimental = r.read_bool32()?;
+    }
+    if ext & HAS_EXTERNAL_OBJECTS_BIT != 0 {
+        let _external_objects = r.read_bool32()?;
     }
     Ok(())
 }
