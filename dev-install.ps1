@@ -1,5 +1,5 @@
 #
-# cc-uax dev installer (Windows / PowerShell) — rebuild from source and refresh local skills.
+# cc-uax dev installer (Windows / PowerShell) -- rebuild from source and refresh local skills.
 #
 # Usage:
 #   .\dev-install.ps1               build + install, refresh skills
@@ -22,7 +22,7 @@ function Write-Info($msg)    { Write-Host ">> $msg" -ForegroundColor DarkGray }
 function Write-WarnMsg($msg) { Write-Host "!! $msg" -ForegroundColor Yellow }
 function Die($msg)           { Write-Host "[X] $msg" -ForegroundColor Red; exit 1 }
 
-# ── uninstall ───────────────────────────────────────────────────────────────
+# == uninstall ===============================================================
 if ($Uninstall -or ($env:UNINSTALL -eq '1')) {
     Write-Host "`ncc-uax dev uninstall" -ForegroundColor Cyan
     $removed = $false
@@ -56,7 +56,7 @@ if ($Uninstall -or ($env:UNINSTALL -eq '1')) {
 }
 
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-    Die 'cargo not found on PATH — install Rust first'
+    Die 'cargo not found on PATH -- install Rust first'
 }
 
 $CargoBin = if ($env:CARGO_HOME) { Join-Path $env:CARGO_HOME 'bin' } else { Join-Path $env:USERPROFILE '.cargo\bin' }
@@ -65,15 +65,15 @@ $CliDir = Join-Path $PSScriptRoot 'crates\cc-uax-cli'
 if (-not (Test-Path (Join-Path $SkillSrc 'SKILL.md'))) { Die "skill source not found: $SkillSrc" }
 if (-not (Test-Path (Join-Path $CliDir 'Cargo.toml'))) { Die "CLI package not found: $CliDir\Cargo.toml" }
 
-# ── [1/2] build + install binary ─────────────────────────────────────────────
+# == [1/2] build + install binary =============================================
 Write-Step 1 'Build and install cc-uax'
 Write-Info "cargo install --path $CliDir --locked --force"
-# $ErrorActionPreference = 'Stop' does not cover native-exe exit codes — check explicitly.
+# $ErrorActionPreference = 'Stop' does not cover native-exe exit codes -- check explicitly.
 cargo install --path $CliDir --locked --force
 if ($LASTEXITCODE -ne 0) { Die "cargo install failed (exit $LASTEXITCODE)" }
 Write-Ok "cc-uax -> $CargoBin\cc-uax.exe"
 
-# ── [2/2] refresh skills (overwrite) ─────────────────────────────────────────
+# == [2/2] refresh skills (overwrite) =========================================
 Write-Step 2 'Refresh agent skills'
 foreach ($dir in @(
         (Join-Path $env:USERPROFILE '.claude\skills\cc-uax'),
@@ -86,7 +86,7 @@ foreach ($dir in @(
     Write-Ok "skill -> $dir"
 }
 
-# ── summary ──────────────────────────────────────────────────────────────────
+# == summary ==================================================================
 Write-Host ''
 Write-Host 'cc-uax dev install complete.' -ForegroundColor Green
 Write-Host 'Verify:  cc-uax --version' -ForegroundColor DarkGray

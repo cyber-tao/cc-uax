@@ -38,7 +38,7 @@ function Write-Info($msg)    { Write-Host ">> $msg" -ForegroundColor DarkGray }
 function Write-WarnMsg($msg) { Write-Host "!! $msg" -ForegroundColor Yellow }
 function Die($msg)           { Write-Host "[X] $msg" -ForegroundColor Red; exit 1 }
 
-# ── uninstall ───────────────────────────────────────────────────────────────
+# == uninstall ===============================================================
 if ($DoUninstall) {
     Write-Host "`ncc-uax uninstall" -ForegroundColor Cyan
     $removed = $false
@@ -58,7 +58,7 @@ if ($DoUninstall) {
     }
 
     # Reverse the install-time user PATH edit, but only when our dir is actually
-    # present — and keep unrelated (including empty) segments untouched.
+    # present -- and keep unrelated (including empty) segments untouched.
     $userPath = [System.Environment]::GetEnvironmentVariable('PATH', 'User')
     if ($userPath -and ($userPath.Split(';') -contains $InstallDir)) {
         $kept = $userPath.Split(';') | Where-Object { $_ -ne $InstallDir }
@@ -68,7 +68,7 @@ if ($DoUninstall) {
     }
 
     if ($NoSkill) {
-        Write-WarnMsg 'NO_SKILL=1 — leaving skills in place'
+        Write-WarnMsg 'NO_SKILL=1 -- leaving skills in place'
     } else {
         foreach ($dir in @(
                 (Join-Path $env:USERPROFILE '.claude\skills\cc-uax'),
@@ -90,19 +90,19 @@ if ($DoUninstall) {
     exit 0
 }
 
-# ── [1/5] detect platform ───────────────────────────────────────────────────
+# == [1/5] detect platform ===================================================
 Write-Step 1 'Detecting platform'
 # Windows release is x86_64-pc-windows-msvc; Windows 11 ARM runs it via x64 emulation.
 $Target = 'x86_64-pc-windows-msvc'
 $arch = $env:PROCESSOR_ARCHITECTURE
 if ($arch -eq 'ARM64') {
-    Write-WarnMsg "ARM64 Windows detected — using x86_64 build via emulation."
+    Write-WarnMsg "ARM64 Windows detected -- using x86_64 build via emulation."
 } elseif ($arch -ne 'AMD64') {
     Die "unsupported arch: $arch (expected AMD64 or ARM64)"
 }
 Write-Ok "target=$Target  arch=$arch"
 
-# ── [2/5] resolve version ───────────────────────────────────────────────────
+# == [2/5] resolve version ===================================================
 Write-Step 2 'Resolving latest version'
 if ($env:VERSION) {
     $Tag = if ($env:VERSION.StartsWith('v')) { $env:VERSION } else { "v$($env:VERSION)" }
@@ -119,7 +119,7 @@ if (-not $Tag) { Die 'empty release tag' }
 $Version = $Tag.TrimStart('v')
 Write-Ok "version=$Version ($Tag)"
 
-# ── [3/5] download ──────────────────────────────────────────────────────────
+# == [3/5] download ==========================================================
 Write-Step 3 'Downloading'
 $Archive = "cc-uax-${Target}-${Version}.zip"
 $Url = "https://github.com/$Repo/releases/download/$Tag/$Archive"
@@ -147,7 +147,7 @@ $ActualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ArchivePath).Hash.To
 if ($ActualHash -ne $ExpectedHash) { Die "checksum mismatch for $Archive" }
 Write-Ok "downloaded and verified $Archive"
 
-# ── [4/5] install binary ────────────────────────────────────────────────────
+# == [4/5] install binary ====================================================
 Write-Step 4 'Installing binary'
 $Extract = Join-Path $Tmp.FullName 'extract'
 Expand-Archive -Path $ArchivePath -DestinationPath $Extract -Force
@@ -177,10 +177,10 @@ if ($userPath -and ($userPath.Split(';') -contains $InstallDir)) {
     }
 }
 
-# ── [5/5] configure skills ──────────────────────────────────────────────────
+# == [5/5] configure skills ==================================================
 Write-Step 5 'Configuring agent skills'
 if ($NoSkill) {
-    Write-WarnMsg 'NO_SKILL=1 — skipping skill configuration'
+    Write-WarnMsg 'NO_SKILL=1 -- skipping skill configuration'
 } else {
     $SkillSrc = Join-Path $Extract "cc-uax-${Target}-${Version}\skills\cc-uax"
     if (-not (Test-Path (Join-Path $SkillSrc 'SKILL.md'))) { Die "SKILL.md missing in archive" }
@@ -197,7 +197,7 @@ if ($NoSkill) {
     }
 }
 
-# ── summary ─────────────────────────────────────────────────────────────────
+# == summary =================================================================
 Remove-Item -Recurse -Force $Tmp.FullName -ErrorAction SilentlyContinue
 Write-Host ""
 Write-Host "cc-uax $Version installed." -ForegroundColor Green
