@@ -8,7 +8,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const CACHE_NAMESPACE: &str = "cc-uax/projects";
-const CACHE_FILE_NAME: &str = "project-index-v2.sqlite";
+// A fixed name (no embedded version) so a `user_version`/`tool_version` mismatch
+// on the same file actually triggers the in-place reset, instead of silently
+// orphaning a version-named file on every schema change.
+const CACHE_FILE_NAME: &str = "project-index.sqlite";
 const CACHE_SCHEMA_VERSION: i64 = 2;
 // Cached analysis is only valid for the binary that produced it: a tool upgrade
 // can change decoded values without changing a file's mtime/size. Bind cache

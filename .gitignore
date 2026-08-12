@@ -1,7 +1,6 @@
 # ---- Rust / Cargo ----
 # build artifacts
 /target
-/target2
 
 # rustfmt backup files
 **/*.rs.bk
@@ -25,7 +24,5 @@ Thumbs.db
 /.serena/
 /.agents/
 /.codex/
-/out_*.json
-/names_only.json
 /.qoder/
 /.codebuddy/

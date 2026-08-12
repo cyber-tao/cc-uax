@@ -394,7 +394,7 @@ impl ProjectReport {
             .iter()
             .map(|failure| ProjectIssue {
                 stage: failure.stage,
-                path: report_path(index, &failure.path),
+                path: project_relative_path(index, &failure.path),
                 severity: None,
                 message: failure.message.clone(),
             })
@@ -412,7 +412,7 @@ impl ProjectReport {
             .iter()
             .map(|diagnostic| ProjectIssue {
                 stage: diagnostic.stage,
-                path: report_path(index, &diagnostic.path),
+                path: project_relative_path(index, &diagnostic.path),
                 severity: Some(diagnostic.severity),
                 message: diagnostic.message.clone(),
             })
@@ -500,10 +500,6 @@ struct ProjectIssue {
     #[serde(skip_serializing_if = "Option::is_none")]
     severity: Option<ScanDiagnosticSeverity>,
     message: String,
-}
-
-fn report_path(index: &ProjectIndex, path: &Path) -> String {
-    project_relative_path(index, path)
 }
 
 fn project_relative_path(index: &ProjectIndex, path: &Path) -> String {

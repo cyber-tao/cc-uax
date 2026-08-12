@@ -56,7 +56,8 @@ impl ProjectScanner {
     pub fn scan(&self, options: ScanOptions) -> Result<ProjectIndex, ProjectScanError> {
         let mut failures = Vec::new();
         let (entry_points, mut diagnostics) = load_project_entry_points(&self.layout);
-        let mut files = collect_mounted_files(&self.mounts, &mut failures);
+        let (mut files, skipped_symlinks) =
+            collect_mounted_files(&self.mounts, &mut failures, &mut diagnostics);
         files.sort_by(|left, right| {
             left.package_root
                 .cmp(&right.package_root)
@@ -242,6 +243,7 @@ impl ProjectScanner {
             diagnostics,
             discovered,
         );
+        index.stats.skipped_symlinks = skipped_symlinks;
         index.stats.cache_hits = cache_hits;
         index.stats.cache_misses = cache_misses;
         index.stats.cached_parse_failures = cached_parse_failures;
@@ -542,8 +544,13 @@ struct MountedFile {
     relative_path: String,
 }
 
-fn collect_mounted_files(mounts: &MountTable, failures: &mut Vec<ScanFailure>) -> Vec<MountedFile> {
+fn collect_mounted_files(
+    mounts: &MountTable,
+    failures: &mut Vec<ScanFailure>,
+    diagnostics: &mut Vec<ScanDiagnostic>,
+) -> (Vec<MountedFile>, usize) {
     let mut files = Vec::new();
+    let mut skipped_symlinks = 0usize;
     let mut seen_mounts = HashMap::<String, PathBuf>::new();
     let mut seen_roots = HashMap::<String, String>::new();
     let mut seen_files = HashMap::<String, String>::new();
@@ -577,7 +584,13 @@ fn collect_mounted_files(mounts: &MountTable, failures: &mut Vec<ScanFailure>) -
         seen_roots.insert(disk_key, mount.package_root().to_string());
 
         let mut mounted_paths = Vec::new();
-        collect_asset_files(mount.disk_root(), &mut mounted_paths, failures);
+        collect_asset_files(
+            mount.disk_root(),
+            &mut mounted_paths,
+            failures,
+            diagnostics,
+            &mut skipped_symlinks,
+        );
         for path in mounted_paths {
             let file_key = normalized_path(&path);
             if let Some(previous) = seen_files.get(&file_key) {
@@ -611,10 +624,16 @@ fn collect_mounted_files(mounts: &MountTable, failures: &mut Vec<ScanFailure>) -
             });
         }
     }
-    files
+    (files, skipped_symlinks)
 }
 
-fn collect_asset_files(root: &Path, files: &mut Vec<PathBuf>, failures: &mut Vec<ScanFailure>) {
+fn collect_asset_files(
+    root: &Path,
+    files: &mut Vec<PathBuf>,
+    failures: &mut Vec<ScanFailure>,
+    diagnostics: &mut Vec<ScanDiagnostic>,
+    skipped_symlinks: &mut usize,
+) {
     // Iterative walk with an explicit stack so deeply nested trees cannot overflow the stack.
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -654,6 +673,13 @@ fn collect_asset_files(root: &Path, files: &mut Vec<PathBuf>, failures: &mut Vec
                 }
             };
             if file_type.is_symlink() {
+                // Not followed (avoids cycles), but the skipped gap is surfaced.
+                *skipped_symlinks += 1;
+                diagnostics.push(ScanDiagnostic::warning(
+                    &path,
+                    ScanFailureStage::Discovery,
+                    "symbolic link skipped; not followed during discovery",
+                ));
                 continue;
             }
             if file_type.is_dir() {

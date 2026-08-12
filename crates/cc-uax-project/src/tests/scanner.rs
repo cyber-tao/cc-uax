@@ -60,6 +60,43 @@ fn strict_returns_partial_index_and_allow_partial_returns_success() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+fn try_symlink_file(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(target, link)
+    }
+}
+
+#[test]
+fn skipped_symlinks_are_counted_and_surfaced_as_diagnostics() {
+    let root = temp_project("symlink");
+    let real = root.join("Content/Real.uasset");
+    std::fs::write(&real, minimal_package()).unwrap();
+    // Symlink creation can require privileges (e.g. Windows); skip when it fails.
+    if try_symlink_file(&real, &root.join("Content/Link.uasset")).is_err() {
+        std::fs::remove_dir_all(&root).unwrap();
+        return;
+    }
+
+    let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
+    let index = scanner.scan(scan_options(ScanMode::Strict)).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+
+    assert_eq!(index.stats.indexed, 1);
+    assert_eq!(index.stats.skipped_symlinks, 1);
+    assert!(
+        index.diagnostics.iter().any(|diagnostic| {
+            diagnostic.stage == ScanFailureStage::Discovery
+                && diagnostic.severity == ScanDiagnosticSeverity::Warning
+        }),
+        "a skipped symlink should surface a Discovery warning"
+    );
+}
+
 #[test]
 fn world_partition_ownership_is_isolated_by_mount_root() {
     let root = temp_project("world_partition_mount_isolation");

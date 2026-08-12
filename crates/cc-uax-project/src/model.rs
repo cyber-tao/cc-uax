@@ -172,6 +172,7 @@ pub struct ScanStats {
     pub indexed: usize,
     pub failed: usize,
     pub skipped: usize,
+    pub skipped_symlinks: usize,
     pub external_actors: usize,
     pub external_objects: usize,
     pub owned_external_packages: usize,
