@@ -59,6 +59,18 @@ pub(super) fn decode_properties_for_export(
             export,
         );
     }
+
+    // A non-tagged payload decodes nothing, so the whole tagged window is opaque;
+    // every other outcome consumed up to the reader's final position.
+    let end_of_decoded = if matches!(
+        export.property_status,
+        Some(PropertyParseStatus::NonTaggedPayload)
+    ) {
+        start
+    } else {
+        reader.pos().clamp(start, end)
+    };
+    export.advance_decoded_end(end_of_decoded);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -91,10 +103,6 @@ fn consume_known_post_property_data(
                 let _ = reader.seek(window.property_end);
             }
         }
-    }
-    if reader.pos() < window.property_end {
-        let tail = preview_range(reader, reader.pos(), window.property_end);
-        export.post_property_tail = Some(tail);
     }
 }
 

@@ -19,7 +19,7 @@ use rigvm::{
     DecodedRigVmLink, decode_rigvm_link_for_export, is_rigvm_link_class,
     is_rigvm_model_object_class,
 };
-use window::export_serial_window;
+use window::{ExportSerialWindow, export_serial_window, preview_range};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct DecodeOptions {
@@ -57,6 +57,7 @@ pub(crate) struct DecodedExport {
     pub(crate) identity: DecodedExportIdentity,
     pub(crate) properties: Option<Vec<PropertyEntry>>,
     pub(crate) property_status: Option<PropertyParseStatus>,
+    pub(crate) pre_script_region: Option<ByteRangePreview>,
     pub(crate) post_property_tail: Option<ByteRangePreview>,
     pub(crate) object_guid: Option<String>,
     pub(crate) metadata: Option<Value>,
@@ -64,6 +65,21 @@ pub(crate) struct DecodedExport {
     pub(crate) user_defined_pins: Option<Vec<UserDefinedPin>>,
     pub(crate) member: Option<MemberRef>,
     pub(crate) rigvm_link: Option<DecodedRigVmLink>,
+    /// End of the contiguous decoded region (high-water mark set by each
+    /// decoder). `None` means no decoder ran and the whole payload is opaque.
+    pub(crate) decoded_end: Option<u64>,
+    /// `serial_size` of this export; the per-export byte-conservation total.
+    pub(crate) serial_size: u64,
+    /// Export payload bytes left neither decoded nor classified as opaque.
+    pub(crate) unclassified_bytes: u64,
+}
+
+impl DecodedExport {
+    /// Raises the decoded high-water mark; decoders call this after consuming
+    /// their region so the tail step opaque-classifies only what is left.
+    pub(crate) fn advance_decoded_end(&mut self, pos: u64) {
+        self.decoded_end = Some(self.decoded_end.map_or(pos, |current| current.max(pos)));
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +205,7 @@ impl Package {
                 },
                 properties: None,
                 property_status: None,
+                pre_script_region: None,
                 post_property_tail: None,
                 object_guid: None,
                 metadata: None,
@@ -196,6 +213,9 @@ impl Package {
                 user_defined_pins: None,
                 member: None,
                 rigvm_link: None,
+                decoded_end: None,
+                serial_size: 0,
+                unclassified_bytes: 0,
             };
 
             let serial_window = match export_serial_window(exp, has_script, file_len) {
@@ -209,6 +229,11 @@ impl Package {
                                 "serial_size": exp.serial_size,
                             })),
                     );
+                    // No valid window: the payload cannot be accounted for, so
+                    // every declared byte is unclassified.
+                    let size = exp.serial_size.max(0) as u64;
+                    export.serial_size = size;
+                    export.unclassified_bytes = size;
                     decoded.push(export);
                     continue;
                 }
@@ -252,10 +277,48 @@ impl Package {
                 );
             }
 
+            if let Some(window) = serial_window {
+                account_export_tail(&mut reader, window, &mut export);
+            }
+
             decoded.push(export);
         }
         decoded
     }
+}
+
+/// Registers every export byte that no decoder claimed as classified opaque so
+/// that `serial_size == decoded + opaque` holds and `unclassified_bytes` is 0.
+/// The pre-script region and the post-decoder tail are the only two gaps a
+/// bounded export window can leave once each decoder reports its high-water mark.
+fn account_export_tail(
+    reader: &mut Reader,
+    window: ExportSerialWindow,
+    export: &mut DecodedExport,
+) {
+    let serial_size = window.serial_end.saturating_sub(window.serial_start);
+    export.serial_size = serial_size;
+    if window.property_start > window.serial_start {
+        export.pre_script_region = Some(preview_range(
+            reader,
+            window.serial_start,
+            window.property_start,
+        ));
+    }
+    let decoded_end = export
+        .decoded_end
+        .unwrap_or(window.property_start)
+        .clamp(window.property_start, window.serial_end);
+    if decoded_end < window.serial_end {
+        export.post_property_tail = Some(preview_range(reader, decoded_end, window.serial_end));
+    }
+    let pre = export.pre_script_region.as_ref().map_or(0, |p| p.size);
+    let post = export.post_property_tail.as_ref().map_or(0, |p| p.size);
+    let decoded = decoded_end.saturating_sub(window.property_start);
+    export.unclassified_bytes = serial_size
+        .saturating_sub(pre)
+        .saturating_sub(post)
+        .saturating_sub(decoded);
 }
 
 fn is_pcg_model_object_class(class: &str) -> bool {

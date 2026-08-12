@@ -39,7 +39,7 @@ fn asset_summary_uses_the_new_subcommand_and_typed_schema() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], 4);
+    assert_eq!(report["schema_version"], 5);
     assert_eq!(report["view"], "summary");
     assert_eq!(report["status"], "complete");
     assert_eq!(report["summary"]["package_name"], "TestPkg");
@@ -211,7 +211,7 @@ fn max_output_bytes_below_skeleton_still_emits_valid_json() {
     assert!(output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["output"]["truncated"], true);
-    assert_eq!(report["schema_version"], 4);
+    assert_eq!(report["schema_version"], 5);
     assert!(report["status"].is_string());
     assert!(report["coverage"].is_object());
     assert!(report["summary"].is_object());

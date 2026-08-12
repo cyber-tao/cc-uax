@@ -3,7 +3,7 @@ use crate::PackageView;
 use crate::analysis::analyze_package;
 use crate::model::{
     ASSET_ANALYSIS_SCHEMA_VERSION, AnalysisStatus, AssetAnalysis, AssetView, DecodedValue,
-    KnownOpaqueKind,
+    KnownOpaqueKind, ParseCoverage,
 };
 use crate::name::NameMap;
 use crate::object::{ObjectImport, PackageIndex};
@@ -38,7 +38,7 @@ fn package_view_binds_analysis_to_its_original_bytes() {
 }
 
 #[test]
-fn opaque_tail_makes_analysis_partial_without_relying_on_diagnostics() {
+fn classified_opaque_tail_is_recorded_without_forcing_partial() {
     let base = Package::parse(&build_minimal_package()).unwrap();
     let mut data = Vec::new();
     data.push(0); // object property serialization control
@@ -76,10 +76,14 @@ fn opaque_tail_makes_analysis_partial_without_relying_on_diagnostics() {
 
     let analysis = analyze_package(&package, &data, AssetView::Full);
     assert!(analysis.diagnostics.is_empty());
-    assert_eq!(analysis.status, AnalysisStatus::Partial);
+    // A classified opaque tail is honest evidence, not a defect: the asset stays
+    // complete while the bytes are recorded, and nothing is left unclassified.
+    assert_eq!(analysis.status, AnalysisStatus::Complete);
     assert_eq!(analysis.coverage.property_exports_complete, 1);
     assert_eq!(analysis.coverage.known_opaque_regions, 1);
     assert_eq!(analysis.coverage.opaque_bytes, 4);
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+    assert_eq!(analysis.coverage.export_bytes_total, data.len() as u64);
     assert_eq!(
         analysis.known_opaque[0].kind,
         KnownOpaqueKind::PostPropertyTail
@@ -92,6 +96,182 @@ fn opaque_tail_makes_analysis_partial_without_relying_on_diagnostics() {
         analysis.exports[0].properties[0].value,
         DecodedValue::Integer(42)
     ));
+}
+
+#[test]
+fn pre_and_post_script_regions_are_classified_with_zero_unclassified() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut data = Vec::new();
+    data.extend_from_slice(&[0x11u8; 8]); // pre-script region (before the tagged block)
+    let tagged_start = data.len();
+    data.push(0); // object property serialization control
+    push_raw_name(&mut data, 1); // Value
+    push_raw_name(&mut data, 2); // IntProperty
+    push_i32(&mut data, 0); // complete type-name parameter count
+    push_i32(&mut data, 4); // value size
+    data.push(0); // property tag flags
+    push_i32(&mut data, 42);
+    push_raw_name(&mut data, 3); // None
+    let tagged_end = data.len();
+    data.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]); // post-property tail
+
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "Obj".into(),
+                "Value".into(),
+                "IntProperty".into(),
+                "None".into(),
+            ],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(
+            0,
+            data.len() as i64,
+            tagged_start as i64,
+            tagged_end as i64,
+        )],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert!(analysis.diagnostics.is_empty());
+    assert_eq!(analysis.status, AnalysisStatus::Complete);
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+    assert_eq!(analysis.coverage.export_bytes_total, data.len() as u64);
+    assert_eq!(analysis.coverage.opaque_bytes, 12);
+    assert_eq!(analysis.coverage.known_opaque_regions, 2);
+
+    let pre = analysis
+        .known_opaque
+        .iter()
+        .find(|region| region.kind == KnownOpaqueKind::PreScriptRegion)
+        .expect("pre-script region is classified");
+    let pre_range = pre.byte_range.as_ref().unwrap();
+    assert_eq!(pre_range.start, 0);
+    assert_eq!(pre_range.size, tagged_start as u64);
+
+    let post = analysis
+        .known_opaque
+        .iter()
+        .find(|region| region.kind == KnownOpaqueKind::PostPropertyTail)
+        .expect("post-property tail is classified");
+    let post_range = post.byte_range.as_ref().unwrap();
+    assert_eq!(post_range.end, data.len() as u64);
+    assert_eq!(post_range.size, 4);
+
+    assert!(matches!(
+        analysis.exports[0].properties[0].value,
+        DecodedValue::Integer(42)
+    ));
+}
+
+#[test]
+fn non_tagged_payload_is_classified_as_one_opaque_region() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut data = vec![0]; // object property serialization control
+    data.extend_from_slice(&[1, 2, 3, 4]); // not a decodable tagged-property layout
+
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec!["Obj".into()],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    // A non-tagged payload decodes nothing; the whole window must surface as one
+    // classified opaque region and the tagged-property capability is partial.
+    assert_eq!(analysis.status, AnalysisStatus::Partial);
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+    assert_eq!(analysis.coverage.export_bytes_total, data.len() as u64);
+    assert_eq!(analysis.coverage.known_opaque_regions, 1);
+    assert_eq!(
+        analysis.known_opaque[0].kind,
+        KnownOpaqueKind::PostPropertyTail
+    );
+    let range = analysis.known_opaque[0].byte_range.as_ref().unwrap();
+    assert_eq!(range.start, 0);
+    assert_eq!(range.size, data.len() as u64);
+}
+
+#[test]
+fn parse_coverage_add_assign_doubles_every_serialized_field() {
+    // A full struct literal forces every field to be named here, and the
+    // AddAssign impl destructures every field, so a new coverage field cannot be
+    // added without updating both -- drift is a compile error, not a silent gap.
+    let base = ParseCoverage {
+        bytes_total: 1,
+        export_bytes_total: 2,
+        exports_total: 3,
+        exports_analyzed: 4,
+        property_exports_total: 5,
+        property_exports_complete: 6,
+        properties_decoded: 7,
+        graph_nodes_total: 8,
+        graph_nodes_decoded: 9,
+        pins_decoded: 10,
+        graph_edges_decoded: 11,
+        rigvm_graphs_total: 12,
+        rigvm_graphs_decoded: 13,
+        rigvm_nodes_total: 14,
+        rigvm_nodes_decoded: 15,
+        rigvm_pins_total: 16,
+        rigvm_pins_decoded: 17,
+        rigvm_links_total: 18,
+        rigvm_links_decoded: 19,
+        pcg_graphs_total: 20,
+        pcg_graphs_decoded: 21,
+        pcg_nodes_total: 22,
+        pcg_nodes_decoded: 23,
+        pcg_pins_total: 24,
+        pcg_pins_decoded: 25,
+        pcg_edges_total: 26,
+        pcg_edges_decoded: 27,
+        state_tree_graphs_total: 28,
+        state_tree_graphs_decoded: 29,
+        state_tree_states_total: 30,
+        state_tree_states_decoded: 31,
+        state_tree_tasks_decoded: 32,
+        state_tree_conditions_decoded: 33,
+        state_tree_transitions_decoded: 34,
+        known_opaque_regions: 35,
+        opaque_bytes: 36,
+        unclassified_bytes: 37,
+        diagnostic_errors: 38,
+        diagnostic_warnings: 39,
+    };
+
+    let mut doubled = base.clone();
+    doubled += &base;
+
+    let base_map = serde_json_crate::to_value(&base).unwrap();
+    let doubled_map = serde_json_crate::to_value(&doubled).unwrap();
+    let base_obj = base_map.as_object().unwrap();
+    let doubled_obj = doubled_map.as_object().unwrap();
+    assert_eq!(
+        base_obj.len(),
+        39,
+        "every coverage field must be non-zero here"
+    );
+    for (key, value) in base_obj {
+        let single = value.as_u64().unwrap();
+        let summed = doubled_obj
+            .get(key)
+            .and_then(serde_json_crate::Value::as_u64)
+            .unwrap_or_else(|| panic!("field {key} was dropped by AddAssign"));
+        assert_eq!(summed, single * 2, "field {key} was not summed");
+    }
 }
 
 #[test]

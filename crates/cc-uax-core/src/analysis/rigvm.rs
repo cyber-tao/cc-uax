@@ -623,6 +623,7 @@ mod tests {
                 guid: None,
             }]),
             property_status: Some(PropertyParseStatus::Complete),
+            pre_script_region: None,
             post_property_tail: None,
             object_guid: None,
             metadata: None,
@@ -630,6 +631,9 @@ mod tests {
             user_defined_pins: None,
             member: None,
             rigvm_link: None,
+            decoded_end: None,
+            serial_size: 0,
+            unclassified_bytes: 0,
         };
         let mut invalid = 0;
         assert_eq!(property_object_indices(&export, "Nodes", &mut invalid), [3]);

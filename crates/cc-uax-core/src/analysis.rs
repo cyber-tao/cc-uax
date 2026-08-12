@@ -162,8 +162,15 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         .filter_map(|region| region.byte_range.as_ref())
         .map(|range| range.size)
         .sum();
+    let export_bytes_total = report.exports.iter().map(|export| export.serial_size).sum();
+    let unclassified_bytes = report
+        .exports
+        .iter()
+        .map(|export| export.unclassified_bytes)
+        .sum();
     let coverage = ParseCoverage {
         bytes_total: bytes.len() as u64,
+        export_bytes_total,
         exports_total: package.exports.len(),
         exports_analyzed: report.exports.len(),
         property_exports_total: property_coverage.exports_total,
@@ -198,6 +205,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         state_tree_transitions_decoded: state_tree_coverage.transitions_decoded,
         known_opaque_regions,
         opaque_bytes,
+        unclassified_bytes,
         diagnostic_errors,
         diagnostic_warnings,
     };
@@ -205,7 +213,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         package,
         diagnostic_errors,
         diagnostic_warnings,
-        known_opaque_regions,
+        unclassified_bytes,
         &capabilities,
     );
 
@@ -727,12 +735,13 @@ fn determine_analysis_status(
     package: &Package,
     diagnostic_errors: usize,
     diagnostic_warnings: usize,
-    known_opaque_regions: usize,
+    unclassified_bytes: u64,
     capabilities: &[AnalysisCapability],
 ) -> AnalysisStatus {
     let unsupported_version = package.summary.file_version_ue5 > ue5::IMPORT_TYPE_HIERARCHIES;
-    // Property/graph partiality is already surfaced as a non-complete capability,
-    // so it is covered by `has_incomplete_capability` rather than passed in.
+    // A classified opaque region is honest evidence, not a defect, so it only
+    // downgrades status through the capability it blocks (already surfaced as a
+    // non-complete capability). Unclassified bytes are always a defect.
     let has_incomplete_capability = capabilities
         .iter()
         .any(|capability| capability.status != AnalysisStatus::Complete);
@@ -740,7 +749,7 @@ fn determine_analysis_status(
         AnalysisStatus::Unsupported
     } else if diagnostic_errors > 0
         || diagnostic_warnings > 0
-        || known_opaque_regions > 0
+        || unclassified_bytes > 0
         || has_incomplete_capability
     {
         AnalysisStatus::Partial
@@ -910,6 +919,22 @@ fn collect_known_opaque(
     let mut opaque = Vec::new();
     for export in &report.exports {
         let export_path = format!("/exports/{}", export.identity.index);
+        if let Some(pre) = &export.pre_script_region
+            && pre.size > 0
+        {
+            opaque.push(KnownOpaque {
+                path: format!("{export_path}/pre_script_region"),
+                kind: KnownOpaqueKind::PreScriptRegion,
+                type_name: Some(export.identity.class.clone()),
+                reason: "bytes precede the tagged-property block and are not decoded".into(),
+                byte_range: Some(OpaqueByteRange {
+                    start: pre.start,
+                    end: pre.end,
+                    size: pre.size,
+                    preview: pre.preview.clone(),
+                }),
+            });
+        }
         if let Some(tail) = &export.post_property_tail
             && tail.size > 0
         {
@@ -1054,9 +1079,10 @@ fn dedupe_known_opaque(values: &mut Vec<KnownOpaque>) {
 fn opaque_kind_rank(kind: KnownOpaqueKind) -> u8 {
     match kind {
         KnownOpaqueKind::PropertyValue => 0,
-        KnownOpaqueKind::PostPropertyTail => 1,
-        KnownOpaqueKind::Metadata => 2,
-        KnownOpaqueKind::Capability => 3,
+        KnownOpaqueKind::PreScriptRegion => 1,
+        KnownOpaqueKind::PostPropertyTail => 2,
+        KnownOpaqueKind::Metadata => 3,
+        KnownOpaqueKind::Capability => 4,
     }
 }
 

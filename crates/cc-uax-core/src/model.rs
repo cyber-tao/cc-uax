@@ -1,8 +1,9 @@
 use crate::graph_models::{LogicGraph, PcgGraph, RigVmGraph, StateTreeGraph};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::ops::AddAssign;
 
-pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 4;
+pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 5;
 
 /// serde `skip_serializing_if` helper: drop `false` booleans from the rendered
 /// report so only set flags are emitted.
@@ -82,6 +83,10 @@ pub struct AssetAnalysis {
 #[serde(default)]
 pub struct ParseCoverage {
     pub bytes_total: u64,
+    /// Sum of every analyzed export's `serial_size`; the denominator for byte
+    /// conservation over export payloads.
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub export_bytes_total: u64,
     pub exports_total: usize,
     pub exports_analyzed: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
@@ -149,10 +154,135 @@ pub struct ParseCoverage {
     /// Total bytes covered by `known_opaque` regions that carry a byte range.
     #[serde(skip_serializing_if = "is_zero_u64")]
     pub opaque_bytes: u64,
+    /// Export payload bytes that are neither decoded nor classified as opaque.
+    /// Always a defect: a non-zero value means an export window was not fully
+    /// accounted for.
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub unclassified_bytes: u64,
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub diagnostic_errors: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub diagnostic_warnings: usize,
+}
+
+impl AddAssign<&ParseCoverage> for ParseCoverage {
+    /// Field-complete accumulation used to aggregate per-asset coverage into a
+    /// project total. Every field must be summed here; the drift test in
+    /// `cc-uax-project` walks the serialized map to catch any omission.
+    fn add_assign(&mut self, other: &ParseCoverage) {
+        let ParseCoverage {
+            bytes_total,
+            export_bytes_total,
+            exports_total,
+            exports_analyzed,
+            property_exports_total,
+            property_exports_complete,
+            properties_decoded,
+            graph_nodes_total,
+            graph_nodes_decoded,
+            pins_decoded,
+            graph_edges_decoded,
+            rigvm_graphs_total,
+            rigvm_graphs_decoded,
+            rigvm_nodes_total,
+            rigvm_nodes_decoded,
+            rigvm_pins_total,
+            rigvm_pins_decoded,
+            rigvm_links_total,
+            rigvm_links_decoded,
+            pcg_graphs_total,
+            pcg_graphs_decoded,
+            pcg_nodes_total,
+            pcg_nodes_decoded,
+            pcg_pins_total,
+            pcg_pins_decoded,
+            pcg_edges_total,
+            pcg_edges_decoded,
+            state_tree_graphs_total,
+            state_tree_graphs_decoded,
+            state_tree_states_total,
+            state_tree_states_decoded,
+            state_tree_tasks_decoded,
+            state_tree_conditions_decoded,
+            state_tree_transitions_decoded,
+            known_opaque_regions,
+            opaque_bytes,
+            unclassified_bytes,
+            diagnostic_errors,
+            diagnostic_warnings,
+        } = other;
+        self.bytes_total = self.bytes_total.saturating_add(*bytes_total);
+        self.export_bytes_total = self.export_bytes_total.saturating_add(*export_bytes_total);
+        self.exports_total = self.exports_total.saturating_add(*exports_total);
+        self.exports_analyzed = self.exports_analyzed.saturating_add(*exports_analyzed);
+        self.property_exports_total = self
+            .property_exports_total
+            .saturating_add(*property_exports_total);
+        self.property_exports_complete = self
+            .property_exports_complete
+            .saturating_add(*property_exports_complete);
+        self.properties_decoded = self.properties_decoded.saturating_add(*properties_decoded);
+        self.graph_nodes_total = self.graph_nodes_total.saturating_add(*graph_nodes_total);
+        self.graph_nodes_decoded = self
+            .graph_nodes_decoded
+            .saturating_add(*graph_nodes_decoded);
+        self.pins_decoded = self.pins_decoded.saturating_add(*pins_decoded);
+        self.graph_edges_decoded = self
+            .graph_edges_decoded
+            .saturating_add(*graph_edges_decoded);
+        self.rigvm_graphs_total = self.rigvm_graphs_total.saturating_add(*rigvm_graphs_total);
+        self.rigvm_graphs_decoded = self
+            .rigvm_graphs_decoded
+            .saturating_add(*rigvm_graphs_decoded);
+        self.rigvm_nodes_total = self.rigvm_nodes_total.saturating_add(*rigvm_nodes_total);
+        self.rigvm_nodes_decoded = self
+            .rigvm_nodes_decoded
+            .saturating_add(*rigvm_nodes_decoded);
+        self.rigvm_pins_total = self.rigvm_pins_total.saturating_add(*rigvm_pins_total);
+        self.rigvm_pins_decoded = self.rigvm_pins_decoded.saturating_add(*rigvm_pins_decoded);
+        self.rigvm_links_total = self.rigvm_links_total.saturating_add(*rigvm_links_total);
+        self.rigvm_links_decoded = self
+            .rigvm_links_decoded
+            .saturating_add(*rigvm_links_decoded);
+        self.pcg_graphs_total = self.pcg_graphs_total.saturating_add(*pcg_graphs_total);
+        self.pcg_graphs_decoded = self.pcg_graphs_decoded.saturating_add(*pcg_graphs_decoded);
+        self.pcg_nodes_total = self.pcg_nodes_total.saturating_add(*pcg_nodes_total);
+        self.pcg_nodes_decoded = self.pcg_nodes_decoded.saturating_add(*pcg_nodes_decoded);
+        self.pcg_pins_total = self.pcg_pins_total.saturating_add(*pcg_pins_total);
+        self.pcg_pins_decoded = self.pcg_pins_decoded.saturating_add(*pcg_pins_decoded);
+        self.pcg_edges_total = self.pcg_edges_total.saturating_add(*pcg_edges_total);
+        self.pcg_edges_decoded = self.pcg_edges_decoded.saturating_add(*pcg_edges_decoded);
+        self.state_tree_graphs_total = self
+            .state_tree_graphs_total
+            .saturating_add(*state_tree_graphs_total);
+        self.state_tree_graphs_decoded = self
+            .state_tree_graphs_decoded
+            .saturating_add(*state_tree_graphs_decoded);
+        self.state_tree_states_total = self
+            .state_tree_states_total
+            .saturating_add(*state_tree_states_total);
+        self.state_tree_states_decoded = self
+            .state_tree_states_decoded
+            .saturating_add(*state_tree_states_decoded);
+        self.state_tree_tasks_decoded = self
+            .state_tree_tasks_decoded
+            .saturating_add(*state_tree_tasks_decoded);
+        self.state_tree_conditions_decoded = self
+            .state_tree_conditions_decoded
+            .saturating_add(*state_tree_conditions_decoded);
+        self.state_tree_transitions_decoded = self
+            .state_tree_transitions_decoded
+            .saturating_add(*state_tree_transitions_decoded);
+        self.known_opaque_regions = self
+            .known_opaque_regions
+            .saturating_add(*known_opaque_regions);
+        self.opaque_bytes = self.opaque_bytes.saturating_add(*opaque_bytes);
+        self.unclassified_bytes = self.unclassified_bytes.saturating_add(*unclassified_bytes);
+        self.diagnostic_errors = self.diagnostic_errors.saturating_add(*diagnostic_errors);
+        self.diagnostic_warnings = self
+            .diagnostic_warnings
+            .saturating_add(*diagnostic_warnings);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -330,6 +460,7 @@ pub struct KnownOpaque {
 #[serde(rename_all = "snake_case")]
 pub enum KnownOpaqueKind {
     PropertyValue,
+    PreScriptRegion,
     PostPropertyTail,
     Metadata,
     Capability,

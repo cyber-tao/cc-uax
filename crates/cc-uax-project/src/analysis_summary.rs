@@ -107,6 +107,8 @@ pub struct KnownOpaqueSummary {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub property_values: usize,
     #[serde(default, skip_serializing_if = "is_zero")]
+    pub pre_script_regions: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub post_property_tails: usize,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub metadata: usize,
@@ -332,6 +334,7 @@ impl KnownOpaqueSummary {
         for region in regions {
             match region.kind {
                 KnownOpaqueKind::PropertyValue => summary.property_values += 1,
+                KnownOpaqueKind::PreScriptRegion => summary.pre_script_regions += 1,
                 KnownOpaqueKind::PostPropertyTail => summary.post_property_tails += 1,
                 KnownOpaqueKind::Metadata => summary.metadata += 1,
                 KnownOpaqueKind::Capability => summary.capabilities += 1,
@@ -373,7 +376,7 @@ impl ProjectAnalysisSummary {
                 AnalysisStatus::Partial => aggregate.partial_assets += 1,
                 AnalysisStatus::Unsupported => aggregate.unsupported_assets += 1,
             }
-            add_coverage(&mut aggregate.coverage, &summary.coverage);
+            aggregate.coverage += &summary.coverage;
         }
         aggregate.status = if aggregate.scan_failures > 0 {
             AnalysisStatus::Partial
@@ -386,103 +389,4 @@ impl ProjectAnalysisSummary {
         };
         aggregate
     }
-}
-
-fn add_coverage(total: &mut ParseCoverage, value: &ParseCoverage) {
-    total.bytes_total = total.bytes_total.saturating_add(value.bytes_total);
-    total.exports_total = total.exports_total.saturating_add(value.exports_total);
-    total.exports_analyzed = total
-        .exports_analyzed
-        .saturating_add(value.exports_analyzed);
-    total.property_exports_total = total
-        .property_exports_total
-        .saturating_add(value.property_exports_total);
-    total.property_exports_complete = total
-        .property_exports_complete
-        .saturating_add(value.property_exports_complete);
-    total.properties_decoded = total
-        .properties_decoded
-        .saturating_add(value.properties_decoded);
-    total.graph_nodes_total = total
-        .graph_nodes_total
-        .saturating_add(value.graph_nodes_total);
-    total.graph_nodes_decoded = total
-        .graph_nodes_decoded
-        .saturating_add(value.graph_nodes_decoded);
-    total.pins_decoded = total.pins_decoded.saturating_add(value.pins_decoded);
-    total.graph_edges_decoded = total
-        .graph_edges_decoded
-        .saturating_add(value.graph_edges_decoded);
-    total.rigvm_graphs_total = total
-        .rigvm_graphs_total
-        .saturating_add(value.rigvm_graphs_total);
-    total.rigvm_graphs_decoded = total
-        .rigvm_graphs_decoded
-        .saturating_add(value.rigvm_graphs_decoded);
-    total.rigvm_nodes_total = total
-        .rigvm_nodes_total
-        .saturating_add(value.rigvm_nodes_total);
-    total.rigvm_nodes_decoded = total
-        .rigvm_nodes_decoded
-        .saturating_add(value.rigvm_nodes_decoded);
-    total.rigvm_pins_total = total
-        .rigvm_pins_total
-        .saturating_add(value.rigvm_pins_total);
-    total.rigvm_pins_decoded = total
-        .rigvm_pins_decoded
-        .saturating_add(value.rigvm_pins_decoded);
-    total.rigvm_links_total = total
-        .rigvm_links_total
-        .saturating_add(value.rigvm_links_total);
-    total.rigvm_links_decoded = total
-        .rigvm_links_decoded
-        .saturating_add(value.rigvm_links_decoded);
-    total.pcg_graphs_total = total
-        .pcg_graphs_total
-        .saturating_add(value.pcg_graphs_total);
-    total.pcg_graphs_decoded = total
-        .pcg_graphs_decoded
-        .saturating_add(value.pcg_graphs_decoded);
-    total.pcg_nodes_total = total.pcg_nodes_total.saturating_add(value.pcg_nodes_total);
-    total.pcg_nodes_decoded = total
-        .pcg_nodes_decoded
-        .saturating_add(value.pcg_nodes_decoded);
-    total.pcg_pins_total = total.pcg_pins_total.saturating_add(value.pcg_pins_total);
-    total.pcg_pins_decoded = total
-        .pcg_pins_decoded
-        .saturating_add(value.pcg_pins_decoded);
-    total.pcg_edges_total = total.pcg_edges_total.saturating_add(value.pcg_edges_total);
-    total.pcg_edges_decoded = total
-        .pcg_edges_decoded
-        .saturating_add(value.pcg_edges_decoded);
-    total.state_tree_graphs_total = total
-        .state_tree_graphs_total
-        .saturating_add(value.state_tree_graphs_total);
-    total.state_tree_graphs_decoded = total
-        .state_tree_graphs_decoded
-        .saturating_add(value.state_tree_graphs_decoded);
-    total.state_tree_states_total = total
-        .state_tree_states_total
-        .saturating_add(value.state_tree_states_total);
-    total.state_tree_states_decoded = total
-        .state_tree_states_decoded
-        .saturating_add(value.state_tree_states_decoded);
-    total.state_tree_tasks_decoded = total
-        .state_tree_tasks_decoded
-        .saturating_add(value.state_tree_tasks_decoded);
-    total.state_tree_conditions_decoded = total
-        .state_tree_conditions_decoded
-        .saturating_add(value.state_tree_conditions_decoded);
-    total.state_tree_transitions_decoded = total
-        .state_tree_transitions_decoded
-        .saturating_add(value.state_tree_transitions_decoded);
-    total.known_opaque_regions = total
-        .known_opaque_regions
-        .saturating_add(value.known_opaque_regions);
-    total.diagnostic_errors = total
-        .diagnostic_errors
-        .saturating_add(value.diagnostic_errors);
-    total.diagnostic_warnings = total
-        .diagnostic_warnings
-        .saturating_add(value.diagnostic_warnings);
 }

@@ -798,6 +798,7 @@ fn decoded_export(index: i32, name: &str, pins: Option<Vec<Pin>>) -> DecodedExpo
         },
         properties: None,
         property_status: None,
+        pre_script_region: None,
         post_property_tail: None,
         object_guid: None,
         metadata: None,
@@ -805,6 +806,9 @@ fn decoded_export(index: i32, name: &str, pins: Option<Vec<Pin>>) -> DecodedExpo
         user_defined_pins: None,
         member: None,
         rigvm_link: None,
+        decoded_end: None,
+        serial_size: 0,
+        unclassified_bytes: 0,
     }
 }
 

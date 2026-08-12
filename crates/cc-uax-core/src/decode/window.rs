@@ -5,6 +5,10 @@ use crate::reader::Reader;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ExportSerialWindow {
+    /// First byte of the export payload (`serial_offset`). Equal to
+    /// `property_start` unless the class writes data before its tagged
+    /// properties, in which case UE records a non-zero script start offset.
+    pub serial_start: u64,
     pub property_start: u64,
     pub property_end: u64,
     pub serial_end: u64,
@@ -41,6 +45,7 @@ pub(super) fn export_serial_window(
 
     if !has_script {
         return Ok(Some(ExportSerialWindow {
+            serial_start,
             property_start: serial_start,
             property_end: serial_end,
             serial_end,
@@ -51,6 +56,7 @@ pub(super) fn export_serial_window(
     let script_end = exp.script_serialization_end_offset;
     if script_start == 0 && script_end == 0 {
         return Ok(Some(ExportSerialWindow {
+            serial_start,
             property_start: serial_start,
             property_end: serial_end,
             serial_end,
@@ -64,6 +70,7 @@ pub(super) fn export_serial_window(
     }
 
     Ok(Some(ExportSerialWindow {
+        serial_start,
         property_start: serial_start
             .checked_add(script_start as u64)
             .ok_or_else(|| "script serialization start overflows u64".to_string())?,

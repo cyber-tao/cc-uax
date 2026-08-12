@@ -1,5 +1,5 @@
 use super::DecodedExport;
-use super::window::{ExportSerialWindow, preview_range};
+use super::window::ExportSerialWindow;
 use crate::diagnostic::Diagnostic;
 use crate::package::Package;
 use crate::pin::{
@@ -154,8 +154,7 @@ pub(super) fn decode_pins_for_export(
         }
     }
     if let Some((pins, user_defined_pins, selected_diagnostics)) = best {
-        export.post_property_tail =
-            (best_pos < pin_end).then(|| preview_range(reader, best_pos, pin_end));
+        export.advance_decoded_end(best_pos);
         let _ = reader.seek(best_pos);
         export.pins = Some(pins);
         export.user_defined_pins = user_defined_pins;

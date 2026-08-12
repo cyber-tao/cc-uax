@@ -1,5 +1,5 @@
 use super::DecodedExport;
-use super::window::{ExportSerialWindow, preview_range};
+use super::window::ExportSerialWindow;
 use crate::diagnostic::Diagnostic;
 use crate::reader::Reader;
 use crate::structured_value::json;
@@ -103,13 +103,10 @@ pub(super) fn decode_rigvm_link_for_export(
         Ok(value) => value,
         Err(err) => {
             record_link_decode_failure(
-                reader,
                 start,
-                end,
                 export_i,
                 format!("failed to decode source pin path: {err:#}"),
                 diagnostics,
-                export,
             );
             return;
         }
@@ -118,13 +115,10 @@ pub(super) fn decode_rigvm_link_for_export(
         Ok(value) => value,
         Err(err) => {
             record_link_decode_failure(
-                reader,
                 start,
-                end,
                 export_i,
                 format!("failed to decode target pin path: {err:#}"),
                 diagnostics,
-                export,
             );
             return;
         }
@@ -134,9 +128,9 @@ pub(super) fn decode_rigvm_link_for_export(
         source_pin_path,
         target_pin_path,
     });
+    let consumed = start + payload_reader.pos();
+    export.advance_decoded_end(consumed);
     if payload_reader.remaining() > 0 {
-        let tail_start = start + payload_reader.pos();
-        export.post_property_tail = Some(preview_range(reader, tail_start, end));
         diagnostics.push(
             Diagnostic::warning(
                 "rigvm_link_trailing_bytes",
@@ -146,7 +140,7 @@ pub(super) fn decode_rigvm_link_for_export(
                     payload_reader.remaining()
                 ),
             )
-            .with_offset(tail_start)
+            .with_offset(consumed)
             .with_context(json!({
                 "payload_start": start,
                 "payload_end": end,
@@ -157,15 +151,12 @@ pub(super) fn decode_rigvm_link_for_export(
 }
 
 fn record_link_decode_failure(
-    reader: &mut Reader<'_>,
     start: u64,
-    end: u64,
     export_i: usize,
     message: String,
     diagnostics: &mut Vec<Diagnostic>,
-    export: &mut DecodedExport,
 ) {
-    export.post_property_tail = Some(preview_range(reader, start, end));
+    // The link decoded nothing; the tail step classifies the whole window opaque.
     diagnostics.push(
         Diagnostic::error(
             "rigvm_link_decode_failed",
@@ -209,6 +200,7 @@ mod tests {
         decode_rigvm_link_for_export(
             &mut reader,
             ExportSerialWindow {
+                serial_start: 0,
                 property_start: 0,
                 property_end: payload.len() as u64,
                 serial_end: payload.len() as u64,
@@ -241,6 +233,7 @@ mod tests {
         decode_rigvm_link_for_export(
             &mut reader,
             ExportSerialWindow {
+                serial_start: 0,
                 property_start: 0,
                 property_end: payload.len() as u64,
                 serial_end: payload.len() as u64,
@@ -253,10 +246,9 @@ mod tests {
         assert!(export.rigvm_link.is_none());
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, "rigvm_link_decode_failed");
-        assert_eq!(
-            export.post_property_tail.unwrap().size,
-            payload.len() as u64
-        );
+        // The decoder leaves the window unaccounted; the export-tail step
+        // classifies it opaque, so no decoded high-water mark is recorded.
+        assert!(export.decoded_end.is_none());
     }
 
     fn empty_link_export() -> DecodedExport {
@@ -269,6 +261,7 @@ mod tests {
             },
             properties: None,
             property_status: None,
+            pre_script_region: None,
             post_property_tail: None,
             object_guid: None,
             metadata: None,
@@ -276,6 +269,9 @@ mod tests {
             user_defined_pins: None,
             member: None,
             rigvm_link: None,
+            decoded_end: None,
+            serial_size: 0,
+            unclassified_bytes: 0,
         }
     }
 }
