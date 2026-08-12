@@ -290,6 +290,36 @@ fn scans_real_project_from_environment() {
             .map(|asset| asset.analysis.known_opaque.identities.len())
             .sum::<usize>()
     );
+    // Byte conservation (P0): every export byte is decoded or classified opaque.
+    assert_eq!(
+        index.analysis.coverage.unclassified_bytes, 0,
+        "aggregate unclassified export bytes must be 0"
+    );
+    assert_eq!(
+        index
+            .assets
+            .values()
+            .map(|asset| asset.analysis.coverage.unclassified_bytes)
+            .sum::<u64>(),
+        0,
+        "no asset may leave export bytes unclassified"
+    );
+    // Aggregated opaque_bytes equals the sum of per-asset totals (P1).
+    assert_eq!(
+        index.analysis.coverage.opaque_bytes,
+        index
+            .assets
+            .values()
+            .map(|asset| asset.analysis.coverage.opaque_bytes)
+            .sum::<u64>()
+    );
+    // Adjacency carries no package self-loop (P2).
+    let self_loops = index
+        .forward
+        .iter()
+        .filter(|(package, references)| references.contains(package.as_str()))
+        .count();
+    assert_eq!(self_loops, 0, "adjacency must not contain self-loops");
     assert!(
         index.failures.is_empty(),
         "real project scan failures: {:#?}",

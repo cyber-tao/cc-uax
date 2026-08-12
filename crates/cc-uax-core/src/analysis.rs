@@ -28,14 +28,15 @@ use state_tree::build_state_tree_graphs;
 /// A parsed package tied to the exact byte slice from which it was created.
 ///
 /// Decoding is intentionally available only through [`PackageView::analyze`],
-/// so callers cannot accidentally parse package tables from one file and then
-/// decode export offsets against a different byte buffer.
+/// and the view borrows its bytes for `'a`, so a view cannot outlive the buffer
+/// its export offsets are decoded against:
 ///
 /// ```compile_fail
-/// let bytes_a = Vec::<u8>::new();
-/// let bytes_b = Vec::<u8>::new();
-/// let view = cc_uax_core::PackageView::parse(&bytes_a).unwrap();
-/// let _ = view.analyze(cc_uax_core::AssetView::Full, &bytes_b);
+/// let view = {
+///     let bytes = Vec::<u8>::new();
+///     cc_uax_core::PackageView::parse(&bytes).unwrap()
+/// };
+/// let _ = view.analyze(cc_uax_core::AssetView::Full);
 /// ```
 pub struct PackageView<'a> {
     bytes: &'a [u8],
