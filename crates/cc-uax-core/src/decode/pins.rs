@@ -251,6 +251,10 @@ pub(crate) fn is_graph_node_class(class_full: &str) -> bool {
     if simple.starts_with("NiagaraNode") || simple == "NiagaraOverviewNode" {
         return true;
     }
+    // UAnimGraphNodeBinding / UAnimGraphNodeBinding_Base derive from UObject, not
+    // UEdGraphNode — they are binding descriptors that merely have "GraphNode" in the
+    // name and carry no pin stream. Excluding "Binding" keeps the fallback below from
+    // misclassifying them as graph nodes and misparsing their bytes as pins.
     if simple.contains("Binding") {
         return false;
     }
