@@ -185,13 +185,17 @@ fn tier_graph_elements(value: &mut Value) -> usize {
 /// Top-level detail sections, in priority order, that the truncation and
 /// wholesale-elision tiers operate on. The evidence skeleton
 /// (status/coverage/capabilities/diagnostics/known_opaque/reachability) is not
-/// listed here and is therefore always preserved.
-const DETAIL_SECTION_KEYS: [&str; 10] = [
+/// listed here and is therefore always preserved. `imports`/`references` rank
+/// below the decoded exports and graphs: reference metadata is shed before core
+/// evidence when the budget is tight.
+const DETAIL_SECTION_KEYS: [&str; 12] = [
     "exports",
     "graphs",
     "rigvm_graphs",
     "pcg_graphs",
     "state_tree_graphs",
+    "imports",
+    "references",
     "inventory",
     "focused",
     "forward",
@@ -553,6 +557,56 @@ mod tests {
             "truncation under-filled the budget: {} of {budget}",
             text.len()
         );
+    }
+
+    #[test]
+    fn imports_and_references_are_budget_managed() {
+        // A large import table must be shed like any other detail section. Before
+        // `imports`/`references` were registered as detail sections they were emitted
+        // unconditionally, so `--view full`/`references` on an import-heavy package
+        // could blow past `--max-output-bytes`.
+        let imports: Vec<Value> = (0..2000)
+            .map(|i| {
+                json!({
+                    "index": i,
+                    "class_package": "/Script/Engine",
+                    "class": "BlueprintGeneratedClass",
+                    "name": format!("Import_{i}"),
+                    "outer_index": 0,
+                    "full_name": format!("/Game/Thing/Import_{i}"),
+                })
+            })
+            .collect();
+        let report = json!({
+            "schema_version": 5,
+            "status": "complete",
+            "summary": { "package_name": "Big" },
+            "coverage": { "exports_total": 0 },
+            "imports": imports,
+            "references": {
+                "assets": (0..500).map(|i| format!("/Game/Ref/Asset_{i}")).collect::<Vec<_>>(),
+                "soft": (0..500).map(|i| format!("/Game/Ref/Soft_{i}")).collect::<Vec<_>>(),
+            },
+        });
+        let budget = 4000;
+        let text = render_within_budget(&report, budget, true).unwrap();
+        assert!(
+            text.len() <= budget,
+            "emitted {} exceeds budget {budget}",
+            text.len()
+        );
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["status"], "complete");
+        assert_eq!(parsed["output"]["truncated"], true);
+        // The import table is truncated to leading elements with a trailing marker,
+        // not emitted in full.
+        let kept = parsed["imports"].as_array().unwrap();
+        assert!(
+            kept.len() < 2000,
+            "imports was not budget-managed ({} elements kept)",
+            kept.len()
+        );
+        assert!(kept.last().unwrap()["@elided"].is_number());
     }
 
     #[test]
