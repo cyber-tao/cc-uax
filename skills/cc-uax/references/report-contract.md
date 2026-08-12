@@ -42,7 +42,7 @@ Never treat an empty diagnostics array alone as completeness. Check `status`, `c
 
 ## Project graph
 
-Project reports expose one inventory and bidirectional adjacency for all scanned mounts. `reachability.configured_roots` records config-derived package/class roots and whether they resolved to scanned packages. `reachability.reachable_runtime_packages` is computed from those roots, scanned references, and ownership closure; `reachability.ownership_closure_members` records World Partition external packages and similar closure members. Level Instances, Packed Level Actors, and World Partition external packages are closure members, not independent roots.
+Project reports expose one inventory and bidirectional adjacency for all scanned mounts. `reachability.configured_roots` records config-derived package/class roots and whether they resolved to scanned packages. `reachability.reachable_runtime_packages` is computed from those roots, scanned references, and ownership closure; `reachability.ownership_closure_members` records World Partition external packages owned by their map. Level Instance and Packed Level Actor sub-level ownership is **not yet derived**: those sub-levels are reached only through soft references and are not currently closure members.
 
 `reachability.unreachable_project_assets` and `reachability.isolated_project_assets` are scanned graph facts, not deletion proof. They still require review for primary asset rules, localization, runtime-generated names, soft loads outside scanned mounts, and failed or unsupported evidence.
 

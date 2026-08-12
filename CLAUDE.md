@@ -117,7 +117,7 @@ The index contains:
 - configured-root reachability and resource classification summaries;
 - read/index/parse failures with paths and stages;
 - World Partition `ExternalActors`/`ExternalObjects` ownership;
-- LevelInstance/PackedLevelActor and external-package ownership closure;
+- external-package ownership closure (World Partition external packages owned by their map). LevelInstance/PackedLevelActor sub-level ownership is **not yet derived** — those sub-levels are reached only through soft references and are not closure members;
 - per-asset logic, capability, and coverage summaries needed by the requested focus.
 
 Strict mode is the default. Any mapped read/index/parse failure returns the partial index as a structured error and causes a non-zero CLI exit. Inherent partial or unsupported evidence (for example known-opaque compiled RigVM bytecode, or an unsupported package version) keeps a truthful non-complete `status` but does not by itself fail the process. `--allow-partial` downgrades a hard scan failure to a zero exit; it must not change report truth.
