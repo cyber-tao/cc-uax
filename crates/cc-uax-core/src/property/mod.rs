@@ -113,6 +113,7 @@ pub fn parse_object_properties_report(
     // A UClass tagged-property block opens with a serialization-control byte
     // (EClassSerializationControlExtension, uint8). When OverridableSerialization-
     // Information (0x02) is set, an EOverriddenPropertyOperation byte (uint8) follows.
+    let mut control_diagnostics = Vec::new();
     if ctx.file_version_ue5
         >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
     {
@@ -133,24 +134,40 @@ pub fn parse_object_properties_report(
                 };
             }
         };
-        if control & OVERRIDABLE_SERIALIZATION_BIT != 0
-            && let Err(err) = r.read_u8()
-        {
-            return PropertyParse {
-                entries: Vec::new(),
-                diagnostics: vec![
-                    Diagnostic::warning(
-                        "property_override_byte_read_failed",
-                        path,
-                        format!("failed to read overridden property operation byte: {err:#}"),
-                    )
-                    .with_offset(r.pos()),
-                ],
-                status: PropertyParseStatus::FailedAfterEntries,
-            };
+        if control & OVERRIDABLE_SERIALIZATION_BIT != 0 {
+            if let Err(err) = r.read_u8() {
+                return PropertyParse {
+                    entries: Vec::new(),
+                    diagnostics: vec![
+                        Diagnostic::warning(
+                            "property_override_byte_read_failed",
+                            path,
+                            format!("failed to read overridden property operation byte: {err:#}"),
+                        )
+                        .with_offset(r.pos()),
+                    ],
+                    status: PropertyParseStatus::FailedAfterEntries,
+                };
+            }
+            // Overridable serialization rewrites array/map layout into Removed/
+            // Modified/Shadowed/Added sub-arrays, which this decoder does not
+            // support. Declare it instead of silently decoding the wrong layout.
+            control_diagnostics.push(
+                Diagnostic::warning(
+                    "overridable_serialization_unsupported",
+                    path,
+                    "export uses overridable serialization; container layout is not decoded and tagged-property values may be unreliable",
+                )
+                .with_offset(r.pos()),
+            );
         }
     }
-    parse_properties_report(r, ctx, end_limit, path)
+    let mut parsed = parse_properties_report(r, ctx, end_limit, path);
+    if !control_diagnostics.is_empty() {
+        control_diagnostics.append(&mut parsed.diagnostics);
+        parsed.diagnostics = control_diagnostics;
+    }
+    parsed
 }
 
 pub(crate) fn parse_properties(

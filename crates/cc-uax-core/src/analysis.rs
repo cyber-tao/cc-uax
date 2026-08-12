@@ -130,7 +130,13 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
 
     let pcg_partial = pcg_coverage.is_partial(&pcg_adapter);
     let state_tree_partial = state_tree_coverage.is_partial(&state_tree_adapter);
-    let property_partial = property_coverage.is_partial();
+    // Overridable serialization means the tagged-property layout was not decoded
+    // faithfully, so the capability cannot claim completeness even if every
+    // export otherwise parsed.
+    let overridable_serialization = diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == "overridable_serialization_unsupported");
+    let property_partial = property_coverage.is_partial() || overridable_serialization;
     let graph_partial = graph_coverage.is_partial(&graphs);
 
     let capabilities = build_capabilities(

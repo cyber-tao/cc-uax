@@ -2,8 +2,8 @@ use super::common::*;
 use crate::PackageView;
 use crate::analysis::analyze_package;
 use crate::model::{
-    ASSET_ANALYSIS_SCHEMA_VERSION, AnalysisStatus, AssetAnalysis, AssetView, DecodedValue,
-    KnownOpaqueKind, ParseCoverage,
+    ASSET_ANALYSIS_SCHEMA_VERSION, AnalysisStatus, AssetAnalysis, AssetView, CapabilityKind,
+    DecodedValue, KnownOpaqueKind, ParseCoverage,
 };
 use crate::name::NameMap;
 use crate::object::{ObjectImport, PackageIndex};
@@ -349,6 +349,57 @@ fn object_guid_after_tagged_properties_is_decoded() {
         analysis.known_opaque[0].byte_range.as_ref().unwrap().size,
         4
     );
+}
+
+#[test]
+fn overridable_serialization_is_declared_unsupported() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut data = Vec::new();
+    data.push(0x02); // EClassSerializationControlExtension: OverridableSerialization
+    data.push(0x00); // EOverriddenPropertyOperation
+    push_raw_name(&mut data, 1); // Value
+    push_raw_name(&mut data, 2); // IntProperty
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 4);
+    data.push(0);
+    push_i32(&mut data, 42);
+    push_raw_name(&mut data, 3); // None
+
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "Obj".into(),
+                "Value".into(),
+                "IntProperty".into(),
+                "None".into(),
+            ],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    // The control byte's overridable bit downgrades tagged properties instead of
+    // decoding the unsupported container layout as if it were normal.
+    assert_eq!(analysis.status, AnalysisStatus::Partial);
+    assert!(
+        analysis
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "overridable_serialization_unsupported")
+    );
+    let tagged = analysis
+        .capabilities
+        .iter()
+        .find(|c| c.kind == CapabilityKind::TaggedProperties)
+        .expect("tagged-property capability is present");
+    assert_eq!(tagged.status, AnalysisStatus::Partial);
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
 }
 
 #[test]
