@@ -14,7 +14,7 @@ Development policy: this repository is in active development. Prefer the cleanes
 
 ```pwsh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked
 cargo build --workspace --release --locked
 
@@ -51,7 +51,7 @@ Important public types:
 
 Every rendered report has:
 
-- `schema_version` (asset reports `3` via `ASSET_ANALYSIS_SCHEMA_VERSION` in `cc-uax-core/src/model.rs`; project reports `4` via `PROJECT_REPORT_SCHEMA_VERSION` in `cc-uax-cli/src/lib.rs`);
+- `schema_version` (declared by `ASSET_ANALYSIS_SCHEMA_VERSION` in `cc-uax-core/src/model.rs` and `PROJECT_REPORT_SCHEMA_VERSION` in `cc-uax-cli/src/lib.rs`; the concrete numbers live only in `skills/cc-uax/references/report-contract.md`);
 - `status`: `complete`, `partial`, or `unsupported`;
 - machine-readable `coverage`;
 - capability evidence and limitations;
@@ -82,10 +82,13 @@ Never guess a cursor position after a failed parse. Never parse beyond an export
 Important version-gated formats include:
 
 - `FInstancedStruct`: legacy optional editor header/version versus modern payload;
+- `FInstancedPropertyBag`: `FPropertyBagCustomVersion` desc layout (verified through UE5.8 = version 5, which adds `PropertyFlags` and a map key type);
 - `FStateTreeInstanceData`: legacy tagged instance data versus custom instance storage;
 - `FPCGPoint`: legacy tagged properties versus structured field-mask serialization;
 - Niagara, Sequencer, and EdGraph pin fields controlled by their owning custom versions;
-- PropertyTag extensions: `OverridableInformation` (0x02, UE5.7+) and `HasExternalsObjects` (0x04, UE5.8+).
+- PropertyTag extensions: `OverridableInformation` (0x02, `FileVersionUE5` ≥ 1011 / UE5.4+) and `HasExternalsObjects` (0x04, UE5.8+).
+
+The same `FileVersionUE5` does not guarantee the same layout: UE5.7 and UE5.8 share `1018` yet diverge (for example `FObjectImport::PackageName` gating and the `FInstancedPropertyBag` desc fields), so custom versions and, where needed, the engine version must gate those formats.
 
 Only classify a struct as native when UE5.6–5.8 actually provides binary/structured custom serialization. A `WithSerializer` function that returns `false` uses tagged-property fallback.
 

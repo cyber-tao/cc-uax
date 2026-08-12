@@ -120,7 +120,7 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
 
 ```jsonc
 {
-  "schema_version": 3,
+  "schema_version": 5,
   "status": "complete",
   "view": "full",
   "summary": { /* package name, class, file version, … */ },
@@ -139,7 +139,7 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
 
 ```jsonc
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "status": "complete",
   "layout": {}, "mounts": [], "entry_points": {},
   "reachability": {

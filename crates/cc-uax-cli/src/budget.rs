@@ -1,8 +1,8 @@
 //! Output-size budgeting for rendered JSON reports.
 //!
 //! An AI tool that invokes `cc-uax` has a bounded context window. A single large
-//! Blueprint can render into megabytes of JSON (StackOBot's `CR_Bot_Correction`
-//! is ~4.7 MB), which can overflow that window. `--max-output-bytes` lets the
+//! Blueprint or a whole project index can render into many megabytes of JSON,
+//! which can overflow that window. `--max-output-bytes` lets the
 //! caller cap the rendered size to whatever space it has left.
 //!
 //! Budgeting is a **presentation concern only**. It never alters evidence: the

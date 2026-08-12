@@ -526,6 +526,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn report_contract_declares_the_code_schema_versions() {
+        // report-contract.md is the single source of truth for schema numbers,
+        // so the versions it declares must equal the constants the code emits.
+        let contract = include_str!("../../../skills/cc-uax/references/report-contract.md");
+        let marker = "schema version `";
+        let declared: std::collections::BTreeSet<u32> = contract
+            .match_indices(marker)
+            .filter_map(|(index, _)| {
+                let rest = &contract[index + marker.len()..];
+                rest[..rest.find('`')?].parse::<u32>().ok()
+            })
+            .collect();
+        assert!(
+            !declared.is_empty(),
+            "no schema versions declared in report-contract.md"
+        );
+        let expected: std::collections::BTreeSet<u32> = [
+            cc_uax_core::ASSET_ANALYSIS_SCHEMA_VERSION,
+            PROJECT_REPORT_SCHEMA_VERSION,
+        ]
+        .into();
+        assert_eq!(
+            declared, expected,
+            "report-contract.md schema numbers drifted from the code constants"
+        );
+    }
+
+    #[test]
     fn glob_matching_is_case_insensitive_and_supports_wildcards() {
         assert!(glob_match("/Game/**/BP_*", "/game/Actors/BP_Player"));
         assert!(glob_match("/Game/Map?", "/Game/Map1"));
