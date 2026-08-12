@@ -236,97 +236,120 @@ fn truncate_section(section: &Value, cap: usize) -> Option<Value> {
     }
 }
 
-fn restore_sections(root: &mut Value, originals: &[(String, Value)]) {
-    if let Value::Object(map) = root {
-        for (key, original) in originals {
-            map.insert(key.clone(), original.clone());
-        }
+/// The truncatable sections, in priority order: top-level detail sections first,
+/// then the nested project reachability lists. The second slot is empty for a
+/// top-level section, or the nested key under `reachability`.
+fn truncatable_paths() -> Vec<[&'static str; 2]> {
+    let mut paths: Vec<[&'static str; 2]> = DETAIL_SECTION_KEYS.map(|key| [key, ""]).to_vec();
+    for key in REACHABILITY_KEYS {
+        paths.push(["reachability", key]);
+    }
+    paths
+}
+
+fn section_at<'a>(root: &'a Value, path: &[&str; 2]) -> Option<&'a Value> {
+    let top = root.as_object()?.get(path[0])?;
+    if path[1].is_empty() {
+        Some(top)
+    } else {
+        top.as_object()?.get(path[1])
     }
 }
 
-fn apply_section_cap(root: &mut Value, originals: &[(String, Value)], cap: usize) -> usize {
-    let mut dropped = 0;
-    if let Value::Object(map) = root {
-        for (key, original) in originals {
-            if let Some(truncated) = truncate_section(original, cap) {
-                dropped += section_len(original) - cap;
-                map.insert(key.clone(), truncated);
-            }
-        }
+fn set_section(root: &mut Value, path: &[&str; 2], value: Value) {
+    let Some(root_map) = root.as_object_mut() else {
+        return;
+    };
+    if path[1].is_empty() {
+        root_map.insert(path[0].to_string(), value);
+    } else if let Some(nested) = root_map.get_mut(path[0]).and_then(Value::as_object_mut) {
+        nested.insert(path[1].to_string(), value);
     }
-    dropped
+}
+
+/// Set the section at `path` to keep at most `cap` leading elements. A `cap` at
+/// or above the section length restores the original with no `@elided` marker.
+fn apply_section_cap(root: &mut Value, path: &[&str; 2], original: &Value, cap: usize) {
+    match truncate_section(original, cap) {
+        Some(truncated) => set_section(root, path, truncated),
+        None => set_section(root, path, original.clone()),
+    }
 }
 
 /// Budget-aware truncation tier: keep as many leading elements of the large
-/// top-level sections as fit within `target`, appending `{"@elided": n}` markers.
-/// A binary search finds the largest uniform per-section element cap whose render
-/// fits, so a tight budget returns leading structural detail instead of nothing.
-/// Sections that cannot fit even at cap 0 are left for the wholesale `sections`
-/// tier. Returns the number of dropped elements.
+/// sections (top-level detail plus the nested reachability lists) as fit within
+/// `target`, appending `{"@elided": n}` markers. Each section is grown in
+/// priority order by its own binary search, so sections whose element sizes
+/// differ by orders of magnitude fill the budget instead of a single uniform cap
+/// collapsing to nothing. Returns the number of dropped elements.
 fn tier_truncate_sections(root: &mut Value, target: usize, compact: bool) -> usize {
-    let Value::Object(map) = root else {
-        return 0;
-    };
-    let mut originals: Vec<(String, Value)> = Vec::new();
-    for key in DETAIL_SECTION_KEYS {
-        if let Some(child) = map.get(key)
-            && section_len(child) > 1
-            && !is_elided(child)
-        {
-            originals.push((key.to_string(), child.clone()));
-        }
-    }
-    if originals.is_empty() {
+    let sections: Vec<([&'static str; 2], Value, usize)> = truncatable_paths()
+        .into_iter()
+        .filter_map(|path| {
+            let section = section_at(root, &path)?;
+            let len = section_len(section);
+            (len > 1 && !is_elided(section)).then(|| (path, section.clone(), len))
+        })
+        .collect();
+    if sections.is_empty() {
         return 0;
     }
-    let max_len = originals
-        .iter()
-        .map(|(_, section)| section_len(section))
-        .max()
-        .unwrap_or(0);
 
-    // Largest cap in [0, max_len] whose render fits `target`.
-    let mut lo = 0usize;
-    let mut hi = max_len;
-    let mut best: Option<usize> = None;
-    while lo <= hi {
-        let mid = lo + (hi - lo) / 2;
-        restore_sections(root, &originals);
-        apply_section_cap(root, &originals, mid);
-        if measure(root, compact) <= target {
-            best = Some(mid);
-            lo = mid + 1;
-        } else if mid == 0 {
-            break;
-        } else {
-            hi = mid - 1;
+    // Floor: reduce every section to a single `@elided` marker.
+    for (path, original, _) in &sections {
+        apply_section_cap(root, path, original, 0);
+    }
+    if measure(root, compact) > target {
+        // The markers alone overrun the budget (below the skeleton floor); leave
+        // the wholesale `sections`/`reachability_sets` tiers to shed them.
+        for (path, original, _) in &sections {
+            set_section(root, path, original.clone());
         }
+        return 0;
     }
 
-    restore_sections(root, &originals);
-    match best {
-        Some(cap) => apply_section_cap(root, &originals, cap),
-        None => 0,
+    // Grow each section, in priority order, to the largest cap that still fits.
+    let mut dropped = 0;
+    for (path, original, len) in &sections {
+        let mut lo = 0usize;
+        let mut hi = *len;
+        let mut best = 0usize;
+        while lo <= hi {
+            let mid = lo + (hi - lo) / 2;
+            apply_section_cap(root, path, original, mid);
+            if measure(root, compact) <= target {
+                best = mid;
+                lo = mid + 1;
+            } else if mid == 0 {
+                break;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        apply_section_cap(root, path, original, best);
+        dropped += len - best;
     }
+    dropped
 }
 
 /// Tier 5 (deepest): drop the large project `reachability` package lists, keeping
 /// `configured_roots` and the numeric `failed_assets` count. These are the last
 /// to go because they summarize resource reachability.
 fn tier_reachability_sets(value: &mut Value) -> usize {
-    elide_keyed_collections(
-        value,
-        &[
-            "reachable_runtime_packages",
-            "ownership_closure_members",
-            "unreachable_project_assets",
-            "isolated_project_assets",
-            "partial_packages",
-            "unsupported_packages",
-        ],
-        false,
-    )
+    elide_keyed_collections(value, &REACHABILITY_KEYS, false)
 }
+
+/// The large project `reachability` package lists, nested under `reachability`.
+/// They are truncatable like the top-level detail sections; `configured_roots`
+/// and the numeric counts are skeleton and never listed here.
+const REACHABILITY_KEYS: [&str; 6] = [
+    "reachable_runtime_packages",
+    "ownership_closure_members",
+    "unreachable_project_assets",
+    "isolated_project_assets",
+    "partial_packages",
+    "unsupported_packages",
+];
 
 /// Replace arrays/objects stored under any of `keys` with an `{"@elided": count}`
 /// marker, returning the number of elements dropped. When `top_only` is set only
@@ -530,5 +553,65 @@ mod tests {
             "truncation under-filled the budget: {} of {budget}",
             text.len()
         );
+    }
+
+    #[test]
+    fn budget_fills_and_is_monotonic_with_reachability_sets() {
+        // A large nested reachability list plus a large inventory: the historical
+        // uniform-cap logic dropped everything once the reachability list did not
+        // fit cap 0, collapsing a moderate budget to the skeleton floor.
+        let inventory: Vec<Value> = (0..3000)
+            .map(|i| {
+                json!({
+                    "package": format!("/Game/Assets/Path/Asset_{i}"),
+                    "references": [format!("/Game/Other_{i}"), "/Game/Shared"],
+                })
+            })
+            .collect();
+        let reachable: Vec<Value> = (0..4000)
+            .map(|i| json!(format!("/Game/Runtime/Package_{i}")))
+            .collect();
+        let report = json!({
+            "schema_version": 4,
+            "status": "partial",
+            "stats": { "indexed": 2000 },
+            "reachability": {
+                "configured_roots": ["/Game/Main"],
+                "reachable_runtime_packages": reachable,
+            },
+            "inventory": inventory,
+        });
+        let full = serde_json::to_string(&report).unwrap().len();
+        assert!(full > 350_000, "fixture should be large: {full}");
+
+        let mut last = 0usize;
+        for budget in [2_000usize, 20_000, 50_000, 100_000, 200_000, 300_000] {
+            let text = render_within_budget(&report, budget, true).unwrap();
+            assert!(
+                text.len() <= budget,
+                "over budget: {} of {budget}",
+                text.len()
+            );
+            assert!(
+                text.len() >= last,
+                "output shrank as budget grew: {last} then {}",
+                text.len()
+            );
+            last = text.len();
+            let parsed: Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(parsed["status"], "partial");
+            assert_eq!(parsed["stats"]["indexed"], 2000);
+            assert_eq!(parsed["reachability"]["configured_roots"][0], "/Game/Main");
+        }
+
+        // The moderate budgets that used to collapse now fill at least 90%.
+        for budget in [100_000usize, 200_000, 300_000] {
+            let text = render_within_budget(&report, budget, true).unwrap();
+            assert!(
+                text.len() >= budget * 9 / 10,
+                "under-filled at {budget}: got {}",
+                text.len()
+            );
+        }
     }
 }
