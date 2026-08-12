@@ -16,7 +16,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-const PROJECT_REPORT_SCHEMA_VERSION: u32 = 4;
+const PROJECT_REPORT_SCHEMA_VERSION: u32 = 5;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {
@@ -209,24 +209,77 @@ fn strip_object_name(value: &str) -> &str {
     }
 }
 
+/// A glob token. `*` matches within a path segment; `**` matches across `/`.
+enum GlobToken {
+    Star,
+    GlobStar,
+    AnyChar,
+    Literal(u8),
+}
+
+fn glob_tokens(pattern: &str) -> Vec<GlobToken> {
+    let bytes = pattern.as_bytes();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'*' => {
+                if bytes.get(i + 1) == Some(&b'*') {
+                    tokens.push(GlobToken::GlobStar);
+                    i += 2;
+                    while bytes.get(i) == Some(&b'*') {
+                        i += 1;
+                    }
+                } else {
+                    tokens.push(GlobToken::Star);
+                    i += 1;
+                }
+            }
+            b'?' => {
+                tokens.push(GlobToken::AnyChar);
+                i += 1;
+            }
+            byte => {
+                tokens.push(GlobToken::Literal(byte));
+                i += 1;
+            }
+        }
+    }
+    tokens
+}
+
 fn glob_match(pattern: &str, value: &str) -> bool {
-    let pattern = pattern.as_bytes();
     let value = value.as_bytes();
     let value_len = value.len();
     let mut prev = vec![false; value_len + 1];
     let mut curr = vec![false; value_len + 1];
     prev[0] = true;
-    for &token in pattern {
+    for token in glob_tokens(pattern) {
         curr.iter_mut().for_each(|slot| *slot = false);
-        if token == b'*' {
-            curr[0] = prev[0];
-            for index in 1..=value_len {
-                curr[index] = prev[index] || curr[index - 1];
+        match token {
+            // `*` extends the match only over non-separator characters.
+            GlobToken::Star => {
+                curr[0] = prev[0];
+                for index in 1..=value_len {
+                    curr[index] = prev[index] || (curr[index - 1] && value[index - 1] != b'/');
+                }
             }
-        } else {
-            for index in 1..=value_len {
-                curr[index] = prev[index - 1]
-                    && (token == b'?' || token.eq_ignore_ascii_case(&value[index - 1]));
+            // `**` extends the match over any characters, separators included.
+            GlobToken::GlobStar => {
+                curr[0] = prev[0];
+                for index in 1..=value_len {
+                    curr[index] = prev[index] || curr[index - 1];
+                }
+            }
+            GlobToken::AnyChar => {
+                for index in 1..=value_len {
+                    curr[index] = prev[index - 1] && value[index - 1] != b'/';
+                }
+            }
+            GlobToken::Literal(byte) => {
+                for index in 1..=value_len {
+                    curr[index] = prev[index - 1] && byte.eq_ignore_ascii_case(&value[index - 1]);
+                }
             }
         }
         std::mem::swap(&mut prev, &mut curr);
@@ -425,8 +478,6 @@ struct ProjectAsset {
     relative_path: String,
     kind: AssetKind,
     ownership: AssetOwnership,
-    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
-    references: BTreeSet<String>,
     analysis: cc_uax_project::AssetAnalysisSummary,
 }
 
@@ -437,7 +488,6 @@ impl ProjectAsset {
             relative_path: record.relative_path.clone(),
             kind: record.asset_kind,
             ownership: record.ownership.clone(),
-            references: record.forward_references.clone(),
             analysis: record.analysis.clone(),
         }
     }
@@ -480,6 +530,19 @@ mod tests {
         assert!(glob_match("/Game/**/BP_*", "/game/Actors/BP_Player"));
         assert!(glob_match("/Game/Map?", "/Game/Map1"));
         assert!(!glob_match("/Game/Map?", "/Game/Map12"));
+        // `*` stays within a path segment; `**` crosses separators.
+        assert!(glob_match(
+            "/Game/Blueprints/*",
+            "/Game/Blueprints/BP_Player"
+        ));
+        assert!(!glob_match(
+            "/Game/Blueprints/*",
+            "/Game/Blueprints/Sub/BP_Player"
+        ));
+        assert!(glob_match(
+            "/Game/Blueprints/**",
+            "/Game/Blueprints/Sub/BP_Player"
+        ));
     }
 
     #[test]
