@@ -250,7 +250,6 @@ impl Package {
                 decode_properties_for_export(
                     &mut reader,
                     &ctx,
-                    has_script,
                     window,
                     i,
                     &class_full,
@@ -305,10 +304,26 @@ fn account_export_tail(
             window.property_start,
         ));
     }
-    let decoded_end = export
+    let mut decoded_end = export
         .decoded_end
         .unwrap_or(window.property_start)
         .clamp(window.property_start, window.serial_end);
+    // UObject::Serialize writes PossiblySerializeObjectGuid immediately after the
+    // tagged properties. Graph nodes read it inside the pin decoder; every other
+    // export reads it here so the GUID becomes evidence instead of opaque tail.
+    if export.object_guid.is_none()
+        && export.pins.is_none()
+        && decoded_end == window.property_end
+        && decoded_end < window.serial_end
+        && matches!(
+            export.property_status,
+            Some(PropertyParseStatus::Complete | PropertyParseStatus::Empty)
+        )
+        && reader.seek(decoded_end).is_ok()
+    {
+        consume_object_guid_tail(reader, window.serial_end, export);
+        decoded_end = reader.pos().clamp(decoded_end, window.serial_end);
+    }
     if decoded_end < window.serial_end {
         export.post_property_tail = Some(preview_range(reader, decoded_end, window.serial_end));
     }
@@ -319,6 +334,31 @@ fn account_export_tail(
         .saturating_sub(pre)
         .saturating_sub(post)
         .saturating_sub(decoded);
+}
+
+/// Reads UObject's `PossiblySerializeObjectGuid` (a bool32 optionally followed
+/// by an `FGuid`) at the reader's position, bounded by `end`.
+fn consume_object_guid_tail(reader: &mut Reader, end: u64, export: &mut DecodedExport) {
+    if end.saturating_sub(reader.pos()) < 4 {
+        return;
+    }
+    let start = reader.pos();
+    match reader.read_bool32() {
+        Ok(true) if end.saturating_sub(reader.pos()) >= 16 => {
+            if let Ok(guid) = reader.read_guid()
+                && !guid.is_zero()
+            {
+                export.object_guid = Some(guid.to_hex());
+            }
+        }
+        Ok(true) => {
+            let _ = reader.seek(start);
+        }
+        Ok(false) => {}
+        Err(_) => {
+            let _ = reader.seek(start);
+        }
+    }
 }
 
 fn is_pcg_model_object_class(class: &str) -> bool {

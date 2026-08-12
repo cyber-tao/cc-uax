@@ -12,7 +12,6 @@ use crate::structured_value::{Map, Value, json};
 pub(super) fn decode_properties_for_export(
     reader: &mut Reader,
     ctx: &ParseCtx,
-    has_script: bool,
     window: ExportSerialWindow,
     export_i: usize,
     class_full: &str,
@@ -48,16 +47,7 @@ pub(super) fn decode_properties_for_export(
     }
     if capture_properties {
         export.properties = Some(entries);
-        consume_known_post_property_data(
-            reader,
-            ctx,
-            has_script,
-            window,
-            export_i,
-            class_full,
-            diagnostics,
-            export,
-        );
+        consume_known_post_property_data(reader, ctx, window, class_full, export);
     }
 
     // A non-tagged payload decodes nothing, so the whole tagged window is opaque;
@@ -73,20 +63,13 @@ pub(super) fn decode_properties_for_export(
     export.advance_decoded_end(end_of_decoded);
 }
 
-#[allow(clippy::too_many_arguments)]
 fn consume_known_post_property_data(
     reader: &mut Reader,
     ctx: &ParseCtx,
-    has_script: bool,
     window: ExportSerialWindow,
-    _export_i: usize,
     class_full: &str,
-    _diagnostics: &mut Vec<Diagnostic>,
     export: &mut DecodedExport,
 ) {
-    if !has_script {
-        consume_object_guid_tail(reader, window.property_end, export);
-    }
     if class_full == "/Script/CoreUObject.MetaData" && reader.pos() < window.property_end {
         let metadata_start = reader.pos();
         match parse_package_metadata_tail(reader, ctx, window.property_end) {
@@ -102,29 +85,6 @@ fn consume_known_post_property_data(
                 }));
                 let _ = reader.seek(window.property_end);
             }
-        }
-    }
-}
-
-fn consume_object_guid_tail(reader: &mut Reader, end: u64, export: &mut DecodedExport) {
-    if end.saturating_sub(reader.pos()) < 4 {
-        return;
-    }
-    let start = reader.pos();
-    match reader.read_bool32() {
-        Ok(true) if end.saturating_sub(reader.pos()) >= 16 => {
-            if let Ok(guid) = reader.read_guid()
-                && !guid.is_zero()
-            {
-                export.object_guid = Some(guid.to_hex());
-            }
-        }
-        Ok(true) => {
-            let _ = reader.seek(start);
-        }
-        Ok(false) => {}
-        Err(_) => {
-            let _ = reader.seek(start);
         }
     }
 }

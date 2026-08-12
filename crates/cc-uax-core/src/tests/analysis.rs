@@ -275,6 +275,83 @@ fn parse_coverage_add_assign_doubles_every_serialized_field() {
 }
 
 #[test]
+fn object_guid_after_tagged_properties_is_decoded() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+
+    // Case 1: PossiblySerializeObjectGuid flag set, followed by a real FGuid.
+    let mut data = Vec::new();
+    data.push(0); // object property serialization control
+    push_raw_name(&mut data, 1); // Value
+    push_raw_name(&mut data, 2); // IntProperty
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 4);
+    data.push(0);
+    push_i32(&mut data, 42);
+    push_raw_name(&mut data, 3); // None
+    let tagged_end = data.len();
+    push_i32(&mut data, 1); // bSerializeGuid = true
+    data.extend_from_slice(&[0x01, 0, 0, 0, 0x02, 0, 0, 0, 0x03, 0, 0, 0, 0x04, 0, 0, 0]); // 16-byte FGuid
+
+    let names = || NameMap {
+        names: vec![
+            "Obj".into(),
+            "Value".into(),
+            "IntProperty".into(),
+            "None".into(),
+        ],
+    };
+    let package = Package {
+        summary: base.summary.clone(),
+        names: names(),
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, tagged_end as i64)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert_eq!(analysis.status, AnalysisStatus::Complete);
+    assert!(analysis.exports[0].object_guid.is_some());
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+    assert!(analysis.known_opaque.is_empty());
+
+    // Case 2: the flag is clear, so no GUID is recorded and only the flag byte is
+    // consumed; the trailing bytes remain a classified opaque tail.
+    let mut data = Vec::new();
+    data.push(0);
+    push_raw_name(&mut data, 1);
+    push_raw_name(&mut data, 2);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 4);
+    data.push(0);
+    push_i32(&mut data, 42);
+    push_raw_name(&mut data, 3);
+    let tagged_end = data.len();
+    push_i32(&mut data, 0); // bSerializeGuid = false
+    data.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]); // bulk tail
+
+    let package = Package {
+        summary: base.summary,
+        names: names(),
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, tagged_end as i64)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert!(analysis.exports[0].object_guid.is_none());
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+    assert_eq!(analysis.coverage.known_opaque_regions, 1);
+    assert_eq!(
+        analysis.known_opaque[0].byte_range.as_ref().unwrap().size,
+        4
+    );
+}
+
+#[test]
 fn future_file_version_is_reported_as_unsupported() {
     let mut package = Package::parse(&build_minimal_package()).unwrap();
     package.summary.file_version_ue5 = crate::version::ue5::IMPORT_TYPE_HIERARCHIES + 1;

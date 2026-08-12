@@ -143,7 +143,12 @@ pub(super) fn decode_pins_for_export(
                 }
                 if best.is_none() || consumed_pos > best_pos {
                     best_pos = consumed_pos;
-                    best = Some((parsed.pins, user_defined_pins, selected_diagnostics));
+                    best = Some((
+                        parsed.object_guid,
+                        parsed.pins,
+                        user_defined_pins,
+                        selected_diagnostics,
+                    ));
                 }
             }
             Err(diag) => failures.push(diag.with_context(json!({
@@ -153,9 +158,10 @@ pub(super) fn decode_pins_for_export(
             }))),
         }
     }
-    if let Some((pins, user_defined_pins, selected_diagnostics)) = best {
+    if let Some((object_guid, pins, user_defined_pins, selected_diagnostics)) = best {
         export.advance_decoded_end(best_pos);
         let _ = reader.seek(best_pos);
+        export.object_guid = object_guid;
         export.pins = Some(pins);
         export.user_defined_pins = user_defined_pins;
         diagnostics.extend(selected_diagnostics);

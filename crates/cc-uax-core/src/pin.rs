@@ -134,6 +134,7 @@ pub struct UserDefinedPin {
 
 #[derive(Debug, Clone)]
 pub struct PinParse {
+    pub object_guid: Option<String>,
     pub pins: Vec<Pin>,
 }
 
@@ -229,7 +230,7 @@ pub fn parse_node_pins_report(
 ) -> std::result::Result<PinParse, Diagnostic> {
     let start = r.pos();
     match parse_pins_inner(r, end, ctx, vc) {
-        Ok(pins) if r.pos() <= end => Ok(PinParse { pins }),
+        Ok((object_guid, pins)) if r.pos() <= end => Ok(PinParse { object_guid, pins }),
         Ok(_) => {
             let _ = r.seek(start);
             Err(
@@ -311,11 +312,19 @@ pub(crate) fn parse_user_defined_pins_report(
     }
 }
 
-fn parse_pins_inner(r: &mut Reader, end: u64, ctx: &ParseCtx, vc: &PinSerCtx) -> Result<Vec<Pin>> {
+fn parse_pins_inner(
+    r: &mut Reader,
+    end: u64,
+    ctx: &ParseCtx,
+    vc: &PinSerCtx,
+) -> Result<(Option<String>, Vec<Pin>)> {
     let has_object_guid = r.read_bool32()?;
-    if has_object_guid {
-        let _object_guid = r.read_guid()?;
-    }
+    let object_guid = if has_object_guid {
+        let guid = r.read_guid()?;
+        (!guid.is_zero()).then(|| guid.to_hex())
+    } else {
+        None
+    };
     let count = r.read_i32()?;
     if !(0..=MAX_PIN_COUNT).contains(&count) {
         bail!("pin count out of range: {count}");
@@ -333,7 +342,7 @@ fn parse_pins_inner(r: &mut Reader, end: u64, ctx: &ParseCtx, vc: &PinSerCtx) ->
             bail!("pin region overrun");
         }
     }
-    Ok(pins)
+    Ok((object_guid, pins))
 }
 
 fn parse_pin(r: &mut Reader, ctx: &ParseCtx, vc: &PinSerCtx) -> Result<Pin> {
