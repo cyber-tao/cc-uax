@@ -21,7 +21,7 @@ Most of an Unreal project lives in binary `.uasset` and `.umap` packages. Source
 
 `cc-uax` turns supported UE5 editor packages into typed, evidence-bearing reports. It can analyze one asset or build a project-wide index without loading Unreal Editor.
 
-> Scope: versioned, uncooked UE5 editor packages (`FileVersionUE5 >= 1000`). Cooked/unversioned packages and UE4 packages are intentionally unsupported.
+> Scope: versioned, uncooked UE5.1–5.8 editor packages (`FileVersionUE5` 1008–1018). UE5.6–5.8 are the real-corpus-verified reference range; UE5.1–5.5 packages decode per the version gates and carry an informational note until they are verified against real assets. Cooked/unversioned packages and UE4 packages are intentionally unsupported.
 
 ## What it provides
 

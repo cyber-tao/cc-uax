@@ -6,7 +6,7 @@ This file is the repository source of truth for engineering agents working on `c
 
 `cc-uax` analyzes versioned, uncooked Unreal Engine 5 editor packages (`.uasset` and `.umap`) without loading Unreal Editor. It serves AI engineering tools that need evidence about serialized properties, Blueprint and plugin graph logic, asset references, gameplay structure, and project resource usage.
 
-UE5.6–5.8 source is the serialization authority (UE5.7/5.8 share `FileVersionUE5 = 1018`; UE5.6 is 1017). Cooked/unversioned packages and UE4 packages are out of scope.
+UE5.6–5.8 source is the serialization authority (UE5.7/5.8 share `FileVersionUE5 = 1018`; UE5.6 is 1017). The parser targets versioned, uncooked UE5.1–5.8 editor packages (`FileVersionUE5` 1008–1018); UE5.1–5.5 decode per the version gates and are surfaced with an informational note until they are verified against real assets. Cooked/unversioned packages and UE4 packages are out of scope.
 
 Development policy: this repository is in active development. Prefer the cleanest correct API and representation; do not retain obsolete 0.8 CLI/JSON compatibility unless a task explicitly requires it.
 
