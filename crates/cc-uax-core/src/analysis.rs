@@ -98,6 +98,24 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         .collect::<Vec<_>>();
     diagnostics.extend(rigvm_adapter.diagnostics.iter().cloned());
 
+    // A package below the real-corpus-verified floor still decodes per the version
+    // gates, so its status stays truthful (Info is not counted toward partial), but
+    // the reader is told the decode is not yet confirmed against a real asset.
+    if package.summary.file_version_ue5 < crate::version::VERIFIED_FILE_VERSION_FLOOR {
+        diagnostics.push(AnalysisDiagnostic {
+            severity: DiagnosticSeverity::Info,
+            code: "package_below_verified_version".to_string(),
+            path: "/summary/file_version_ue5".to_string(),
+            message: format!(
+                "FileVersionUE5={} is below the real-corpus-verified floor ({}); decoded per the version gates but not yet verified against a real asset",
+                package.summary.file_version_ue5,
+                crate::version::VERIFIED_FILE_VERSION_FLOOR
+            ),
+            offset: None,
+            details: None,
+        });
+    }
+
     let has_authoritative_rigvm_graph = report
         .exports
         .iter()

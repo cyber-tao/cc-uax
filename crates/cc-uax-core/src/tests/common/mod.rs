@@ -41,47 +41,70 @@ pub fn build_minimal_package() -> Vec<u8> {
 /// Build a minimal package for a specific UE5 file version and engine version.
 /// `file_version_ue5` controls which summary fields are included; for 1017
 /// (UE5.6) the ImportTypeHierarchies fields are omitted.
+// Builds a minimal but *valid* versioned package summary for any supported
+// FileVersionUE5. Every version-gated field is written only when the parser reads
+// it for that version (mirroring PackageFileSummary::parse), so the bytes line up
+// for UE5.1 (1008) through UE5.8 (1018) alike. ue4v is always 522 and
+// FilterEditorOnly is set, which keeps the editor-only/localization fields absent.
 pub fn build_minimal_package_with_version(
     file_version_ue5: i32,
     major: u16,
     minor: u16,
 ) -> Vec<u8> {
+    use crate::version::ue5;
+    let fv = file_version_ue5;
     let mut d = Vec::new();
     push_u32(&mut d, 0x9E2A_83C1); // PACKAGE_FILE_TAG
     push_i32(&mut d, -8); // legacy_file_version
     push_i32(&mut d, 0); // legacy ue3 version (legacy != -4)
     push_i32(&mut d, 522); // file_version_ue4
-    push_i32(&mut d, file_version_ue5); // file_version_ue5
+    push_i32(&mut d, fv); // file_version_ue5 (legacy <= -8)
     push_i32(&mut d, 0); // file_version_licensee
-    d.extend_from_slice(&[0u8; 20]); // saved_hash (ue5 >= 1016)
-    push_i32(&mut d, 0); // total_header_size
+    if fv >= ue5::PACKAGE_SAVED_HASH {
+        d.extend_from_slice(&[0u8; 20]); // saved_hash
+        push_i32(&mut d, 0); // total_header_size (hash position)
+    }
     push_i32(&mut d, 0); // custom version count
+    if fv < ue5::PACKAGE_SAVED_HASH {
+        push_i32(&mut d, 0); // total_header_size (legacy position)
+    }
     push_fstring(&mut d, "TestPkg"); // package_name
     push_u32(&mut d, 0x8000_0000); // package_flags = FilterEditorOnly
     push_i32(&mut d, 0); // name_count
     push_i32(&mut d, 0); // name_offset
-    push_i32(&mut d, 0); // soft_object_paths_count (ue5 >= 1008)
-    push_i32(&mut d, 0); // soft_object_paths_offset
+    if fv >= ue5::ADD_SOFTOBJECTPATH_LIST {
+        push_i32(&mut d, 0); // soft_object_paths_count
+        push_i32(&mut d, 0); // soft_object_paths_offset
+    }
+    // localization_id skipped: FilterEditorOnly is set.
     push_i32(&mut d, 0); // gatherable_text_data_count (ue4 >= 459)
     push_i32(&mut d, 0); // gatherable_text_data_offset
     push_i32(&mut d, 0); // export_count
     push_i32(&mut d, 0); // export_offset
     push_i32(&mut d, 0); // import_count
     push_i32(&mut d, 0); // import_offset
-    push_i32(&mut d, 0); // cell_export_count (ue5 >= 1015)
-    push_i32(&mut d, 0); // cell_export_offset
-    push_i32(&mut d, 0); // cell_import_count
-    push_i32(&mut d, 0); // cell_import_offset
-    push_i32(&mut d, 0); // metadata_offset (ue5 >= 1014)
+    if fv >= ue5::VERSE_CELLS {
+        push_i32(&mut d, 0); // cell_export_count
+        push_i32(&mut d, 0); // cell_export_offset
+        push_i32(&mut d, 0); // cell_import_count
+        push_i32(&mut d, 0); // cell_import_offset
+    }
+    if fv >= ue5::METADATA_SERIALIZATION_OFFSET {
+        push_i32(&mut d, 0); // metadata_offset
+    }
     push_i32(&mut d, 0); // depends_offset
     push_i32(&mut d, 0); // soft_package_references_count (ue4 >= 384)
     push_i32(&mut d, 0); // soft_package_references_offset
     push_i32(&mut d, 0); // searchable_names_offset (ue4 >= 510)
     push_i32(&mut d, 0); // thumbnail_table_offset
-    if file_version_ue5 >= 1018 {
-        push_i32(&mut d, 0); // import_type_hierarchies_count (ue5 >= 1018)
+    if fv >= ue5::IMPORT_TYPE_HIERARCHIES {
+        push_i32(&mut d, 0); // import_type_hierarchies_count
         push_i32(&mut d, 0); // import_type_hierarchies_offset
     }
+    if fv < ue5::PACKAGE_SAVED_HASH {
+        push_guid(&mut d, 0, 0, 0, 0); // legacy_guid
+    }
+    // persistent/owner guids skipped: FilterEditorOnly is set.
     push_i32(&mut d, 0); // generation_count
     push_u16(&mut d, major); // engine_version.major (ue4 >= 336)
     push_u16(&mut d, minor); // .minor
@@ -97,6 +120,7 @@ pub fn build_minimal_package_with_version(
     push_i32(&mut d, 0); // compressed_chunks_count
     push_u32(&mut d, 0); // package_source
     push_i32(&mut d, 0); // additional_packages_to_cook count
+    // num_texture_allocations skipped: legacy (-8) is not > -7.
     push_i32(&mut d, 0); // asset_registry_data_offset
     push_i64(&mut d, 0); // bulk_data_start_offset
     push_i32(&mut d, 0); // world_tile_info_data_offset (ue4 >= 224)
@@ -105,7 +129,9 @@ pub fn build_minimal_package_with_version(
     push_i32(&mut d, 0); // preload_dependency_offset
     push_i32(&mut d, 0); // names_referenced_from_export_data_count (ue5 >= 1001)
     push_i64(&mut d, 0); // payload_toc_offset (ue5 >= 1002)
-    push_i32(&mut d, 0); // data_resource_offset (ue5 >= 1009)
+    if fv >= ue5::DATA_RESOURCES {
+        push_i32(&mut d, 0); // data_resource_offset
+    }
     d
 }
 

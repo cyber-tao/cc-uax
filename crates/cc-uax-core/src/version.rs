@@ -156,3 +156,10 @@ pub mod custom {
 pub const PACKAGE_FILE_TAG: u32 = 0x9E2A_83C1;
 
 pub const PACKAGE_FILE_TAG_SWAPPED: u32 = 0xC183_2A9E;
+
+/// Lowest `FileVersionUE5` verified against real UE5 corpora (UE5.6). Packages with
+/// a lower version still parse per the version gates, but that decode has not been
+/// confirmed against real assets, so analysis surfaces an informational note rather
+/// than silent confidence. This is a verification-policy floor, not a format
+/// threshold, which is why it lives outside the `ue5` ladder.
+pub const VERIFIED_FILE_VERSION_FLOOR: i32 = ue5::OS_SUB_OBJECT_SHADOW_SERIALIZATION;

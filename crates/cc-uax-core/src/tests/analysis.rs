@@ -3,7 +3,7 @@ use crate::PackageView;
 use crate::analysis::analyze_package;
 use crate::model::{
     ASSET_ANALYSIS_SCHEMA_VERSION, AnalysisStatus, AssetAnalysis, AssetView, CapabilityKind,
-    DecodedValue, KnownOpaqueKind, ParseCoverage,
+    DecodedValue, DiagnosticSeverity, KnownOpaqueKind, ParseCoverage,
 };
 use crate::name::NameMap;
 use crate::object::{ObjectImport, PackageIndex};
@@ -460,6 +460,36 @@ fn future_file_version_is_reported_as_unsupported() {
     package.summary.file_version_ue5 = crate::version::ue5::IMPORT_TYPE_HIERARCHIES + 1;
     let analysis = analyze_package(&package, &build_minimal_package(), AssetView::Summary);
     assert_eq!(analysis.status, AnalysisStatus::Unsupported);
+}
+
+#[test]
+fn below_verified_floor_adds_info_note_without_downgrading_status() {
+    // UE5.1 (FileVersionUE5 = 1008) is below the real-corpus-verified floor (UE5.6 =
+    // 1017). Analysis surfaces the gap as an Info diagnostic, which is not counted
+    // toward errors/warnings and so must not drag the status off complete.
+    let bytes = build_minimal_package_with_version(1008, 5, 1);
+    let package = Package::parse(&bytes).unwrap();
+    let analysis = analyze_package(&package, &bytes, AssetView::Summary);
+    assert!(
+        analysis.diagnostics.iter().any(|diagnostic| diagnostic.code
+            == "package_below_verified_version"
+            && diagnostic.severity == DiagnosticSeverity::Info),
+        "expected a package_below_verified_version info note"
+    );
+    assert_eq!(analysis.status, AnalysisStatus::Complete);
+}
+
+#[test]
+fn verified_floor_version_adds_no_version_note() {
+    let bytes = build_minimal_package(); // FileVersionUE5 = 1018 (verified range)
+    let package = Package::parse(&bytes).unwrap();
+    let analysis = analyze_package(&package, &bytes, AssetView::Summary);
+    assert!(
+        !analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "package_below_verified_version")
+    );
 }
 
 #[test]

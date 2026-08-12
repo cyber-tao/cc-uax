@@ -71,6 +71,30 @@ fn package_view_parses_ue56_file_version_1017() {
 }
 
 #[test]
+fn minimal_package_parses_across_supported_ue5_versions() {
+    // The version-aware summary builder must emit a header the parser accepts for
+    // every supported FileVersionUE5, from UE5.1 (1008) through UE5.8 (1018). Each
+    // version gates a different set of summary fields, so a layout bug for any one
+    // of them surfaces here as a parse failure.
+    for (fv, major, minor) in [
+        (1008, 5, 1),
+        (1009, 5, 2),
+        (1009, 5, 3),
+        (1012, 5, 4),
+        (1013, 5, 5),
+        (1017, 5, 6),
+        (1018, 5, 7),
+        (1018, 5, 8),
+    ] {
+        let data = build_minimal_package_with_version(fv, major, minor);
+        let package = Package::parse(&data).unwrap_or_else(|err| {
+            panic!("FileVersionUE5 {fv} (UE{major}.{minor}) failed to parse: {err:#}")
+        });
+        assert_eq!(package.summary.file_version_ue5, fv);
+    }
+}
+
+#[test]
 fn soft_object_path_table_error_is_structured() {
     let mut data = build_minimal_package();
     put_i32(&mut data, 76, 1);
