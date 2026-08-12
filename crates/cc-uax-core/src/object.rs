@@ -1,6 +1,21 @@
 use crate::reader::{RawName, Reader};
+use crate::summary::EngineVersion;
 use crate::version::{ue4, ue5};
 use anyhow::{Result, bail};
+
+/// Whether a serialized import-table entry carries `FObjectImport::PackageName`. It is
+/// present whenever `ue4v >= NON_OUTER_PACKAGE_IMPORT`, except that UE5.6/5.7 omit it for
+/// FilterEditorOnly packages while UE5.8 always writes it. Those releases share
+/// FileVersionUE5 = 1018, so the engine version is the only signal that separates the two
+/// layouts (ObjectResource.cpp FObjectImport::Serialize).
+fn import_has_package_name(
+    ue4v: i32,
+    filter_editor_only: bool,
+    engine_version: &EngineVersion,
+) -> bool {
+    ue4v >= ue4::NON_OUTER_PACKAGE_IMPORT
+        && (!filter_editor_only || (engine_version.major, engine_version.minor) >= (5, 8))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackageIndex(pub i32);
@@ -46,6 +61,7 @@ impl ObjectImport {
         ue4v: i32,
         ue5v: i32,
         filter_editor_only: bool,
+        engine_version: &EngineVersion,
     ) -> Result<Vec<ObjectImport>> {
         if count < 0 {
             bail!("import count out of range: {count}");
@@ -57,12 +73,9 @@ impl ObjectImport {
             bail!("import table offset must be positive when import count is {count}");
         }
         r.seek(offset as u64)?;
+        let has_package_name = import_has_package_name(ue4v, filter_editor_only, engine_version);
         let min_entry_bytes = IMPORT_ENTRY_MIN_BYTES
-            + if ue4v >= ue4::NON_OUTER_PACKAGE_IMPORT && !filter_editor_only {
-                8
-            } else {
-                0
-            }
+            + if has_package_name { 8 } else { 0 }
             + if ue5v >= ue5::OPTIONAL_RESOURCES {
                 4
             } else {
@@ -77,7 +90,7 @@ impl ObjectImport {
             let class_name = r.read_raw_name()?;
             let outer_index = PackageIndex(r.read_i32()?);
             let object_name = r.read_raw_name()?;
-            let package_name = if ue4v >= ue4::NON_OUTER_PACKAGE_IMPORT && !filter_editor_only {
+            let package_name = if has_package_name {
                 Some(r.read_raw_name()?)
             } else {
                 None

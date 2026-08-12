@@ -43,6 +43,7 @@ impl Package {
             ue4,
             ue5,
             filter_editor,
+            &summary.engine_version,
         )?;
         let exports = ObjectExport::parse_table(
             &mut r,

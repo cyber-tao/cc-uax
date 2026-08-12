@@ -95,6 +95,68 @@ fn minimal_package_parses_across_supported_ue5_versions() {
 }
 
 #[test]
+fn import_package_name_gate_follows_engine_version_for_filtered_packages() {
+    // UE5.6/5.7 omit FObjectImport::PackageName for FilterEditorOnly packages, but UE5.8
+    // always writes it, and both share FileVersionUE5 = 1018. The engine version is the
+    // only signal separating the layouts, so a 5.8 filtered package must read PackageName
+    // while a 5.7 filtered package must not.
+    use crate::object::ObjectImport;
+    use crate::summary::EngineVersion;
+
+    let ue4 = crate::version::ue4::HIGHEST;
+    let ue5 = crate::version::ue5::IMPORT_TYPE_HIERARCHIES; // 1018
+
+    let entry = |with_package_name: bool| {
+        // parse_table requires a positive table offset, so pad the front and point at it.
+        let mut table = vec![0u8; 4];
+        let start = table.len();
+        push_raw_name(&mut table, 0); // class_package
+        push_raw_name(&mut table, 1); // class_name
+        push_i32(&mut table, 0); // outer_index
+        push_raw_name(&mut table, 2); // object_name
+        if with_package_name {
+            push_raw_name(&mut table, 3); // package_name
+        }
+        push_i32(&mut table, 0); // is_optional (bool32, OPTIONAL_RESOURCES)
+        (table, start as i32)
+    };
+
+    // UE5.8 filtered package: bytes carry PackageName, and it must be read.
+    let (table, offset) = entry(true);
+    let mut r = Reader::new(&table);
+    let engine_58 = EngineVersion {
+        major: 5,
+        minor: 8,
+        ..Default::default()
+    };
+    let imports = ObjectImport::parse_table(&mut r, offset, 1, ue4, ue5, true, &engine_58)
+        .expect("5.8 filtered import table parses");
+    assert_eq!(imports[0].package_name.as_ref().map(|n| n.index), Some(3));
+    assert_eq!(
+        r.pos(),
+        table.len() as u64,
+        "5.8 entry must consume PackageName"
+    );
+
+    // UE5.7 filtered package: bytes omit PackageName, and none is read.
+    let (table, offset) = entry(false);
+    let mut r = Reader::new(&table);
+    let engine_57 = EngineVersion {
+        major: 5,
+        minor: 7,
+        ..Default::default()
+    };
+    let imports = ObjectImport::parse_table(&mut r, offset, 1, ue4, ue5, true, &engine_57)
+        .expect("5.7 filtered import table parses");
+    assert!(imports[0].package_name.is_none());
+    assert_eq!(
+        r.pos(),
+        table.len() as u64,
+        "5.7 entry must not read PackageName"
+    );
+}
+
+#[test]
 fn soft_object_path_table_error_is_structured() {
     let mut data = build_minimal_package();
     put_i32(&mut data, 76, 1);
