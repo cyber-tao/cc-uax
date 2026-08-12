@@ -51,6 +51,53 @@ fn builds_forward_and_reverse_adjacency_with_canonical_case() {
 }
 
 #[test]
+fn self_reference_is_excluded_from_adjacency_so_the_asset_can_be_isolated() {
+    let root = temp_project("selfref");
+    let layout = ProjectLayout::discover(&root).unwrap();
+    let bytes = minimal_package();
+    let analysis = AssetAnalysisSummary::from_analysis(
+        &PackageView::parse(&bytes).unwrap().analyze(AssetView::Full),
+    );
+    let record = |package: &str, references: &[&str]| AssetRecord {
+        package_path: package.to_string(),
+        mount_root: "/Game".to_string(),
+        file_path: root.join(format!(
+            "Content/{}.uasset",
+            package.trim_start_matches("/Game/")
+        )),
+        relative_path: format!("{}.uasset", package.trim_start_matches("/Game/")),
+        asset_kind: AssetKind::Asset,
+        ownership: AssetOwnership::ProjectAsset,
+        forward_references: references.iter().map(|value| value.to_string()).collect(),
+        analysis: analysis.clone(),
+    };
+    // /Game/Loner cites only itself (as UE writes a Blueprint's own GeneratedClass),
+    // and nothing else references it.
+    let index = build_project_index(
+        layout.clone(),
+        MountTable::default_for(&layout),
+        ProjectEntryPoints::default(),
+        vec![record("/Game/Loner", &["/game/loner"])],
+        Vec::new(),
+        Vec::new(),
+        1,
+    );
+
+    // The self-edge is gone from both directions.
+    assert!(index.forward_references("/Game/Loner").unwrap().is_empty());
+    assert!(index.reverse_referencers("/Game/Loner").is_none());
+    // With no real edges, the asset is correctly reported as isolated.
+    assert!(
+        index
+            .reachability
+            .isolated_project_assets
+            .contains("/Game/Loner")
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn repeated_external_references_normalize_to_a_single_case() {
     let root = temp_project("extref");
     let layout = ProjectLayout::discover(&root).unwrap();

@@ -310,9 +310,15 @@ pub(crate) fn build_project_index(
         }
     }
     for record in &mut records {
+        // UE writes a package's own name into SoftPackageReferences (e.g. a
+        // Blueprint's GeneratedClass). That is not a cross-package edge, so drop
+        // the self-reference here; the asset-level `references.soft` still keeps
+        // the serialized fact.
+        let self_key = record.package_path.to_ascii_lowercase();
         record.forward_references = record
             .forward_references
             .iter()
+            .filter(|reference| reference.to_ascii_lowercase() != self_key)
             .map(|reference| {
                 canonical
                     .get(&reference.to_ascii_lowercase())
