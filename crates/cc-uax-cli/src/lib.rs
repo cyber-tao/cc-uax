@@ -29,6 +29,11 @@ pub fn run(cli: Cli) -> ExitCode {
             };
             let text = render_json(&failure, cli.compact)
                 .unwrap_or_else(|_| "{\"status\":\"error\"}".to_string());
+            // Overwrite --output with the error document so a stale prior report
+            // is never left behind to be read as a fresh success.
+            if let Some(path) = cli.output.as_deref() {
+                let _ = fs::write(path, format!("{text}\n"));
+            }
             let _ = writeln!(io::stderr().lock(), "{text}");
             ExitCode::FAILURE
         }
@@ -96,9 +101,12 @@ fn analyze_project(args: &ProjectArgs) -> Result<(ProjectReport, bool)> {
         Ok(index) => (index, false),
         Err(error) => (error.into_index(), true),
     };
-    let focused = analyze_focused_assets(&index, &args.focus)?;
-    let report = ProjectReport::from_index(&index, focused);
-    Ok((report, hard_failure))
+    let (focused, focus_issues) = analyze_focused_assets(&index, &args.focus);
+    // A focus failure is a hard failure under strict mode, but the report is
+    // still produced so the caller never reads a stale --output as success.
+    let focus_failure = !focus_issues.is_empty() && !args.allow_partial;
+    let report = ProjectReport::from_index(&index, focused, focus_issues);
+    Ok((report, hard_failure || focus_failure))
 }
 
 fn project_mounts(layout: &ProjectLayout, requested: &[String]) -> Result<MountTable> {
@@ -134,12 +142,21 @@ fn cache_policy(args: &ProjectArgs) -> CachePathPolicy {
     }
 }
 
+/// A focus selection failure recorded in the report instead of aborting the
+/// command, so the whole project scan is never discarded over one bad pattern.
+struct FocusIssue {
+    path: String,
+    message: String,
+}
+
 fn analyze_focused_assets(
     index: &ProjectIndex,
     focus: &[String],
-) -> Result<BTreeMap<String, AssetAnalysis>> {
+) -> (BTreeMap<String, AssetAnalysis>, Vec<FocusIssue>) {
+    let mut analyses = BTreeMap::new();
+    let mut issues = Vec::new();
     if focus.is_empty() {
-        return Ok(BTreeMap::new());
+        return (analyses, issues);
     }
     let mut selected = BTreeSet::new();
     for pattern in focus {
@@ -151,19 +168,31 @@ fn analyze_focused_assets(
             }
         }
         if !matched {
-            anyhow::bail!("--focus pattern matched no indexed package: {pattern}");
+            issues.push(FocusIssue {
+                path: pattern.clone(),
+                message: format!("--focus pattern matched no indexed package: {pattern}"),
+            });
         }
     }
-    let mut analyses = BTreeMap::new();
     for package in selected {
         let record = &index.assets[&package];
-        let bytes = fs::read(&record.file_path)
-            .with_context(|| format!("failed to read focused package {package}"))?;
-        let view = PackageView::parse(&bytes)
-            .with_context(|| format!("failed to parse focused package {package}"))?;
-        analyses.insert(package, view.analyze(AssetView::Full));
+        match fs::read(&record.file_path) {
+            Ok(bytes) => match PackageView::parse(&bytes) {
+                Ok(view) => {
+                    analyses.insert(package, view.analyze(AssetView::Full));
+                }
+                Err(error) => issues.push(FocusIssue {
+                    path: package.clone(),
+                    message: format!("failed to parse focused package {package}: {error:#}"),
+                }),
+            },
+            Err(error) => issues.push(FocusIssue {
+                path: package.clone(),
+                message: format!("failed to read focused package {package}: {error}"),
+            }),
+        }
     }
-    Ok(analyses)
+    (analyses, issues)
 }
 
 fn package_matches(pattern: &str, package: &str) -> bool {
@@ -281,12 +310,17 @@ struct ProjectReport {
 }
 
 impl ProjectReport {
-    fn from_index(index: &ProjectIndex, focused: BTreeMap<String, AssetAnalysis>) -> Self {
+    fn from_index(
+        index: &ProjectIndex,
+        focused: BTreeMap<String, AssetAnalysis>,
+        focus_issues: Vec<FocusIssue>,
+    ) -> Self {
         let evidence_diagnostic = index
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.stage != ScanFailureStage::Cache);
         let status = if !index.failures.is_empty()
+            || !focus_issues.is_empty()
             || evidence_diagnostic
             || index.analysis.status != AnalysisStatus::Complete
             || focused
@@ -302,7 +336,7 @@ impl ProjectReport {
             .values()
             .map(ProjectAsset::from_record)
             .collect();
-        let failures = index
+        let mut failures: Vec<ProjectIssue> = index
             .failures
             .iter()
             .map(|failure| ProjectIssue {
@@ -312,6 +346,14 @@ impl ProjectReport {
                 message: failure.message.clone(),
             })
             .collect();
+        for issue in focus_issues {
+            failures.push(ProjectIssue {
+                stage: ScanFailureStage::Focus,
+                path: issue.path,
+                severity: None,
+                message: issue.message,
+            });
+        }
         let diagnostics = index
             .diagnostics
             .iter()

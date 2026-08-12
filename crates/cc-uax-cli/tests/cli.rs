@@ -217,6 +217,127 @@ fn max_output_bytes_below_skeleton_still_emits_valid_json() {
     assert!(report["summary"].is_object());
 }
 
+#[test]
+fn focus_miss_records_a_failure_but_still_writes_the_report() {
+    let root = temp_dir("focus-miss");
+    let content = root.join("Content");
+    write_package(&content.join("Good.uasset"));
+    let out_path = root.join("focus.json");
+    let output = bin()
+        .args([
+            "project",
+            root.to_str().unwrap(),
+            "--no-cache",
+            "--compact",
+            "--focus",
+            "/Game/Good",
+            "--focus",
+            "/Game/Typo/DoesNotExist",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&out_path).unwrap()).unwrap();
+    let exit = output.status.code();
+    std::fs::remove_dir_all(&root).unwrap();
+
+    // A bad pattern is a strict hard failure, but the full scan is still written.
+    assert_eq!(exit, Some(2));
+    assert_eq!(report["status"], "partial");
+    assert!(!report["inventory"].as_array().unwrap().is_empty());
+    assert!(report["focused"]["/Game/Good"].is_object());
+    assert!(
+        report["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|failure| failure["stage"] == "focus")
+    );
+}
+
+#[test]
+fn focus_miss_with_allow_partial_exits_zero() {
+    let root = temp_dir("focus-allow");
+    let content = root.join("Content");
+    write_package(&content.join("Good.uasset"));
+    let out_path = root.join("focus.json");
+    let output = bin()
+        .args([
+            "project",
+            root.to_str().unwrap(),
+            "--no-cache",
+            "--compact",
+            "--allow-partial",
+            "--focus",
+            "/Game/Typo/DoesNotExist",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&out_path).unwrap()).unwrap();
+    let exit = output.status.code();
+    std::fs::remove_dir_all(&root).unwrap();
+
+    assert_eq!(exit, Some(0));
+    assert!(
+        report["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|failure| failure["stage"] == "focus")
+    );
+}
+
+#[test]
+fn failed_run_overwrites_a_stale_output_file() {
+    let root = temp_dir("stale");
+    let content = root.join("Content");
+    write_package(&content.join("Good.uasset"));
+    let out_path = root.join("report.json");
+
+    // A successful scan writes a full report to --output.
+    let ok = bin()
+        .args([
+            "project",
+            root.to_str().unwrap(),
+            "--no-cache",
+            "--compact",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(ok.status.success());
+    let first = std::fs::read_to_string(&out_path).unwrap();
+    assert!(first.contains("\"layout\""));
+
+    // A later failing command targeting the same file must replace its contents,
+    // so the stale success report is never read back.
+    let missing = root.join("Nope.uasset");
+    let fail = bin()
+        .args([
+            "asset",
+            missing.to_str().unwrap(),
+            "--view",
+            "summary",
+            "--compact",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let second = std::fs::read_to_string(&out_path).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+
+    assert!(!fail.status.success());
+    assert!(second.contains("\"status\":\"error\""));
+    assert!(!second.contains("\"layout\""));
+}
+
 fn push_u16(bytes: &mut Vec<u8>, value: u16) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }

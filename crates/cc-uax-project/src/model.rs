@@ -98,6 +98,7 @@ pub enum ScanFailureStage {
     Index,
     Ownership,
     Cache,
+    Focus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
