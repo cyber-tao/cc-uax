@@ -1022,6 +1022,132 @@ fn native_struct_instanced_property_bag_bad_size_falls_back_to_opaque() {
     assert!(v.get("property_descs").is_none());
 }
 
+/// Builds an `FInstancedPropertyBag` body with a single float desc for the given
+/// custom version, appending the UE5.8 PropertyFlags/KeyType fields when needed.
+fn property_bag_value(version: i32) -> Vec<u8> {
+    let mut data = Vec::new();
+    push_raw_name(&mut data, 3); // Temperature
+    push_raw_name(&mut data, 4); // FloatProperty
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 4);
+    data.push(0);
+    push_f32(&mut data, 42.0);
+    push_raw_name(&mut data, 5); // None
+
+    let mut value = Vec::new();
+    push_i32(&mut value, 1); // bHasData
+    push_i32(&mut value, 1); // desc count
+    push_i32(&mut value, 0); // ValueTypeObject (null)
+    value.extend_from_slice(&[0u8; 16]); // ID
+    push_raw_name(&mut value, 3); // Name = Temperature
+    value.push(8); // ValueType
+    value.push(0); // NumContainers = 0
+    push_i32(&mut value, 0); // bHasMetaData = false
+    if version >= crate::version::custom::PROPERTY_BAG_PROPERTY_FLAGS {
+        value.extend_from_slice(&4u64.to_le_bytes()); // PropertyFlags = CPF_Edit
+    }
+    if version >= crate::version::custom::PROPERTY_BAG_KEY_TYPES {
+        value.push(3); // KeyType
+        push_i32(&mut value, 0); // KeyTypeObject (null)
+    }
+    push_i32(&mut value, data.len() as i32); // SerialSize
+    value.extend_from_slice(&data);
+    value
+}
+
+fn property_bag_names() -> NameMap {
+    NameMap {
+        names: vec![
+            "Data".to_string(),
+            "StructProperty".to_string(),
+            "InstancedPropertyBag".to_string(),
+            "Temperature".to_string(),
+            "FloatProperty".to_string(),
+            "None".to_string(),
+        ],
+    }
+}
+
+#[test]
+fn native_struct_property_bag_ue58_desc_fields_decode() {
+    // Versions 4 and 5 append PropertyFlags and a key type per desc; both must be
+    // consumed so the trailing SerialSize and tagged data still align.
+    for version in [
+        crate::version::custom::PROPERTY_BAG_PROPERTY_FLAGS,
+        crate::version::custom::PROPERTY_BAG_KEY_TYPES,
+    ] {
+        let names = property_bag_names();
+        let value = property_bag_value(version);
+        let d = build_struct_property(2, 5, &value);
+        let ctx = ParseCtx {
+            names: &names,
+            resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
+            pins: PinSerCtx::default(),
+            soft_object_paths: &[],
+            serialization: crate::version::SerializationPolicy {
+                property_bag_version: version,
+                ..Default::default()
+            },
+            file_version_ue4: crate::version::ue4::HIGHEST,
+            file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        };
+        let mut r = Reader::new(&d);
+        let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+        assert_eq!(entries.len(), 1);
+        let v = &entries[0].value;
+        assert!(
+            v.get("serialized_data").is_none(),
+            "version {version} should decode structurally"
+        );
+        let descs = v["property_descs"].as_array().unwrap();
+        assert_eq!(descs[0]["name"].as_str(), Some("Temperature"));
+        if version >= crate::version::custom::PROPERTY_BAG_KEY_TYPES {
+            assert!(
+                descs[0].get("key_type").is_some(),
+                "version {version} desc must carry the map key type"
+            );
+        }
+        let props = v["properties"].as_array().unwrap();
+        assert_eq!(props[0]["value"].as_f64(), Some(42.0));
+    }
+}
+
+#[test]
+fn native_struct_property_bag_future_version_falls_back_with_reason() {
+    let names = property_bag_names();
+    // Bytes use the highest known (v5) layout, but the archive advertises a newer
+    // version: the decoder must not guess -- it stays opaque and explains why.
+    let value = property_bag_value(crate::version::custom::PROPERTY_BAG_KEY_TYPES);
+    let d = build_struct_property(2, 5, &value);
+    let future = crate::version::custom::PROPERTY_BAG_HIGHEST_KNOWN + 1;
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy {
+            property_bag_version: future,
+            ..Default::default()
+        },
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+    let v = &entries[0].value;
+    assert!(v.get("property_descs").is_none());
+    let serialized = v
+        .get("serialized_data")
+        .expect("future version stays opaque");
+    let reason = serialized["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("exceeds the highest verified layout"),
+        "reason should flag the version: {reason}"
+    );
+}
+
 #[test]
 fn native_struct_instanced_struct_missing_version_uses_legacy_prefix() {
     let names = NameMap {

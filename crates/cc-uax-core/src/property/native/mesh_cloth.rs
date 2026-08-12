@@ -187,7 +187,9 @@ fn parse_instanced_property_bag(r: &mut Reader, ctx: &ParseCtx, value_end: u64) 
     // left after SerialSize does not equal it, the parse drifted and we fall back
     // to the historical opaque preview instead of misreporting bytes.
     let body_start = r.pos();
-    if let Some((descs, properties)) = decode_property_bag_body(r, ctx, value_end, version) {
+    if version <= custom::PROPERTY_BAG_HIGHEST_KNOWN
+        && let Some((descs, properties)) = decode_property_bag_body(r, ctx, value_end, version)
+    {
         o.insert("property_descs".into(), descs);
         o.insert("properties".into(), properties);
         return Ok(Value::Object(o));
@@ -200,15 +202,21 @@ fn parse_instanced_property_bag(r: &mut Reader, ctx: &ParseCtx, value_end: u64) 
     if r.pos() < value_end {
         r.seek(value_end)?;
     }
-    o.insert(
-        "serialized_data".into(),
-        json!({
-            "start": body_start,
-            "end": value_end,
-            "size": payload_size,
-            "preview": to_hex(&preview)
-        }),
-    );
+    let mut serialized = Map::new();
+    if version > custom::PROPERTY_BAG_HIGHEST_KNOWN {
+        serialized.insert(
+            "reason".into(),
+            json!(format!(
+                "property bag custom version {version} exceeds the highest verified layout {}",
+                custom::PROPERTY_BAG_HIGHEST_KNOWN
+            )),
+        );
+    }
+    serialized.insert("start".into(), json!(body_start));
+    serialized.insert("end".into(), json!(value_end));
+    serialized.insert("size".into(), json!(payload_size));
+    serialized.insert("preview".into(), json!(to_hex(&preview)));
+    o.insert("serialized_data".into(), Value::Object(serialized));
     Ok(Value::Object(o))
 }
 
@@ -244,11 +252,22 @@ fn read_property_bag_descs(
     version: i32,
 ) -> Result<Vec<Value>> {
     let count = r.read_i32()?;
-    // Each desc is at least object(4) + guid(16) + name(8) + type(1) + hasMeta(4).
+    // Each desc is at least object(4) + guid(16) + name(8) + type(1) + hasMeta(4);
+    // UE5.8 adds PropertyFlags(8) and KeyType(1) + KeyTypeObject(4).
+    let min_desc_bytes: u64 =
+        33 + if version >= custom::PROPERTY_BAG_PROPERTY_FLAGS {
+            8
+        } else {
+            0
+        } + if version >= custom::PROPERTY_BAG_KEY_TYPES {
+            5
+        } else {
+            0
+        };
     validate_count(
         count,
         value_end.saturating_sub(r.pos()),
-        33,
+        min_desc_bytes,
         "property bag descs",
     )?;
     let mut descs = Vec::with_capacity(count as usize);
@@ -285,13 +304,33 @@ fn read_property_bag_descs(
             }
         }
 
-        descs.push(json!({
-            "name": name,
-            "id": id.to_hex(),
-            "value_type": value_type,
-            "value_type_object": (ctx.resolve_object)(value_type_object),
-            "container_types": container_types,
-        }));
+        // UE5.8 appends PropertyFlags, and for map properties the key type, after
+        // the metadata block (FPropertyBagCustomVersion PropertyFlags/KeyTypes).
+        if version >= custom::PROPERTY_BAG_PROPERTY_FLAGS {
+            let _property_flags = r.read_u64()?;
+        }
+        let key_type = if version >= custom::PROPERTY_BAG_KEY_TYPES {
+            let key_type = r.read_u8()?;
+            let key_type_object = (ctx.resolve_object)(r.read_i32()?);
+            Some((key_type, key_type_object))
+        } else {
+            None
+        };
+
+        let mut desc = Map::new();
+        desc.insert("name".into(), json!(name));
+        desc.insert("id".into(), json!(id.to_hex()));
+        desc.insert("value_type".into(), json!(value_type));
+        desc.insert(
+            "value_type_object".into(),
+            (ctx.resolve_object)(value_type_object),
+        );
+        desc.insert("container_types".into(), Value::Array(container_types));
+        if let Some((key_type, key_type_object)) = key_type {
+            desc.insert("key_type".into(), json!(key_type));
+            desc.insert("key_type_object".into(), key_type_object);
+        }
+        descs.push(Value::Object(desc));
     }
     Ok(descs)
 }

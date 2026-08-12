@@ -138,6 +138,15 @@ pub mod custom {
     /// FPropertyBagCustomVersion::MetaClass — per-desc metadata gains a trailing
     /// MetaClass object reference.
     pub const PROPERTY_BAG_META_CLASS: i32 = 3;
+    /// FPropertyBagCustomVersion::PropertyFlags (UE5.8) — each desc appends a
+    /// uint64 PropertyFlags after the metadata block.
+    pub const PROPERTY_BAG_PROPERTY_FLAGS: i32 = 4;
+    /// FPropertyBagCustomVersion::KeyTypes (UE5.8) — each desc appends a KeyType
+    /// (uint8) and KeyTypeObject (FPackageIndex) after PropertyFlags.
+    pub const PROPERTY_BAG_KEY_TYPES: i32 = 5;
+    /// Highest FPropertyBagCustomVersion layout verified against UE source (5.8).
+    /// A higher version must fall back to opaque rather than guess the layout.
+    pub const PROPERTY_BAG_HIGHEST_KNOWN: i32 = 5;
 
     /// FFortniteMainBranchObjectVersion::MaterialInputUsesLinearColor — from this
     /// version on, FMaterialInput stores the ExpressionGUID as a linear color value.
