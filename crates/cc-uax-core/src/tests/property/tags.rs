@@ -215,36 +215,37 @@ fn legacy_property_tags_decode_type_metadata() {
             "None".to_string(),             // 19
         ],
     };
+    let fv = crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION;
     let mut d = Vec::new();
     d.push(0); // object serialization control byte
 
     push_legacy_tag_header(&mut d, 0, 1, 0);
-    d.push(1); // BoolVal
-    push_legacy_tag_tail(&mut d);
+    push_u32(&mut d, 1); // BoolVal (4-byte legacy UBOOL)
+    push_legacy_tag_tail(&mut d, fv);
 
     push_legacy_tag_header(&mut d, 2, 3, 8);
     push_raw_name(&mut d, 4); // EnumName
-    push_legacy_tag_tail(&mut d);
+    push_legacy_tag_tail(&mut d, fv);
     push_raw_name(&mut d, 5); // enum value
 
     push_legacy_tag_header(&mut d, 6, 7, 24);
     push_raw_name(&mut d, 8); // StructName
     d.extend_from_slice(&[0u8; 16]); // StructGuid
-    push_legacy_tag_tail(&mut d);
+    push_legacy_tag_tail(&mut d, fv);
     push_f64(&mut d, 1.0);
     push_f64(&mut d, 2.0);
     push_f64(&mut d, 3.0);
 
     push_legacy_tag_header(&mut d, 9, 10, 12);
     push_raw_name(&mut d, 11); // InnerType
-    push_legacy_tag_tail(&mut d);
+    push_legacy_tag_tail(&mut d, fv);
     push_i32(&mut d, 2);
     push_i32(&mut d, 7);
     push_i32(&mut d, 8);
 
     push_legacy_tag_header(&mut d, 12, 13, 16);
     push_raw_name(&mut d, 11); // InnerType
-    push_legacy_tag_tail(&mut d);
+    push_legacy_tag_tail(&mut d, fv);
     push_i32(&mut d, 0); // NumToRemove
     push_i32(&mut d, 2);
     push_i32(&mut d, 9);
@@ -253,7 +254,7 @@ fn legacy_property_tags_decode_type_metadata() {
     push_legacy_tag_header(&mut d, 14, 15, 16);
     push_raw_name(&mut d, 11); // Key InnerType
     push_raw_name(&mut d, 11); // ValueType
-    push_legacy_tag_tail(&mut d);
+    push_legacy_tag_tail(&mut d, fv);
     push_i32(&mut d, 0); // NumKeysToRemove
     push_i32(&mut d, 1);
     push_i32(&mut d, 3);
@@ -261,12 +262,12 @@ fn legacy_property_tags_decode_type_metadata() {
 
     push_legacy_tag_header(&mut d, 16, 17, 8);
     push_raw_name(&mut d, 11); // InnerType
-    push_legacy_tag_tail(&mut d);
+    push_legacy_tag_tail(&mut d, fv);
     push_i32(&mut d, 1); // optional is set
     push_i32(&mut d, 77);
 
     push_legacy_tag_header(&mut d, 18, 11, 4);
-    push_legacy_tag_tail_with_guid(&mut d);
+    push_legacy_tag_tail_with_guid(&mut d, fv);
     push_i32(&mut d, 99);
 
     push_raw_name(&mut d, 19); // None
@@ -278,7 +279,7 @@ fn legacy_property_tags_decode_type_metadata() {
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
-        file_version_ue5: crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION,
+        file_version_ue5: fv,
     };
     let mut r = Reader::new(&d);
     let props = parse_object_properties(&mut r, &ctx, d.len() as u64);
@@ -306,6 +307,63 @@ fn legacy_property_tags_decode_type_metadata() {
         Some("00000001000000020000000300000004")
     );
     assert_eq!(props[7].value.as_i64(), Some(99));
+}
+
+#[test]
+fn legacy_property_tags_match_ue5_1_on_disk_layout() {
+    // UE5.1 (FileVersionUE5 = 1008) legacy tags have no complete type name and no
+    // extension byte (< 1011), and both `BoolVal` and `HasPropertyGuid` are serialized
+    // as 4-byte legacy UBOOLs (FArchive::SerializeBool). Reading either as a single
+    // byte desyncs every following tag, so exact byte conservation plus the decoded
+    // values prove the widths are right.
+    let names = NameMap {
+        names: vec![
+            "Flag".to_string(),         // 0
+            "BoolProperty".to_string(), // 1
+            "Count".to_string(),        // 2
+            "IntProperty".to_string(),  // 3
+            "None".to_string(),         // 4
+        ],
+    };
+    let fv = 1008; // UE5.1
+    let mut d = Vec::new();
+    // No object serialization-control byte: that is only written for a top-level
+    // UClass when FileVersionUE5 >= 1011 (UE5.4+).
+
+    // BoolProperty: 4-byte BoolVal, then 4-byte HasPropertyGuid = false, no ext byte.
+    push_legacy_tag_header(&mut d, 0, 1, 0);
+    push_u32(&mut d, 1); // BoolVal = true (4-byte UBOOL)
+    push_legacy_tag_tail(&mut d, fv);
+
+    // IntProperty carrying a property GUID: 4-byte HasPropertyGuid = true + 16-byte GUID.
+    push_legacy_tag_header(&mut d, 2, 3, 4);
+    push_legacy_tag_tail_with_guid(&mut d, fv);
+    push_i32(&mut d, 42);
+
+    push_raw_name(&mut d, 4); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: fv,
+    };
+    let mut r = Reader::new(&d);
+    let props = parse_object_properties(&mut r, &ctx, d.len() as u64);
+
+    assert_eq!(r.pos(), d.len() as u64);
+    assert_eq!(props.len(), 2);
+    assert_eq!(props[0].name, "Flag");
+    assert_eq!(props[0].value.as_bool(), Some(true));
+    assert_eq!(props[1].name, "Count");
+    assert_eq!(
+        props[1].guid.as_deref(),
+        Some("00000001000000020000000300000004")
+    );
+    assert_eq!(props[1].value.as_i64(), Some(42));
 }
 
 #[test]

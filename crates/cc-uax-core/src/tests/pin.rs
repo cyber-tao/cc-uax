@@ -441,7 +441,7 @@ fn legacy_pin_boundary_is_not_guessed_without_none_terminator() {
     };
     let mut data = Vec::new();
     push_legacy_tag_header(&mut data, 0, 1, 4);
-    push_legacy_tag_tail(&mut data);
+    push_legacy_tag_tail(&mut data, 1009);
     push_i32(&mut data, 7);
     let context = ParseCtx {
         names: &names,

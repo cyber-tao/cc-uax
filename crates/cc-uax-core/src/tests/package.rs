@@ -165,7 +165,7 @@ fn pre_complete_typename_version_decodes_legacy_properties() {
     let mut data = Vec::new();
     data.push(0);
     push_legacy_tag_header(&mut data, 1, 2, 4);
-    push_legacy_tag_tail(&mut data);
+    push_legacy_tag_tail(&mut data, 1011);
     push_i32(&mut data, 123);
     push_raw_name(&mut data, 3);
 

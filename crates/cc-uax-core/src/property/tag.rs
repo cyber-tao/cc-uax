@@ -388,8 +388,10 @@ fn read_legacy_property_tag(
     let size = r.read_i32()?;
     let array_index = r.read_i32()?;
     let (type_name, bool_val) = read_legacy_type_name(r, ctx, &property_type)?;
+    // HasPropertyGuid is a serialized `bool`, which UE writes as a 4-byte legacy
+    // UBOOL (FArchive::SerializeBool), not a single byte.
     let guid = if ctx.file_version_ue4 >= ue4::PROPERTY_GUID_IN_PROPERTY_TAG {
-        if r.read_u8()? != 0 {
+        if r.read_bool32()? {
             Some(r.read_guid()?.to_hex())
         } else {
             None
@@ -426,7 +428,8 @@ fn read_legacy_type_name(
             TypeName::with_params(property_type.to_string(), vec![TypeName::leaf(struct_name)])
         }
         "BoolProperty" => {
-            let bool_val = r.read_u8()? != 0;
+            // BoolVal is a serialized `bool` (4-byte legacy UBOOL), not a single byte.
+            let bool_val = r.read_bool32()?;
             return Ok((TypeName::leaf(property_type.to_string()), bool_val));
         }
         "ByteProperty" => {

@@ -173,15 +173,24 @@ pub fn push_legacy_tag_header(v: &mut Vec<u8>, name_idx: i32, type_idx: i32, siz
     push_i32(v, 0); // ArrayIndex
 }
 
-pub fn push_legacy_tag_tail(v: &mut Vec<u8>) {
-    v.push(0); // HasPropertyGuid
-    v.push(0); // UE5 1011 PropertyExtensions = NoExtension
+// Legacy (pre-`PROPERTY_TAG_COMPLETE_TYPE_NAME`) tag tail. UE serializes the
+// `HasPropertyGuid` bool as a 4-byte legacy UBOOL, and only appends the
+// PropertyTagExtensions byte when `file_version_ue5 >= 1011`.
+pub fn push_legacy_tag_tail(v: &mut Vec<u8>, file_version_ue5: i32) {
+    push_u32(v, 0); // HasPropertyGuid = false (4-byte UBOOL)
+    if file_version_ue5 >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
+    {
+        v.push(0); // PropertyTagExtensions = NoExtension
+    }
 }
 
-pub fn push_legacy_tag_tail_with_guid(v: &mut Vec<u8>) {
-    v.push(1); // HasPropertyGuid
+pub fn push_legacy_tag_tail_with_guid(v: &mut Vec<u8>, file_version_ue5: i32) {
+    push_u32(v, 1); // HasPropertyGuid = true (4-byte UBOOL)
     push_guid(v, 1, 2, 3, 4);
-    v.push(0); // UE5 1011 PropertyExtensions = NoExtension
+    if file_version_ue5 >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
+    {
+        v.push(0); // PropertyTagExtensions = NoExtension
+    }
 }
 
 pub fn push_guid(v: &mut Vec<u8>, a: u32, b: u32, c: u32, d: u32) {
