@@ -225,7 +225,7 @@ cc-uax-cli ──> cc-uax-project ──> cc-uax-core
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked
 cargo build --workspace --release --locked
 ```
