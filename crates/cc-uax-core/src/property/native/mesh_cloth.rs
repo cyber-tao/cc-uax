@@ -220,7 +220,7 @@ fn parse_instanced_property_bag(r: &mut Reader, ctx: &ParseCtx, value_end: u64) 
     Ok(Value::Object(o))
 }
 
-/// Decode the modern (>= NestedContainerTypes) property-bag body: property descs,
+/// Decode the structured (>= ContainerTypes) property-bag body: property descs,
 /// the serial size, and the tagged-property data. Returns `None` when the layout
 /// does not validate so the caller can fall back to an opaque preview.
 fn decode_property_bag_body(
@@ -229,7 +229,7 @@ fn decode_property_bag_body(
     value_end: u64,
     version: i32,
 ) -> Option<(Value, Value)> {
-    if version < custom::PROPERTY_BAG_NESTED_CONTAINER_TYPES {
+    if version < custom::PROPERTY_BAG_CONTAINER_TYPES {
         return None;
     }
     let descs = read_property_bag_descs(r, ctx, value_end, version).ok()?;
@@ -252,10 +252,15 @@ fn read_property_bag_descs(
     version: i32,
 ) -> Result<Vec<Value>> {
     let count = r.read_i32()?;
-    // Each desc is at least object(4) + guid(16) + name(8) + type(1) + hasMeta(4);
-    // UE5.8 adds PropertyFlags(8) and KeyType(1) + KeyTypeObject(4).
+    // Each desc is at least object(4) + guid(16) + name(8) + type(1) + hasMeta(4),
+    // plus one container-type byte from ContainerTypes on; UE5.8 adds PropertyFlags(8)
+    // and KeyType(1) + KeyTypeObject(4).
     let min_desc_bytes: u64 =
-        33 + if version >= custom::PROPERTY_BAG_PROPERTY_FLAGS {
+        33 + if version >= custom::PROPERTY_BAG_CONTAINER_TYPES {
+            1
+        } else {
+            0
+        } + if version >= custom::PROPERTY_BAG_PROPERTY_FLAGS {
             8
         } else {
             0
@@ -278,11 +283,18 @@ fn read_property_bag_descs(
         let value_type = r.read_u8()?;
 
         let mut container_types = Vec::new();
-        if version >= custom::PROPERTY_BAG_CONTAINER_TYPES {
+        if version >= custom::PROPERTY_BAG_NESTED_CONTAINER_TYPES {
             // NestedContainerTypes stores a counted array of container-type bytes.
             let num_containers = r.read_u8()?;
             for _ in 0..num_containers {
                 container_types.push(json!(r.read_u8()?));
+            }
+        } else if version >= custom::PROPERTY_BAG_CONTAINER_TYPES {
+            // ContainerTypes (v1) stores a single EPropertyBagContainerType byte; the UE
+            // load path adds it to the set only when it is not None (0).
+            let container_type = r.read_u8()?;
+            if container_type != 0 {
+                container_types.push(json!(container_type));
             }
         }
 

@@ -1114,6 +1114,75 @@ fn native_struct_property_bag_ue58_desc_fields_decode() {
 }
 
 #[test]
+fn native_struct_property_bag_v1_container_types_decode() {
+    // FPropertyBagCustomVersion::ContainerTypes (v1, UE5.1-5.2) stores a single
+    // EPropertyBagContainerType byte per desc instead of the v2 counted array. Both the
+    // None (0) and Array (1) cases must stay aligned through SerialSize and the data.
+    for container_byte in [0u8, 1u8] {
+        let names = property_bag_names();
+        let mut data = Vec::new();
+        push_raw_name(&mut data, 3); // Temperature
+        push_raw_name(&mut data, 4); // FloatProperty
+        push_i32(&mut data, 0);
+        push_i32(&mut data, 4);
+        data.push(0);
+        push_f32(&mut data, 42.0);
+        push_raw_name(&mut data, 5); // None
+
+        let mut value = Vec::new();
+        push_i32(&mut value, 1); // bHasData
+        push_i32(&mut value, 1); // desc count
+        push_i32(&mut value, 0); // ValueTypeObject (null)
+        value.extend_from_slice(&[0u8; 16]); // ID
+        push_raw_name(&mut value, 3); // Name = Temperature
+        value.push(8); // ValueType
+        value.push(container_byte); // v1 single EPropertyBagContainerType
+        push_i32(&mut value, 0); // bHasMetaData = false
+        push_i32(&mut value, data.len() as i32); // SerialSize
+        value.extend_from_slice(&data);
+
+        let d = build_struct_property(2, 5, &value);
+        let ctx = ParseCtx {
+            names: &names,
+            resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
+            pins: PinSerCtx::default(),
+            soft_object_paths: &[],
+            serialization: crate::version::SerializationPolicy {
+                property_bag_version: crate::version::custom::PROPERTY_BAG_CONTAINER_TYPES,
+                ..Default::default()
+            },
+            file_version_ue4: crate::version::ue4::HIGHEST,
+            file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        };
+        let mut r = Reader::new(&d);
+        let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+        assert_eq!(
+            r.pos(),
+            d.len() as u64,
+            "v1 bag must consume its bytes exactly"
+        );
+        assert_eq!(entries.len(), 1);
+        let v = &entries[0].value;
+        assert!(
+            v.get("serialized_data").is_none(),
+            "v1 bag should decode structurally, not fall back to opaque"
+        );
+        let descs = v["property_descs"].as_array().unwrap();
+        assert_eq!(descs[0]["name"].as_str(), Some("Temperature"));
+        let containers = descs[0]["container_types"].as_array().unwrap();
+        if container_byte == 0 {
+            assert!(containers.is_empty(), "None container type records nothing");
+        } else {
+            assert_eq!(containers.len(), 1);
+            assert_eq!(containers[0].as_u64(), Some(1));
+        }
+        let props = v["properties"].as_array().unwrap();
+        assert_eq!(props[0]["value"].as_f64(), Some(42.0));
+    }
+}
+
+#[test]
 fn native_struct_property_bag_future_version_falls_back_with_reason() {
     let names = property_bag_names();
     // Bytes use the highest known (v5) layout, but the archive advertises a newer
