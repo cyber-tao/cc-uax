@@ -345,10 +345,17 @@ fn consume_object_guid_tail(reader: &mut Reader, end: u64, export: &mut DecodedE
     let start = reader.pos();
     match reader.read_bool32() {
         Ok(true) if end.saturating_sub(reader.pos()) >= 16 => {
+            // PossiblySerializeObjectGuid is the terminal write of UObject::Serialize, so
+            // a genuine trailing GUID lands exactly on the export end. If these bytes do
+            // not, the tail merely begins with a nonzero bool32 and is opaque data, not a
+            // GUID; rewind so it stays classified opaque instead of becoming a false GUID.
             if let Ok(guid) = reader.read_guid()
                 && !guid.is_zero()
+                && reader.pos() == end
             {
                 export.object_guid = Some(guid.to_hex());
+            } else {
+                let _ = reader.seek(start);
             }
         }
         Ok(true) => {
