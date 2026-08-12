@@ -667,6 +667,62 @@ fn material_color_input_uses_packed_color_before_linear_color_version() {
 }
 
 #[test]
+fn material_color_input_uses_linear_color_at_or_past_version() {
+    // From FFortniteMainBranchObjectVersion::MaterialInputUsesLinearColor (171) the
+    // FColorMaterialInput constant is serialized as FLinearColor (4 x f32) rather than a
+    // packed FColor (u32).
+    let names = NameMap {
+        names: vec![
+            "EmissiveColor".to_string(),
+            "StructProperty".to_string(),
+            "ColorMaterialInput".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, -5); // expression object index
+    push_i32(&mut value, 0); // output index
+    push_raw_name(&mut value, 3); // input name "None"
+    for m in [0, 0, 0, 0, 0] {
+        push_i32(&mut value, m);
+    }
+    push_i32(&mut value, 1); // use constant
+    push_f32(&mut value, 0.25); // r
+    push_f32(&mut value, 0.5); // g
+    push_f32(&mut value, 0.75); // b
+    push_f32(&mut value, 1.0); // a
+    let d = build_struct_property(2, 3, &value);
+
+    for version in [171, 180] {
+        let ctx = ParseCtx {
+            names: &names,
+            resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
+            pins: PinSerCtx::default(),
+            soft_object_paths: &[],
+            serialization: crate::version::SerializationPolicy {
+                fortnite_main_version: version,
+                ..Default::default()
+            },
+            file_version_ue4: crate::version::ue4::HIGHEST,
+            file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        };
+        let mut r = Reader::new(&d);
+        let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+        assert_eq!(
+            r.pos(),
+            d.len() as u64,
+            "version {version} must consume exactly"
+        );
+        let v = &entries[0].value;
+        assert_eq!(v["constant"]["r"].as_f64(), Some(0.25));
+        assert_eq!(v["constant"]["g"].as_f64(), Some(0.5));
+        assert_eq!(v["constant"]["b"].as_f64(), Some(0.75));
+        assert_eq!(v["constant"]["a"].as_f64(), Some(1.0));
+    }
+}
+
+#[test]
 fn native_struct_per_platform_float_decodes() {
     let names = NameMap {
         names: vec![
@@ -853,6 +909,80 @@ fn native_struct_movie_scene_float_channel_decodes() {
     assert_eq!(v["default_value"].as_f64(), Some(9.0));
     assert_eq!(v["tick_resolution"]["numerator"].as_i64(), Some(30));
     assert_eq!(v["show_curve"].as_bool(), Some(false));
+}
+
+#[test]
+fn native_struct_movie_scene_float_channel_show_curve_version_gate() {
+    // bShowCurve is present only when FFortniteMainBranchObjectVersion >= 53. At 52, or
+    // with the GUID missing (-1), the trailing bool32 is absent and must not be read.
+    let names = NameMap {
+        names: vec![
+            "Channel".to_string(),
+            "StructProperty".to_string(),
+            "MovieSceneFloatChannel".to_string(),
+            "None".to_string(),
+        ],
+    };
+    // (fortnite_main_version, show_curve bytes present, expected decoded show_curve)
+    for (version, with_show_curve, expected) in [
+        (52, false, None),      // threshold - 1
+        (-1, false, None),      // missing GUID -> legacy layout
+        (53, true, Some(true)), // threshold, present and true
+    ] {
+        let mut value = Vec::new();
+        value.push(4); // pre-infinity extrap
+        value.push(4); // post-infinity extrap
+        push_i32(&mut value, 4); // times element size
+        push_i32(&mut value, 1); // times count
+        push_i32(&mut value, 7); // frame number
+        push_i32(&mut value, 28); // values element size
+        push_i32(&mut value, 1); // values count
+        push_f32(&mut value, 1.5);
+        push_f32(&mut value, 0.0);
+        push_f32(&mut value, 0.0);
+        push_f32(&mut value, 0.0);
+        push_f32(&mut value, 0.0);
+        value.push(0); // tangent weight mode
+        value.extend_from_slice(&[0, 0, 0]); // tangent padding
+        value.push(2); // interp mode
+        value.push(1); // tangent mode
+        value.push(0); // padding
+        value.push(0); // unserialized padding
+        push_f32(&mut value, 9.0); // default value
+        push_i32(&mut value, 0); // has default value
+        push_i32(&mut value, 30); // tick numerator
+        push_i32(&mut value, 1); // tick denominator
+        if with_show_curve {
+            push_i32(&mut value, 1); // show_curve = true
+        }
+        let d = build_struct_property(2, 3, &value);
+        let ctx = ParseCtx {
+            names: &names,
+            resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+            pins: PinSerCtx::default(),
+            soft_object_paths: &[],
+            serialization: crate::version::SerializationPolicy {
+                fortnite_main_version: version,
+                ..Default::default()
+            },
+            file_version_ue4: crate::version::ue4::HIGHEST,
+            file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        };
+        let mut r = Reader::new(&d);
+        let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+
+        assert_eq!(
+            r.pos(),
+            d.len() as u64,
+            "version {version} must consume its bytes exactly"
+        );
+        let v = &entries[0].value;
+        assert_eq!(
+            v.get("show_curve").and_then(|s| s.as_bool()),
+            expected,
+            "version {version}"
+        );
+    }
 }
 
 #[test]

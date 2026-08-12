@@ -14,6 +14,59 @@ use crate::property::{ParseCtx, parse_properties};
 use crate::reader::{Guid, Reader};
 
 #[test]
+fn pin_ser_ctx_flags_follow_custom_version_thresholds() {
+    // PinSerCtx::from_summary derives the pin-layout flags from three custom-version
+    // streams. Exercise each at threshold-1 (off), threshold (on), and with the GUID
+    // absent (-1, off) so the boundary is locked to the UE enum values.
+    use crate::summary::CustomVersion;
+    use crate::version::custom;
+
+    let ctx_for = |main: i32, release: i32, ue5_release: i32| {
+        let mut package = Package::parse(&build_minimal_package()).unwrap();
+        package.summary.custom_versions = vec![
+            CustomVersion {
+                key: custom::UE5_MAIN_STREAM_OBJECT_VERSION,
+                version: main,
+            },
+            CustomVersion {
+                key: custom::RELEASE_OBJECT_VERSION,
+                version: release,
+            },
+            CustomVersion {
+                key: custom::UE5_RELEASE_STREAM_OBJECT_VERSION,
+                version: ue5_release,
+            },
+        ];
+        PinSerCtx::from_summary(&package.summary)
+    };
+
+    let below = ctx_for(
+        custom::EDGRAPH_PIN_SOURCE_INDEX - 1,
+        custom::PIN_TYPE_INCLUDES_UOBJECT_WRAPPER_FLAG - 1,
+        custom::SERIALIZE_FLOAT_PIN_SINGLE_PRECISION - 1,
+    );
+    assert!(!below.has_source_index);
+    assert!(!below.has_uobject_wrapper);
+    assert!(!below.has_single_precision_float);
+
+    let at = ctx_for(
+        custom::EDGRAPH_PIN_SOURCE_INDEX,
+        custom::PIN_TYPE_INCLUDES_UOBJECT_WRAPPER_FLAG,
+        custom::SERIALIZE_FLOAT_PIN_SINGLE_PRECISION,
+    );
+    assert!(at.has_source_index);
+    assert!(at.has_uobject_wrapper);
+    assert!(at.has_single_precision_float);
+
+    // A package that records none of these GUIDs resolves every flag to the legacy layout.
+    let package = Package::parse(&build_minimal_package()).unwrap();
+    let missing = PinSerCtx::from_summary(&package.summary);
+    assert!(!missing.has_source_index);
+    assert!(!missing.has_uobject_wrapper);
+    assert!(!missing.has_single_precision_float);
+}
+
+#[test]
 fn node_pin_array_decodes() {
     let names = NameMap {
         names: vec![
