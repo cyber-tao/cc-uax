@@ -21,7 +21,7 @@ Most of an Unreal project lives in binary `.uasset` and `.umap` packages. Source
 
 `cc-uax` turns supported UE5 editor packages into typed, evidence-bearing reports. It can analyze one asset or build a project-wide index without loading Unreal Editor.
 
-> Scope: versioned, uncooked UE5.1–5.8 editor packages (`FileVersionUE5` 1008–1018). UE5.6–5.8 are the real-corpus-verified reference range; UE5.1–5.5 packages decode per the version gates and carry an informational note until they are verified against real assets. Cooked/unversioned packages and UE4 packages are intentionally unsupported.
+> Scope: versioned, uncooked UE5.1–5.8 editor packages (`FileVersionUE5` 1008–1018). UE5.6–5.8 are the real-corpus-verified range and may be `status=complete`. UE5.1–5.5 still decode per the version gates but are `status=partial` with `package_version` / `package_below_verified_version` until verified against real assets. UE5.0 (`FileVersionUE5` < 1008), cooked/unversioned packages, and UE4 packages are unsupported.
 
 ## What it provides
 
@@ -110,7 +110,7 @@ Project cache data defaults to the operating system's cache directory, never the
 
 Run `cc-uax asset --help` and `cc-uax project --help` for output formatting options.
 
-When a consumer's context window is limited, pass the global `--max-output-bytes <N>` to cap the rendered JSON at N UTF-8 bytes. Output stays valid JSON with the evidence skeleton (`status`, `coverage`, `capabilities`, `diagnostics`, `known_opaque`) intact; a top-level `output` block records `truncated` and every elided section so you can re-query a narrower `--focus`/`--view` for the dropped detail.
+When a consumer's context window is limited, pass the global `--max-output-bytes <N>` to cap the rendered JSON at N UTF-8 bytes. Output stays valid JSON with the evidence skeleton (`status`, `coverage`, `capabilities`, `diagnostics`, `known_opaque`) intact; a top-level `output` block records `truncated` and every elided section so you can re-query a narrower `--focus`/`--view` for the dropped detail. `output.truncated=true` is a render budget, not incomplete evidence: keep using `status` / coverage / capabilities.
 
 ## Report contract
 

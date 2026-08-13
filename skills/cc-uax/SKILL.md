@@ -9,7 +9,7 @@ Use `cc-uax` as the binary-evidence source. Treat its structured graph, referenc
 
 When analyzing a cc-uax checkout that is under active development, run the checkout binary with `cargo run -p cc-uax-cli -- ...` or an explicit `target/release/cc-uax` path so results do not come from an older installed binary on `PATH`.
 
-Scope the result to versioned, uncooked UE5.1–5.8 editor packages (`FileVersionUE5` 1008–1018). UE5.6–5.8 are the real-corpus-verified range; UE5.1–5.5 reports carry a `package_below_verified_version` info note until verified against real assets. Report cooked, unversioned, unsupported, missing, or corrupt inputs as limitations instead of guessing.
+Scope the result to versioned, uncooked UE5.1–5.8 editor packages (`FileVersionUE5` 1008–1018). UE5.6–5.8 are the real-corpus-verified range and may be `status=complete`. UE5.1–5.5 decode per the version gates but are `status=partial` (`package_version` / `package_below_verified_version`) until verified against real assets. Report cooked, unversioned, UE5.0 (`FileVersionUE5` < 1008), unsupported, missing, or corrupt inputs as limitations instead of guessing.
 
 ## Establish the project report
 
@@ -36,7 +36,7 @@ Do not run one reverse scan per asset. Reuse the project report's inventory and 
 Start with the report's generated `reachability.configured_roots` and `reachability.reachable_runtime_packages`, then traverse both graph edges and asset references where focused evidence is needed:
 
 1. Resolve the startup map and `GameInstance`/`GameMode` chain.
-2. Include World Partition `ExternalActors`/`ExternalObjects`, Level Instances, and Packed Level Actors from the reported closure.
+2. Include World Partition `ExternalActors`/`ExternalObjects` from the reported ownership closure. Include Level Instance / Packed Level Actor sub-levels when they appear in that closure (derived from decoded `WorldAsset` / `PackedWorldAsset`). If a LI/PLA world asset is only a soft reference and is not a closure member, follow the soft reference and mark the claim `partial`.
 3. Analyze each K2/EdGraph by its stable graph identity. Follow `exec` edges for control flow and `data` edges/defaults for values. Never join nodes across graphs because their display names match.
 4. Follow call targets, delegates, interfaces, component ownership, spawned classes, possessed pawns, widgets, save objects, and referenced data assets.
 5. Use the native adapter that owns the source of truth:
@@ -54,7 +54,7 @@ cc-uax asset "<FILE.uasset>" --view references --output "<ASSET.json>"
 
 Use `--view full` only for a bounded asset; it can be large.
 
-When the caller's context window is limited, pass `--max-output-bytes <N>` (UTF-8 bytes) to cap any `asset` or `project` render to the space that is actually available. The report stays valid JSON and preserves the evidence skeleton (`status`, `coverage`, `capabilities`, `diagnostics`, `known_opaque`); a top-level `output` block reports `truncated` and every elided section with its dropped-element count. If `output.truncated` is `true`, do not treat the report as complete — re-query a narrower `--focus` or `--view` for the missing detail.
+When the caller's context window is limited, pass `--max-output-bytes <N>` (UTF-8 bytes) to cap any `asset` or `project` render to the space that is actually available. The report stays valid JSON and preserves the evidence skeleton (`status`, `coverage`, `capabilities`, `diagnostics`, `known_opaque`); a top-level `output` block reports `truncated` and every elided section with its dropped-element count. `output.truncated=true` means the render was size-capped, not that evidence is incomplete — keep using `status` / coverage / capabilities, and re-query a narrower `--focus` or `--view` only to recover elided detail.
 
 ## Build an evidence-backed explanation
 

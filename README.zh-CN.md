@@ -21,7 +21,7 @@ Unreal 项目的大量逻辑和数据位于二进制 `.uasset`、`.umap` 包中�
 
 `cc-uax` 将受支持的 UE5 编辑器包转换为带类型和证据的报告。它既能分析单个资产，也能在不启动 Unreal Editor 的情况下建立项目级索引。
 
-> 支持范围：有版本信息、未 Cook 的 UE5.1–5.8 编辑器包（`FileVersionUE5` 1008–1018）。UE5.6–5.8 是经过真实语料验证的参照范围；UE5.1–5.5 的包按版本门控解码，并附带一条信息性提示，直至经过真实资产验证。Cooked/无版本包及 UE4 包明确不支持。
+> 支持范围：有版本信息、未 Cook 的 UE5.1–5.8 编辑器包（`FileVersionUE5` 1008–1018）。UE5.6–5.8 是经过真实语料验证的范围，可以为 `status=complete`。UE5.1–5.5 仍按版本门控解码，但结果为 `status=partial`，并带有 `package_version` / `package_below_verified_version`，直至经过真实资产验证。UE5.0（`FileVersionUE5` < 1008）、Cooked/无版本包及 UE4 包明确不支持。
 
 ## 能力
 
@@ -110,7 +110,7 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 输出格式选项以 `cc-uax asset --help` 和 `cc-uax project --help` 为准。
 
-当调用方（如 AI 工具）上下文窗口有限时，可用全局参数 `--max-output-bytes <N>` 把渲染出的 JSON 限制在 N 个 UTF-8 字节内。输出仍是合法 JSON，并完整保留证据骨架（`status`、`coverage`、`capabilities`、`diagnostics`、`known_opaque`）；顶层新增 `output` 块记录 `truncated` 及每个被省略的区段，便于据此改用更窄的 `--focus`/`--view` 复查被丢弃的细节。
+当调用方（如 AI 工具）上下文窗口有限时，可用全局参数 `--max-output-bytes <N>` 把渲染出的 JSON 限制在 N 个 UTF-8 字节内。输出仍是合法 JSON，并完整保留证据骨架（`status`、`coverage`、`capabilities`、`diagnostics`、`known_opaque`）；顶层新增 `output` 块记录 `truncated` 及每个被省略的区段，便于据此改用更窄的 `--focus`/`--view` 复查被丢弃的细节。`output.truncated=true` 只表示渲染预算，不表示证据不完整；仍以 `status` / coverage / capabilities 为准。
 
 ## 报告契约
 
