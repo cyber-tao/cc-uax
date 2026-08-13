@@ -22,7 +22,7 @@ pub(super) fn parse_niagara_struct(
             let nested = parse_properties(r, ctx, value_end);
             json!({ "@struct": "NiagaraTypeDefinition", "properties": entries_to_values(&nested) })
         }
-        "NiagaraVariableBase" if niagara_modern(ctx) => {
+        "NiagaraVariableBase" | "NiagaraDataChannelVariable" if niagara_modern(ctx) => {
             Value::Object(parse_niagara_variable_base(r, ctx, value_end)?)
         }
         "NiagaraVariable" if niagara_modern(ctx) => {

@@ -17,6 +17,7 @@ pub(super) fn parse_scalar_struct(
         "PerPlatformFrameRate" => {
             parse_per_platform(r, ctx.names, ScalarKind::FrameRate, value_end)?
         }
+        "PerPlatformFString" => parse_per_platform(r, ctx.names, ScalarKind::FString, value_end)?,
         "PerQualityLevelInt" => parse_per_quality_level(r, ScalarKind::I32, value_end)?,
         "PerQualityLevelFloat" => parse_per_quality_level(r, ScalarKind::F32, value_end)?,
         _ => return Ok(None),
@@ -30,6 +31,7 @@ enum ScalarKind {
     I32,
     Bool32,
     FrameRate,
+    FString,
 }
 
 impl ScalarKind {
@@ -37,6 +39,7 @@ impl ScalarKind {
         match self {
             ScalarKind::F32 | ScalarKind::I32 | ScalarKind::Bool32 => 4,
             ScalarKind::FrameRate => 8,
+            ScalarKind::FString => 4,
         }
     }
 }
@@ -49,6 +52,7 @@ fn read_scalar(r: &mut Reader, kind: ScalarKind) -> Result<Value> {
         ScalarKind::FrameRate => {
             json!({ "numerator": r.read_i32()?, "denominator": r.read_i32()? })
         }
+        ScalarKind::FString => json!(r.read_fstring()?),
     })
 }
 

@@ -98,9 +98,8 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         .collect::<Vec<_>>();
     diagnostics.extend(rigvm_adapter.diagnostics.iter().cloned());
 
-    // A package below the real-corpus-verified floor still decodes per the version
-    // gates, so its status stays truthful (Info is not counted toward partial), but
-    // the reader is told the decode is not yet confirmed against a real asset.
+    // Below the real-corpus-verified floor the version gates still apply, but the
+    // result must not be `complete`: PackageVersion is Partial (see capabilities).
     if package.summary.file_version_ue5 < crate::version::VERIFIED_FILE_VERSION_FLOOR {
         diagnostics.push(AnalysisDiagnostic {
             severity: DiagnosticSeverity::Info,
@@ -353,6 +352,10 @@ fn compute_graph_coverage(
     let pins_decoded = report
         .exports
         .iter()
+        .filter(|export| {
+            !(has_authoritative_rigvm_graph
+                && is_control_rig_editor_mirror_export(report, export, control_rig_editor_graphs))
+        })
         .map(|export| export.pins.as_ref().map_or(0, Vec::len))
         .sum();
     let edges_decoded = graphs.iter().map(|graph| graph.edges.len()).sum();
@@ -615,6 +618,17 @@ fn build_capabilities(
         },
         detail: None,
     }];
+    if package.summary.file_version_ue5 < crate::version::VERIFIED_FILE_VERSION_FLOOR {
+        capabilities.push(AnalysisCapability {
+            kind: CapabilityKind::PackageVersion,
+            status: AnalysisStatus::Partial,
+            detail: Some(format!(
+                "FileVersionUE5={} is below the real-corpus-verified floor ({})",
+                package.summary.file_version_ue5,
+                crate::version::VERIFIED_FILE_VERSION_FLOOR
+            )),
+        });
+    }
     if wants_references {
         capabilities.push(AnalysisCapability {
             kind: CapabilityKind::ReferenceTables,
@@ -1201,7 +1215,7 @@ fn is_control_rig_editor_mirror(class_full: &str) -> bool {
     class_full
         .rsplit(['.', '/'])
         .next()
-        .is_some_and(|simple| simple == "ControlRigGraphNode")
+        .is_some_and(|simple| simple == "ControlRigGraphNode" || simple == "RigVMEdGraphNode")
 }
 
 fn control_rig_editor_graph_indices(report: &DecodeReport<'_>) -> HashSet<i32> {
@@ -1214,7 +1228,7 @@ fn control_rig_editor_graph_indices(report: &DecodeReport<'_>) -> HashSet<i32> {
                 .class
                 .rsplit(['.', '/'])
                 .next()
-                .is_some_and(|simple| simple == "ControlRigGraph")
+                .is_some_and(|simple| simple == "ControlRigGraph" || simple == "RigVMEdGraph")
         })
         .map(|export| export.identity.index)
         .collect()

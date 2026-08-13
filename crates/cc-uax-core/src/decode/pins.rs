@@ -186,61 +186,10 @@ pub(super) fn decode_pins_for_export(
     }
 }
 
-fn pin_parse_contexts(package: &Package, primary: PinSerCtx) -> Vec<PinSerCtx> {
-    let source_known = package
-        .summary
-        .custom_version(custom::UE5_MAIN_STREAM_OBJECT_VERSION)
-        .is_some();
-    let wrapper_known = package
-        .summary
-        .custom_version(custom::RELEASE_OBJECT_VERSION)
-        .is_some();
-    let single_precision_known = package
-        .summary
-        .custom_version(custom::UE5_RELEASE_STREAM_OBJECT_VERSION)
-        .is_some();
-
-    let source_options = if source_known {
-        vec![primary.has_source_index]
-    } else {
-        vec![primary.has_source_index, !primary.has_source_index]
-    };
-    let wrapper_options = if wrapper_known {
-        vec![primary.has_uobject_wrapper]
-    } else {
-        vec![primary.has_uobject_wrapper, !primary.has_uobject_wrapper]
-    };
-    let single_precision_options = if single_precision_known {
-        vec![primary.has_single_precision_float]
-    } else {
-        vec![
-            primary.has_single_precision_float,
-            !primary.has_single_precision_float,
-        ]
-    };
-
-    let mut out: Vec<PinSerCtx> = Vec::new();
-    for has_source_index in source_options {
-        for &has_uobject_wrapper in &wrapper_options {
-            for &has_single_precision_float in &single_precision_options {
-                let ctx = PinSerCtx {
-                    filter_editor_only: primary.filter_editor_only,
-                    has_source_index,
-                    has_uobject_wrapper,
-                    has_single_precision_float,
-                };
-                if !out.iter().any(|existing| {
-                    existing.filter_editor_only == ctx.filter_editor_only
-                        && existing.has_source_index == ctx.has_source_index
-                        && existing.has_uobject_wrapper == ctx.has_uobject_wrapper
-                        && existing.has_single_precision_float == ctx.has_single_precision_float
-                }) {
-                    out.push(ctx);
-                }
-            }
-        }
-    }
-    out
+fn pin_parse_contexts(_package: &Package, primary: PinSerCtx) -> Vec<PinSerCtx> {
+    // Missing custom-version GUIDs already resolve to -1 (legacy) in PinSerCtx.
+    // Do not probe inverted layouts: a wrong-but-longer consume would win.
+    vec![primary]
 }
 
 pub(crate) fn is_graph_node_class(class_full: &str) -> bool {

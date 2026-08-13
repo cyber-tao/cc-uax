@@ -193,6 +193,37 @@ fn read_soft_object_path_from_1007_is_top_level_asset_path_pair() {
 }
 
 #[test]
+fn read_soft_object_path_utf8_subpath_without_nul_is_consumed() {
+    // FortniteMain 192 writes SubPath as FUtf8String: positive length, no trailing NUL.
+    // read_fstring's positive-length branch already matches that layout.
+    assert_eq!(crate::version::custom::SOFT_OBJECT_PATH_UTF8_SUBPATHS, 192);
+    let names = NameMap {
+        names: vec![
+            "None".to_string(),
+            "/Game/Curves".to_string(),
+            "Foo".to_string(),
+        ],
+    };
+    let mut data = Vec::new();
+    push_raw_name(&mut data, 1);
+    push_raw_name(&mut data, 2);
+    let sub = b"Socket";
+    push_i32(&mut data, sub.len() as i32);
+    data.extend_from_slice(sub);
+
+    let mut r = Reader::new(&data);
+    let value = crate::property::read_soft_object_path(
+        &mut r,
+        &names,
+        crate::version::ue5::FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES,
+    )
+    .unwrap();
+    assert_eq!(value["asset_path"].as_str(), Some("/Game/Curves.Foo"));
+    assert_eq!(value["sub_path"].as_str(), Some("Socket"));
+    assert_eq!(r.pos(), data.len() as u64);
+}
+
+#[test]
 fn lazy_object_property_decodes_guid() {
     // FLinkerSave writes a LazyObjectProperty value as the 16-byte FUniqueObjectGuid,
     // not a package index.

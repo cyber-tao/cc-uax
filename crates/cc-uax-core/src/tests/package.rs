@@ -32,6 +32,36 @@ fn package_rejects_pre_ue5_version() {
 }
 
 #[test]
+fn package_rejects_ue50_file_version() {
+    // FileVersionUE5 1007 is the last UE5.0 AUTOMATIC value; the supported floor is
+    // 1008 (UE5.1 ADD_SOFTOBJECTPATH_LIST).
+    let mut data = Vec::new();
+    push_u32(&mut data, 0x9E2A_83C1);
+    push_i32(&mut data, -8);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 522);
+    push_i32(&mut data, 1007);
+    push_i32(&mut data, 0);
+
+    let error = Package::parse(&data).err().unwrap().to_string();
+    assert!(error.contains("FileVersionUE5=1007"));
+    assert!(error.contains("UE5.1"));
+}
+
+#[test]
+fn unfiltered_editor_package_parses_localization_and_persistent_guid() {
+    for (fv, major, minor, legacy) in [(1008, 5, 1, -8), (1017, 5, 6, -9), (1018, 5, 8, -9)] {
+        let data = build_minimal_editor_package_with_version(fv, major, minor);
+        let package = Package::parse(&data).unwrap_or_else(|err| {
+            panic!("unfiltered FileVersionUE5 {fv} failed to parse: {err:#}")
+        });
+        assert_eq!(package.summary.file_version_ue5, fv);
+        assert_eq!(package.summary.legacy_file_version, legacy);
+        assert!(!package.summary.filter_editor_only());
+    }
+}
+
+#[test]
 fn name_map_rejects_negative_count() {
     let data = [];
     let mut reader = Reader::new(&data);

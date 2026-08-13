@@ -15,6 +15,9 @@ pub fn push_i32(v: &mut Vec<u8>, x: i32) {
 pub fn push_i64(v: &mut Vec<u8>, x: i64) {
     v.extend_from_slice(&x.to_le_bytes());
 }
+pub fn push_u64(v: &mut Vec<u8>, x: u64) {
+    v.extend_from_slice(&x.to_le_bytes());
+}
 pub fn put_i32(v: &mut [u8], offset: usize, x: i32) {
     v[offset..offset + 4].copy_from_slice(&x.to_le_bytes());
 }
@@ -51,11 +54,36 @@ pub fn build_minimal_package_with_version(
     major: u16,
     minor: u16,
 ) -> Vec<u8> {
+    build_minimal_package_header(file_version_ue5, major, minor, -8, true)
+}
+
+/// Unfiltered editor summary (localization id + PersistentGuid) for a given
+/// FileVersionUE5. UE5.6+ editor packages write LegacyFileVersion -9.
+pub fn build_minimal_editor_package_with_version(
+    file_version_ue5: i32,
+    major: u16,
+    minor: u16,
+) -> Vec<u8> {
+    let legacy = if file_version_ue5 >= crate::version::ue5::PACKAGE_SAVED_HASH {
+        -9
+    } else {
+        -8
+    };
+    build_minimal_package_header(file_version_ue5, major, minor, legacy, false)
+}
+
+fn build_minimal_package_header(
+    file_version_ue5: i32,
+    major: u16,
+    minor: u16,
+    legacy_file_version: i32,
+    filter_editor_only: bool,
+) -> Vec<u8> {
     use crate::version::ue5;
     let fv = file_version_ue5;
     let mut d = Vec::new();
     push_u32(&mut d, 0x9E2A_83C1); // PACKAGE_FILE_TAG
-    push_i32(&mut d, -8); // legacy_file_version
+    push_i32(&mut d, legacy_file_version);
     push_i32(&mut d, 0); // legacy ue3 version (legacy != -4)
     push_i32(&mut d, 522); // file_version_ue4
     push_i32(&mut d, fv); // file_version_ue5 (legacy <= -8)
@@ -69,14 +97,16 @@ pub fn build_minimal_package_with_version(
         push_i32(&mut d, 0); // total_header_size (legacy position)
     }
     push_fstring(&mut d, "TestPkg"); // package_name
-    push_u32(&mut d, 0x8000_0000); // package_flags = FilterEditorOnly
+    push_u32(&mut d, if filter_editor_only { 0x8000_0000 } else { 0 });
     push_i32(&mut d, 0); // name_count
     push_i32(&mut d, 0); // name_offset
     if fv >= ue5::ADD_SOFTOBJECTPATH_LIST {
         push_i32(&mut d, 0); // soft_object_paths_count
         push_i32(&mut d, 0); // soft_object_paths_offset
     }
-    // localization_id skipped: FilterEditorOnly is set.
+    if !filter_editor_only {
+        push_fstring(&mut d, ""); // localization_id
+    }
     push_i32(&mut d, 0); // gatherable_text_data_count (ue4 >= 459)
     push_i32(&mut d, 0); // gatherable_text_data_offset
     push_i32(&mut d, 0); // export_count
@@ -104,7 +134,9 @@ pub fn build_minimal_package_with_version(
     if fv < ue5::PACKAGE_SAVED_HASH {
         push_guid(&mut d, 0, 0, 0, 0); // legacy_guid
     }
-    // persistent/owner guids skipped: FilterEditorOnly is set.
+    if !filter_editor_only {
+        push_guid(&mut d, 0, 0, 0, 0); // PersistentGuid
+    }
     push_i32(&mut d, 0); // generation_count
     push_u16(&mut d, major); // engine_version.major (ue4 >= 336)
     push_u16(&mut d, minor); // .minor

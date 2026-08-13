@@ -463,33 +463,52 @@ fn future_file_version_is_reported_as_unsupported() {
 }
 
 #[test]
-fn below_verified_floor_adds_info_note_without_downgrading_status() {
-    // UE5.1 (FileVersionUE5 = 1008) is below the real-corpus-verified floor (UE5.6 =
-    // 1017). Analysis surfaces the gap as an Info diagnostic, which is not counted
-    // toward errors/warnings and so must not drag the status off complete.
-    let bytes = build_minimal_package_with_version(1008, 5, 1);
-    let package = Package::parse(&bytes).unwrap();
-    let analysis = analyze_package(&package, &bytes, AssetView::Summary);
-    assert!(
-        analysis.diagnostics.iter().any(|diagnostic| diagnostic.code
-            == "package_below_verified_version"
-            && diagnostic.severity == DiagnosticSeverity::Info),
-        "expected a package_below_verified_version info note"
-    );
-    assert_eq!(analysis.status, AnalysisStatus::Complete);
+fn below_verified_floor_is_partial_with_package_version_capability() {
+    // UE5.1–5.5 still decode, but they are below the real-corpus-verified floor
+    // (UE5.6 = 1017). Status must be partial so agents do not treat the result as
+    // verified evidence. 1016 is the last unverified FileVersionUE5.
+    for (fv, major, minor) in [(1008, 5, 1), (1013, 5, 5), (1016, 5, 5)] {
+        let bytes = build_minimal_package_with_version(fv, major, minor);
+        let package = Package::parse(&bytes).unwrap();
+        let analysis = analyze_package(&package, &bytes, AssetView::Summary);
+        assert!(
+            analysis.diagnostics.iter().any(|diagnostic| diagnostic.code
+                == "package_below_verified_version"
+                && diagnostic.severity == DiagnosticSeverity::Info),
+            "FileVersionUE5={fv}: expected a package_below_verified_version info note"
+        );
+        assert_eq!(analysis.status, AnalysisStatus::Partial);
+        let version = analysis
+            .capabilities
+            .iter()
+            .find(|capability| capability.kind == CapabilityKind::PackageVersion)
+            .unwrap_or_else(|| panic!("FileVersionUE5={fv}: PackageVersion capability missing"));
+        assert_eq!(version.status, AnalysisStatus::Partial);
+    }
 }
 
 #[test]
 fn verified_floor_version_adds_no_version_note() {
-    let bytes = build_minimal_package(); // FileVersionUE5 = 1018 (verified range)
-    let package = Package::parse(&bytes).unwrap();
-    let analysis = analyze_package(&package, &bytes, AssetView::Summary);
-    assert!(
-        !analysis
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "package_below_verified_version")
-    );
+    for (fv, major, minor) in [(1017, 5, 6), (1018, 5, 8)] {
+        let bytes = build_minimal_package_with_version(fv, major, minor);
+        let package = Package::parse(&bytes).unwrap();
+        let analysis = analyze_package(&package, &bytes, AssetView::Summary);
+        assert!(
+            !analysis
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "package_below_verified_version"),
+            "FileVersionUE5={fv} is at/above the verified floor"
+        );
+        assert!(
+            !analysis
+                .capabilities
+                .iter()
+                .any(|capability| capability.kind == CapabilityKind::PackageVersion),
+            "FileVersionUE5={fv} must not emit PackageVersion"
+        );
+        assert_eq!(analysis.status, AnalysisStatus::Complete);
+    }
 }
 
 #[test]
@@ -526,4 +545,102 @@ fn references_view_includes_typed_imports_without_decoding_exports() {
 
 fn raw_name(index: i32) -> crate::reader::RawName {
     crate::reader::RawName { index, number: 0 }
+}
+
+#[test]
+fn rigvm_edgraph_mirrors_are_excluded_from_edgraph_coverage_when_model_exists() {
+    use crate::object::{ObjectImport, PackageIndex};
+
+    let header = build_minimal_package();
+    let mut package = Package::parse(&header).unwrap();
+    package.names = NameMap {
+        names: vec![
+            "MyPin".into(),
+            "exec".into(),
+            "None".into(),
+            "RigVMGraph".into(),
+            "RigVMEdGraphNode".into(),
+            "/Script/RigVMDeveloper".into(),
+            "/Script/RigVMEditor".into(),
+            "Model".into(),
+            "Mirror".into(),
+        ],
+    };
+    package.imports = vec![
+        ObjectImport {
+            class_package: raw_name(5),
+            class_name: raw_name(5),
+            outer_index: PackageIndex(0),
+            object_name: raw_name(5),
+            package_name: None,
+        },
+        ObjectImport {
+            class_package: raw_name(5),
+            class_name: raw_name(3),
+            outer_index: PackageIndex(-1),
+            object_name: raw_name(3),
+            package_name: None,
+        },
+        ObjectImport {
+            class_package: raw_name(6),
+            class_name: raw_name(6),
+            outer_index: PackageIndex(0),
+            object_name: raw_name(6),
+            package_name: None,
+        },
+        ObjectImport {
+            class_package: raw_name(6),
+            class_name: raw_name(4),
+            outer_index: PackageIndex(-3),
+            object_name: raw_name(4),
+            package_name: None,
+        },
+    ];
+
+    let mut data = Vec::new();
+    data.push(0); // object control
+    push_raw_name(&mut data, 2); // None
+    let property_end = data.len();
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 1);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 3);
+    push_guid(&mut data, 1, 2, 3, 4);
+    push_i32(&mut data, 3);
+    push_guid(&mut data, 1, 2, 3, 4);
+    push_raw_name(&mut data, 0);
+    push_fstring(&mut data, "");
+    data.push(1);
+    push_raw_name(&mut data, 1);
+    push_raw_name(&mut data, 2);
+    push_i32(&mut data, 0);
+    data.push(0);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 0);
+    push_raw_name(&mut data, 2);
+    push_guid(&mut data, 0, 0, 0, 0);
+    push_i32(&mut data, 0);
+    push_fstring(&mut data, "");
+    push_fstring(&mut data, "");
+    push_i32(&mut data, 0);
+    push_empty_ftext(&mut data);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 1);
+    push_i32(&mut data, 1);
+
+    let mut model = test_export(7, 0, 0, 0);
+    model.class_index = PackageIndex(-2);
+    let mut mirror = test_export(8, data.len() as i64, 0, property_end as i64);
+    mirror.class_index = PackageIndex(-4);
+    package.exports = vec![model, mirror];
+
+    let analysis = analyze_package(&package, &data, AssetView::Logic);
+    assert_eq!(
+        analysis.coverage.graph_nodes_total, 0,
+        "RigVMEdGraphNode must not count toward EdGraph coverage when a RigVM model exists"
+    );
+    assert_eq!(analysis.coverage.pins_decoded, 0);
+    assert!(analysis.graphs.is_empty());
 }

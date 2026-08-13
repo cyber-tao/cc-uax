@@ -122,10 +122,10 @@ impl PackageFileSummary {
                 "package is unversioned (no version info, typically a cooked package); this tool targets versioned editor assets"
             );
         }
-        if file_version_ue5 < ue5::INITIAL_VERSION {
+        if file_version_ue5 < crate::version::SUPPORTED_FILE_VERSION_FLOOR {
             bail!(
-                "unsupported package FileVersionUE5={file_version_ue5}; this tool targets UE5 versioned editor assets (FileVersionUE5 >= {})",
-                ue5::INITIAL_VERSION
+                "unsupported package FileVersionUE5={file_version_ue5}; this tool targets UE5.1–5.8 versioned editor assets (FileVersionUE5 >= {})",
+                crate::version::SUPPORTED_FILE_VERSION_FLOOR
             );
         }
 

@@ -37,7 +37,7 @@ pub(crate) fn parse_value(
         "EnumProperty" => json!(ctx.names.resolve_raw(r.read_raw_name()?)),
         "NameProperty" => json!(ctx.names.resolve_raw(r.read_raw_name()?)),
         "StrProperty" => json!(r.read_fstring()?),
-        "TextProperty" => parse_text(r, ctx.names, 0)?,
+        "TextProperty" => parse_text(r, ctx, 0)?,
         "ObjectProperty" | "ClassProperty" | "WeakObjectProperty" | "ObjectPtrProperty"
         | "ClassPtrProperty" | "InterfaceProperty" => {
             let idx = r.read_i32()?;

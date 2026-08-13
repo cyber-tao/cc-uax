@@ -23,7 +23,9 @@ pub(super) fn parse_mesh_cloth_struct(
         "GroomDataflowSettings" => {
             parse_tagged_struct_with_payload(r, name, ctx, value_end, "rest_collection")?
         }
-        "InstancedPropertyBag" => parse_instanced_property_bag(r, ctx, value_end)?,
+        "InstancedPropertyBag" | "RigVMPropertyBag" => {
+            parse_instanced_property_bag(r, ctx, value_end)?
+        }
         _ => return Ok(None),
     };
     Ok(Some(v))
@@ -173,9 +175,12 @@ fn parse_instanced_property_bag(r: &mut Reader, ctx: &ParseCtx, value_end: u64) 
     let version = ctx.serialization.property_bag_version;
     let mut o = Map::new();
 
-    // FInstancedPropertyBag::Serialize writes bHasData first (a pre-ContainerTypes
-    // archive prefixes a uint8 EVersion, but such bags predate structured support
-    // and fall through to the opaque preview below, so we do not special-case it).
+    // FInstancedPropertyBag::Serialize: custom version < ContainerTypes prefixes
+    // an obsolete uint8 EVersion before bHasData. Missing GUID is -1, so it takes
+    // that path. Structured desc decode starts at ContainerTypes (v1).
+    if version < custom::PROPERTY_BAG_CONTAINER_TYPES {
+        let _inline_version = r.read_u8()?;
+    }
     let has_data = r.read_bool32()?;
     o.insert("has_data".into(), json!(has_data));
     if !has_data {

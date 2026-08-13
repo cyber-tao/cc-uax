@@ -2185,7 +2185,10 @@ fn instanced_property_bag_empty_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
-        serialization: crate::version::SerializationPolicy::default(),
+        serialization: crate::version::SerializationPolicy {
+            property_bag_version: crate::version::custom::PROPERTY_BAG_CONTAINER_TYPES,
+            ..Default::default()
+        },
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
@@ -2387,4 +2390,251 @@ fn native_struct_anim_sync_marker_falls_back_to_tagged_properties() {
     assert_eq!(props[0]["value"].as_str(), Some("Footstep_L"));
     assert_eq!(props[1]["name"].as_str(), Some("Time"));
     assert_eq!(props[1]["value"].as_f64(), Some(0.5));
+}
+
+#[test]
+fn native_struct_expression_input_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Input".to_string(),
+            "StructProperty".to_string(),
+            "ExpressionInput".to_string(),
+            "UV".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, -3);
+    push_i32(&mut value, 2);
+    push_raw_name(&mut value, 3);
+    for m in [1, 1, 1, 0, 0] {
+        push_i32(&mut value, m);
+    }
+    let d = build_struct_property(2, 4, &value);
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+    assert_eq!(entries.len(), 1);
+    let v = &entries[0].value;
+    assert_eq!(v["expression"]["index"].as_i64(), Some(-3));
+    assert_eq!(v["output_index"].as_i64(), Some(2));
+    assert_eq!(v["input_name"].as_str(), Some("UV"));
+    assert_eq!(r.pos(), d.len() as u64);
+}
+
+#[test]
+fn native_struct_box3f_and_matrix_aliases_decode() {
+    let names = NameMap {
+        names: vec![
+            "Bounds".to_string(),
+            "StructProperty".to_string(),
+            "Box3f".to_string(),
+            "Xform".to_string(),
+            "Matrix".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut box_value = Vec::new();
+    for x in [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0] {
+        push_f32(&mut box_value, x);
+    }
+    box_value.push(1);
+    let box_data = {
+        let mut d = Vec::new();
+        push_raw_name(&mut d, 0);
+        push_raw_name(&mut d, 1);
+        push_i32(&mut d, 1);
+        push_raw_name(&mut d, 2);
+        push_i32(&mut d, 0);
+        push_i32(&mut d, box_value.len() as i32);
+        d.push(0x08);
+        d.extend_from_slice(&box_value);
+        d
+    };
+    let mut matrix_value = Vec::new();
+    for i in 0..16 {
+        push_f64(&mut matrix_value, i as f64);
+    }
+    let mut d = box_data;
+    push_raw_name(&mut d, 3);
+    push_raw_name(&mut d, 1);
+    push_i32(&mut d, 1);
+    push_raw_name(&mut d, 4);
+    push_i32(&mut d, 0);
+    push_i32(&mut d, matrix_value.len() as i32);
+    d.push(0x08);
+    d.extend_from_slice(&matrix_value);
+    push_raw_name(&mut d, 5);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].value["min"]["x"].as_f64(), Some(1.0));
+    assert_eq!(entries[0].value["max"]["z"].as_f64(), Some(6.0));
+    assert_eq!(entries[1].value["m"].as_array().unwrap().len(), 16);
+    assert_eq!(r.pos(), d.len() as u64);
+}
+
+#[test]
+fn native_struct_property_bag_v0_reads_inline_version_before_has_data() {
+    let names = NameMap {
+        names: vec![
+            "Bag".to_string(),
+            "StructProperty".to_string(),
+            "InstancedPropertyBag".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    value.push(1u8); // obsolete EVersion
+    push_i32(&mut value, 0); // bHasData
+    let d = build_struct_property(2, 3, &value);
+
+    for property_bag_version in [-1, 0] {
+        let ctx = ParseCtx {
+            names: &names,
+            resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+            pins: PinSerCtx::default(),
+            soft_object_paths: &[],
+            serialization: SerializationPolicy {
+                property_bag_version,
+                ..Default::default()
+            },
+            file_version_ue4: crate::version::ue4::HIGHEST,
+            file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        };
+        let mut r = Reader::new(&d);
+        let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].value["has_data"].as_bool(), Some(false));
+        assert!(entries[0].value.get("@unparsed").is_none());
+        assert_eq!(r.pos(), d.len() as u64);
+    }
+}
+
+#[test]
+fn native_struct_rigvm_property_bag_alias_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Bag".to_string(),
+            "StructProperty".to_string(),
+            "RigVMPropertyBag".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, 0);
+    let d = build_struct_property(2, 3, &value);
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: SerializationPolicy {
+            property_bag_version: crate::version::custom::PROPERTY_BAG_CONTAINER_TYPES,
+            ..Default::default()
+        },
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["has_data"].as_bool(), Some(false));
+}
+
+#[test]
+fn native_struct_per_platform_fstring_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Label".to_string(),
+            "StructProperty".to_string(),
+            "PerPlatformFString".to_string(),
+            "IOS".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_i32(&mut value, 0);
+    push_fstring(&mut value, "default");
+    push_i32(&mut value, 1);
+    push_raw_name(&mut value, 3);
+    push_fstring(&mut value, "ios");
+    let d = build_struct_property(2, 4, &value);
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["default"].as_str(), Some("default"));
+    assert_eq!(
+        entries[0].value["per_platform"][0]["value"].as_str(),
+        Some("ios")
+    );
+}
+
+#[test]
+fn native_struct_niagara_data_channel_variable_alias_decodes() {
+    let names = NameMap {
+        names: vec![
+            "Var".to_string(),
+            "StructProperty".to_string(),
+            "NiagaraDataChannelVariable".to_string(),
+            "Color".to_string(),
+            "None".to_string(),
+            "Flags".to_string(),
+            "IntProperty".to_string(),
+        ],
+    };
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 3);
+    push_raw_name(&mut value, 5);
+    push_raw_name(&mut value, 6);
+    push_i32(&mut value, 0);
+    push_i32(&mut value, 4);
+    value.push(0);
+    push_i32(&mut value, 1);
+    push_raw_name(&mut value, 4);
+    let d = build_struct_property(2, 4, &value);
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: SerializationPolicy {
+            niagara_version: crate::version::custom::NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY,
+            ..Default::default()
+        },
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let entries = parse_properties(&mut r, &ctx, d.len() as u64);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["name"].as_str(), Some("Color"));
+    assert!(entries[0].value.get("@unparsed").is_none());
 }

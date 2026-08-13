@@ -507,6 +507,144 @@ fn legacy_property_terminator_locates_the_same_pin_stream_as_script_offset() {
 }
 
 #[test]
+fn ue51_and_ue53_k2_nodes_decode_legacy_tags_none_guid_and_pins() {
+    use crate::analysis::analyze_package;
+    use crate::model::{AnalysisStatus, AssetView};
+    use crate::object::{ObjectImport, PackageIndex};
+    use crate::reader::RawName;
+
+    for fv in [1008, 1009] {
+        let header = build_minimal_package_with_version(fv, 5, 1);
+        let mut package = Package::parse(&header).unwrap();
+        package.names = NameMap {
+            names: vec![
+                "MyPin".into(),
+                "exec".into(),
+                "None".into(),
+                "K2Node_CallFunction".into(),
+                "Node".into(),
+            ],
+        };
+        package.imports = vec![ObjectImport {
+            class_package: RawName {
+                index: 3,
+                number: 0,
+            },
+            class_name: RawName {
+                index: 3,
+                number: 0,
+            },
+            outer_index: PackageIndex(0),
+            object_name: RawName {
+                index: 3,
+                number: 0,
+            },
+            package_name: None,
+        }];
+        let mut data = Vec::new();
+        push_raw_name(&mut data, 2); // property None terminator
+        push_i32(&mut data, 1); // UObject guid present
+        push_guid(&mut data, 9, 8, 7, 6);
+        push_i32(&mut data, 1); // pin count
+        push_i32(&mut data, 0);
+        push_i32(&mut data, 3);
+        push_guid(&mut data, 1, 2, 3, 4);
+        push_i32(&mut data, 3);
+        push_guid(&mut data, 1, 2, 3, 4);
+        push_raw_name(&mut data, 0);
+        push_fstring(&mut data, "");
+        data.push(1);
+        push_minimal_pin_type(&mut data, 1, 2);
+        push_fstring(&mut data, "");
+        push_fstring(&mut data, "");
+        push_i32(&mut data, 0);
+        push_empty_ftext(&mut data);
+        push_i32(&mut data, 0);
+        push_i32(&mut data, 0);
+        push_i32(&mut data, 1);
+        push_i32(&mut data, 1);
+
+        let mut export = test_export(4, data.len() as i64, 0, 0);
+        export.class_index = PackageIndex(-1);
+        package.exports = vec![export];
+
+        let analysis = analyze_package(&package, &data, AssetView::Logic);
+        assert_eq!(
+            analysis.coverage.graph_nodes_decoded, 1,
+            "FileVersionUE5={fv} should decode the K2 node"
+        );
+        assert_eq!(analysis.coverage.pins_decoded, 1);
+        assert_eq!(analysis.graphs.len(), 1);
+        assert_eq!(analysis.graphs[0].nodes[0].pins[0].name, "MyPin");
+        assert_ne!(analysis.status, AnalysisStatus::Unsupported);
+    }
+}
+
+#[test]
+fn pin_friendly_name_consumes_ftext_dev_notes() {
+    let names = NameMap {
+        names: vec!["MyPin".into(), "exec".into(), "None".into()],
+    };
+    let mut data = Vec::new();
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 1);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 3);
+    push_guid(&mut data, 1, 2, 3, 4);
+    push_i32(&mut data, 3);
+    push_guid(&mut data, 1, 2, 3, 4);
+    push_raw_name(&mut data, 0);
+    push_u32(&mut data, 0);
+    data.push(0); // Base history
+    push_fstring(&mut data, "");
+    push_fstring(&mut data, "PIN");
+    push_fstring(&mut data, "Hello");
+    push_fstring(&mut data, "dev note");
+    push_fstring(&mut data, "");
+    data.push(1);
+    push_minimal_pin_type(&mut data, 1, 2);
+    push_fstring(&mut data, "");
+    push_fstring(&mut data, "");
+    push_i32(&mut data, 0);
+    push_empty_ftext(&mut data);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 1);
+    push_i32(&mut data, 1);
+    push_guid(&mut data, 0, 0, 0, 0); // persistent guid
+    push_u32(&mut data, 0); // editor flags
+
+    let pin_context = PinSerCtx {
+        filter_editor_only: false,
+        ..PinSerCtx::default()
+    };
+    let context = ParseCtx {
+        names: &names,
+        resolve_object: &|_| crate::DecodedValue::Null,
+        pins: pin_context,
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy {
+            fortnite_main_version: crate::version::custom::ADD_DEV_NOTES_TO_FTEXT,
+            ..Default::default()
+        },
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: 1018,
+    };
+    let mut reader = Reader::new(&data);
+    let pins = parse_node_pins(&mut reader, data.len() as u64, &context, &pin_context)
+        .expect("pin with DevNotes friendly_name should parse");
+    assert_eq!(reader.pos(), data.len() as u64);
+    assert_eq!(pins[0].name, "MyPin");
+    assert_eq!(
+        pins[0]
+            .friendly_name
+            .as_ref()
+            .and_then(|value| value["text"].as_str()),
+        Some("Hello")
+    );
+}
+
+#[test]
 fn legacy_pin_boundary_is_not_guessed_without_none_terminator() {
     let names = NameMap {
         names: vec!["Value".into(), "IntProperty".into(), "None".into()],

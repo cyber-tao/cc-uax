@@ -70,6 +70,7 @@ pub struct SerializationPolicy {
     pub state_tree_instance_storage_version: i32,
     pub fortnite_release_version: i32,
     pub property_bag_version: i32,
+    pub ue5_release_stream_version: i32,
 }
 
 impl Default for SerializationPolicy {
@@ -81,6 +82,7 @@ impl Default for SerializationPolicy {
             state_tree_instance_storage_version: -1,
             fortnite_release_version: -1,
             property_bag_version: -1,
+            ue5_release_stream_version: -1,
         }
     }
 }
@@ -149,17 +151,30 @@ pub mod custom {
     pub const PROPERTY_BAG_HIGHEST_KNOWN: i32 = 5;
 
     /// FFortniteMainBranchObjectVersion::MaterialInputUsesLinearColor — from this
-    /// version on, FMaterialInput stores the ExpressionGUID as a linear color value.
+    /// version on, FColorMaterialInput stores a linear color instead of packed BGRA.
     pub const MATERIAL_INPUT_USES_LINEAR_COLOR: i32 = 171;
+    /// FUE5ReleaseStreamObjectVersion::TextFormatArgumentData64bitSupport — from
+    /// this version on, FFormatArgumentData Int is i64 rather than i32.
+    pub const TEXT_FORMAT_ARGUMENT_DATA_64BIT_SUPPORT: i32 = 12;
+    /// FFortniteMainBranchObjectVersion::AddDevNotesToFText — UE5.8 editor Base
+    /// FText history appends an extra FString when not FilterEditorOnly.
+    pub const ADD_DEV_NOTES_TO_FTEXT: i32 = 260;
+    /// FFortniteMainBranchObjectVersion::SoftObjectPathUtf8SubPaths — SubPath is
+    /// an FUtf8String (positive length, no NUL) from this version on. Named so
+    /// tests can lock the threshold; `read_fstring` already consumes this layout.
+    #[allow(dead_code)]
+    pub const SOFT_OBJECT_PATH_UTF8_SUBPATHS: i32 = 192;
 }
 
 pub const PACKAGE_FILE_TAG: u32 = 0x9E2A_83C1;
 
 pub const PACKAGE_FILE_TAG_SWAPPED: u32 = 0xC183_2A9E;
 
-/// Lowest `FileVersionUE5` verified against real UE5 corpora (UE5.6). Packages with
-/// a lower version still parse per the version gates, but that decode has not been
-/// confirmed against real assets, so analysis surfaces an informational note rather
-/// than silent confidence. This is a verification-policy floor, not a format
-/// threshold, which is why it lives outside the `ue5` ladder.
+/// Lowest FileVersionUE5 this parser accepts. UE5.1 AUTOMATIC is
+/// `ADD_SOFTOBJECTPATH_LIST` (1008); 1000–1007 are UE5.0.
+pub const SUPPORTED_FILE_VERSION_FLOOR: i32 = ue5::ADD_SOFTOBJECTPATH_LIST;
+
+/// Lowest `FileVersionUE5` verified against real UE5 corpora (UE5.6). Packages below
+/// this floor still decode per the version gates, but analysis cannot be `complete`:
+/// `CapabilityKind::PackageVersion` stays `partial` until real-corpus verification.
 pub const VERIFIED_FILE_VERSION_FLOOR: i32 = ue5::OS_SUB_OBJECT_SHADOW_SERIALIZATION;

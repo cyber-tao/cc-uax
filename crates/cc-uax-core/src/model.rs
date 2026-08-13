@@ -443,6 +443,7 @@ pub enum CapabilityKind {
     RigHierarchy,
     StateTreeSemantics,
     PcgSemantics,
+    PackageVersion,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

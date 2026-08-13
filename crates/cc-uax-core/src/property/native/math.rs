@@ -21,10 +21,16 @@ pub(super) fn parse_math_struct(r: &mut Reader, name: &str) -> Result<Option<Val
         "Rotator" => json!({
             "pitch": r.read_f64()?, "yaw": r.read_f64()?, "roll": r.read_f64()?
         }),
+        "Rotator3f" => json!({
+            "pitch": r.read_f32()?, "yaw": r.read_f32()?, "roll": r.read_f32()?
+        }),
         "Quat" => json!({
             "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()?, "w": r.read_f64()?
         }),
-        "IntPoint" => json!({ "x": r.read_i32()?, "y": r.read_i32()? }),
+        "Quat4f" => json!({
+            "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()?, "w": r.read_f32()?
+        }),
+        "IntPoint" | "Int32Point" => json!({ "x": r.read_i32()?, "y": r.read_i32()? }),
         "IntVector" => json!({ "x": r.read_i32()?, "y": r.read_i32()?, "z": r.read_i32()? }),
         "Guid" => json!(r.read_guid()?.to_hex()),
         "Color" => json!({
@@ -56,6 +62,12 @@ pub(super) fn parse_math_struct(r: &mut Reader, name: &str) -> Result<Option<Val
             let is_valid = r.read_u8()? != 0;
             json!({ "min": min, "max": max, "is_valid": is_valid })
         }
+        "Box3f" => {
+            let min = json!({ "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()? });
+            let max = json!({ "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()? });
+            let is_valid = r.read_u8()? != 0;
+            json!({ "min": min, "max": max, "is_valid": is_valid })
+        }
         "Box2D" => {
             let min = json!({ "x": r.read_f64()?, "y": r.read_f64()? });
             let max = json!({ "x": r.read_f64()?, "y": r.read_f64()? });
@@ -70,6 +82,20 @@ pub(super) fn parse_math_struct(r: &mut Reader, name: &str) -> Result<Option<Val
             json!({ "min": min, "max": max, "is_valid": is_valid })
         }
         "FrameNumber" => json!({ "value": r.read_i32()? }),
+        "Matrix" => {
+            let mut m = Vec::with_capacity(16);
+            for _ in 0..16 {
+                m.push(json!(r.read_f64()?));
+            }
+            json!({ "m": m })
+        }
+        "Matrix44f" => {
+            let mut m = Vec::with_capacity(16);
+            for _ in 0..16 {
+                m.push(json!(r.read_f32()? as f64));
+            }
+            json!({ "m": m })
+        }
         // FrameRate deliberately has no arm: TStructOpsTypeTraits<FFrameRate> keeps
         // WithSerializer disabled (UE keeps the generic UPROPERTY layout for existing
         // assets), so a StructProperty(FrameRate) payload is tagged properties.
