@@ -13,7 +13,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const PROJECT_REPORT_SCHEMA_VERSION: u32 = 5;
@@ -298,8 +298,17 @@ fn write_json<T: Serialize>(
         None => render_json(value, compact)?,
     };
     match output {
-        Some(path) => fs::write(path, format!("{text}\n"))
-            .with_context(|| format!("failed to write {}", path.display())),
+        Some(path) => {
+            // Write atomically: render to a sibling temp file, then rename it over the
+            // target, so an interrupted run never leaves a truncated report that a
+            // caller could read as a successful one.
+            let mut tmp = path.as_os_str().to_os_string();
+            tmp.push(".tmp");
+            let tmp = PathBuf::from(tmp);
+            fs::write(&tmp, format!("{text}\n"))
+                .with_context(|| format!("failed to write {}", tmp.display()))?;
+            fs::rename(&tmp, path).with_context(|| format!("failed to write {}", path.display()))
+        }
         None => {
             let mut stdout = io::stdout().lock();
             stdout.write_all(text.as_bytes())?;
