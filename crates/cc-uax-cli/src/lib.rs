@@ -22,8 +22,14 @@ pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {
         Ok(exit) => exit,
         Err(error) => {
+            // Error documents use the schema of the command that produced them, so an
+            // asset failure is not mislabeled with the project report schema.
+            let schema_version = match &cli.command {
+                Command::Asset(_) => cc_uax_core::ASSET_ANALYSIS_SCHEMA_VERSION,
+                Command::Project(_) => PROJECT_REPORT_SCHEMA_VERSION,
+            };
             let failure = CommandFailure {
-                schema_version: PROJECT_REPORT_SCHEMA_VERSION,
+                schema_version,
                 status: "error",
                 message: format!("{error:#}"),
             };
