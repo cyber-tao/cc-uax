@@ -175,7 +175,8 @@ pub const PACKAGE_FILE_TAG_SWAPPED: u32 = 0xC183_2A9E;
 /// FileVersionUE5 = 0 and remain out of scope.
 pub const SUPPORTED_FILE_VERSION_FLOOR: i32 = ue5::INITIAL_VERSION;
 
-/// Lowest `FileVersionUE5` verified against real UE5 corpora (UE5.6). Packages below
-/// this floor still decode per the version gates, but analysis cannot be `complete`:
-/// `CapabilityKind::PackageVersion` stays `partial` until real-corpus verification.
-pub const VERIFIED_FILE_VERSION_FLOOR: i32 = ue5::OS_SUB_OBJECT_SHADOW_SERIALIZATION;
+/// Lowest `FileVersionUE5` treated as real-corpus-verified. Currently equal to
+/// [`SUPPORTED_FILE_VERSION_FLOOR`]: accepted UE5.0–5.8 packages may be `complete`
+/// when their evidence is complete. Packages below this floor still decode per the
+/// version gates, but `CapabilityKind::PackageVersion` stays `partial`.
+pub const VERIFIED_FILE_VERSION_FLOOR: i32 = ue5::INITIAL_VERSION;

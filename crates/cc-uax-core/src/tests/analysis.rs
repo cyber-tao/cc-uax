@@ -464,38 +464,39 @@ fn future_file_version_is_reported_as_unsupported() {
 
 #[test]
 fn below_verified_floor_is_partial_with_package_version_capability() {
-    // UE5.0–5.5 still decode, but they are below the real-corpus-verified floor
-    // (UE5.6 = 1017). Status must be partial so agents do not treat the result as
-    // verified evidence. 1016 is the last unverified FileVersionUE5.
-    for (fv, major, minor) in [
-        (1000, 5, 0),
-        (1004, 5, 0),
-        (1008, 5, 1),
-        (1013, 5, 5),
-        (1016, 5, 5),
-    ] {
-        let bytes = build_minimal_package_with_version(fv, major, minor);
-        let package = Package::parse(&bytes).unwrap();
-        let analysis = analyze_package(&package, &bytes, AssetView::Summary);
-        assert!(
-            analysis.diagnostics.iter().any(|diagnostic| diagnostic.code
-                == "package_below_verified_version"
-                && diagnostic.severity == DiagnosticSeverity::Info),
-            "FileVersionUE5={fv}: expected a package_below_verified_version info note"
-        );
-        assert_eq!(analysis.status, AnalysisStatus::Partial);
-        let version = analysis
-            .capabilities
-            .iter()
-            .find(|capability| capability.kind == CapabilityKind::PackageVersion)
-            .unwrap_or_else(|| panic!("FileVersionUE5={fv}: PackageVersion capability missing"));
-        assert_eq!(version.status, AnalysisStatus::Partial);
-    }
+    // Parse rejects FileVersionUE5 below SUPPORTED_FILE_VERSION_FLOOR, which currently
+    // equals the verified floor. Mutate a parsed package to lock the diagnostic and
+    // PackageVersion capability path.
+    let bytes = build_minimal_package_with_version(1000, 5, 0);
+    let mut package = Package::parse(&bytes).unwrap();
+    package.summary.file_version_ue5 = crate::version::VERIFIED_FILE_VERSION_FLOOR - 1;
+    let analysis = analyze_package(&package, &bytes, AssetView::Summary);
+    assert!(
+        analysis.diagnostics.iter().any(|diagnostic| diagnostic.code
+            == "package_below_verified_version"
+            && diagnostic.severity == DiagnosticSeverity::Info),
+        "expected a package_below_verified_version info note"
+    );
+    assert_eq!(analysis.status, AnalysisStatus::Partial);
+    let version = analysis
+        .capabilities
+        .iter()
+        .find(|capability| capability.kind == CapabilityKind::PackageVersion)
+        .expect("PackageVersion capability missing");
+    assert_eq!(version.status, AnalysisStatus::Partial);
 }
 
 #[test]
 fn verified_floor_version_adds_no_version_note() {
-    for (fv, major, minor) in [(1017, 5, 6), (1018, 5, 8)] {
+    for (fv, major, minor) in [
+        (1000, 5, 0),
+        (1004, 5, 0),
+        (1008, 5, 1),
+        (1009, 5, 3),
+        (1012, 5, 4),
+        (1017, 5, 6),
+        (1018, 5, 8),
+    ] {
         let bytes = build_minimal_package_with_version(fv, major, minor);
         let package = Package::parse(&bytes).unwrap();
         let analysis = analyze_package(&package, &bytes, AssetView::Summary);

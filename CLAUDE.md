@@ -6,7 +6,7 @@ This file is the repository source of truth for engineering agents working on `c
 
 `cc-uax` analyzes versioned, uncooked Unreal Engine 5 editor packages (`.uasset` and `.umap`) without loading Unreal Editor. It serves AI engineering tools that need evidence about serialized properties, Blueprint and plugin graph logic, asset references, gameplay structure, and project resource usage.
 
-UE5.0–5.8 source is the serialization authority (UE5.7/5.8 share `FileVersionUE5 = 1018`; UE5.6 is 1017; UE5.1 is 1008; UE5.0 is 1000–1007). The parser targets versioned, uncooked UE5.0–5.8 editor packages (`FileVersionUE5` 1000–1018). Packages below `VERIFIED_FILE_VERSION_FLOOR` (currently UE5.6 / 1017) decode per the version gates but cannot be `status=complete`; they carry `CapabilityKind::PackageVersion` = `partial` and a `package_below_verified_version` info diagnostic. Cooked/unversioned packages, UE4 packages (`FileVersionUE5` = 0), and FileVersionUE5 below 1000 are out of scope.
+UE5.0–5.8 source is the serialization authority (UE5.7/5.8 share `FileVersionUE5 = 1018`; UE5.6 is 1017; UE5.1 is 1008; UE5.0 is 1000–1007). The parser targets versioned, uncooked UE5.0–5.8 editor packages (`FileVersionUE5` 1000–1018). `VERIFIED_FILE_VERSION_FLOOR` currently matches `SUPPORTED_FILE_VERSION_FLOOR` (UE5.0 / 1000), so accepted packages may be `status=complete` when their evidence is complete. Cooked/unversioned packages, UE4 packages (`FileVersionUE5` = 0), and FileVersionUE5 below 1000 are out of scope.
 
 Development policy: this repository is in active development. Prefer the cleanest correct API and representation; do not retain obsolete 0.8 CLI/JSON compatibility unless a task explicitly requires it.
 

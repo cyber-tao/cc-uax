@@ -100,6 +100,8 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
 
     // Below the real-corpus-verified floor the version gates still apply, but the
     // result must not be `complete`: PackageVersion is Partial (see capabilities).
+    // The floor currently matches SUPPORTED_FILE_VERSION_FLOOR, so accepted
+    // packages do not take this branch.
     if package.summary.file_version_ue5 < crate::version::VERIFIED_FILE_VERSION_FLOOR {
         diagnostics.push(AnalysisDiagnostic {
             severity: DiagnosticSeverity::Info,

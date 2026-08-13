@@ -21,7 +21,7 @@ Unreal 项目的大量逻辑和数据位于二进制 `.uasset`、`.umap` 包中�
 
 `cc-uax` 将受支持的 UE5 编辑器包转换为带类型和证据的报告。它既能分析单个资产，也能在不启动 Unreal Editor 的情况下建立项目级索引。
 
-> 支持范围：有版本信息、未 Cook 的 UE5.0–5.8 编辑器包（`FileVersionUE5` 1000–1018）。UE5.6–5.8 是经过真实语料验证的范围，可以为 `status=complete`。UE5.0–5.5 仍按版本门控解码，但结果为 `status=partial`，并带有 `package_version` / `package_below_verified_version`，直至经过真实资产验证。Cooked/无版本包及 UE4 包明确不支持。
+> 支持范围：有版本信息、未 Cook 的 UE5.0–5.8 编辑器包（`FileVersionUE5` 1000–1018）。该范围已经过真实语料验证，证据完整时可以为 `status=complete`。Cooked/无版本包及 UE4 包明确不支持。
 
 ## 能力
 
@@ -210,7 +210,7 @@ cc-uax-cli ──> cc-uax-project ──> cc-uax-core
 
 ## 验证与支持边界
 
-序列化判断对照 UE5.0–5.8 源码核对，其中 UE5.6–5.8 是经过真实语料验证的参照范围，解析器使用外部真实编辑器资产验证。验收门禁由外部语料 harness 定义，该 harness 独立于 workspace crate 维护，不作为 workspace 成员提交。
+序列化判断对照 UE5.0–5.8 源码核对，并在该范围内用外部真实编辑器资产验证。验收门禁由外部语料 harness 定义，该 harness 独立于 workspace crate 维护，不作为 workspace 成员提交。
 
 外部资产和机器相关的绝对路径均保留在本地，仓库不提交此类内容。
 
@@ -219,7 +219,7 @@ cc-uax-cli ──> cc-uax-project ──> cc-uax-core
 - Cooked/无版本包和 UE4 包格式；
 - RigVM 编译字节码、压缩 RigHierarchy 的源码级还原；
 - 无法由序列化图、属性、配置或引用证明的运行时行为；
-- 尚未核对 UE5.6–5.8 序列化契约的插件原生格式。
+- 尚未核对 UE5.0–5.8 序列化契约的插件原生格式。
 
 证据不完整时，下游结论必须保留 `partial`、`unsupported`、diagnostics 和 capability 限制。
 

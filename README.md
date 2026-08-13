@@ -21,7 +21,7 @@ Most of an Unreal project lives in binary `.uasset` and `.umap` packages. Source
 
 `cc-uax` turns supported UE5 editor packages into typed, evidence-bearing reports. It can analyze one asset or build a project-wide index without loading Unreal Editor.
 
-> Scope: versioned, uncooked UE5.0–5.8 editor packages (`FileVersionUE5` 1000–1018). UE5.6–5.8 are the real-corpus-verified range and may be `status=complete`. UE5.0–5.5 still decode per the version gates but are `status=partial` with `package_version` / `package_below_verified_version` until verified against real assets. Cooked/unversioned packages and UE4 packages are unsupported.
+> Scope: versioned, uncooked UE5.0–5.8 editor packages (`FileVersionUE5` 1000–1018). That range is real-corpus-verified and may be `status=complete` when evidence is complete. Cooked/unversioned packages and UE4 packages are unsupported.
 
 ## What it provides
 
@@ -210,7 +210,7 @@ The supporting `agents/` and `references/` content is part of the skill contract
 
 ## Validation and support boundary
 
-Serialization decisions are checked against UE5.0–5.8 source, and UE5.6–5.8 is the real-corpus-verified reference range exercised against external, real editor assets. Validation acceptance gates are defined by the real-corpus harness, which is maintained separately from the workspace crates and is not committed as a workspace member.
+Serialization decisions are checked against UE5.0–5.8 source and exercised against external, real editor assets across that range. Validation acceptance gates are defined by the real-corpus harness, which is maintained separately from the workspace crates and is not committed as a workspace member.
 
 External assets and machine-specific absolute paths remain local. The workspace does not commit them.
 
@@ -219,7 +219,7 @@ Current limitations include:
 - cooked/unversioned packages and UE4 package formats;
 - source-level reconstruction of compiled RigVM bytecode and compressed RigHierarchy data;
 - runtime behavior not evidenced by serialized graphs, properties, configuration, or references;
-- plugin-native formats without a verified UE5.6–5.8 serialization contract.
+- plugin-native formats without a verified UE5.0–5.8 serialization contract.
 
 When evidence is incomplete, consumers must retain `partial`, `unsupported`, diagnostics, and capability limitations in their conclusions.
 
