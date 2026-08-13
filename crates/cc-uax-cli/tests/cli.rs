@@ -108,7 +108,8 @@ fn allow_partial_is_an_explicit_zero_exit_override() {
 fn strict_project_scan_without_hard_failures_exits_zero_despite_partial() {
     // A package that parses cleanly but reports a non-complete status (here an
     // unsupported future version) is inherent partial evidence, not a hard scan
-    // failure. Strict mode must exit 0 and keep the truthful non-complete status.
+    // failure. Strict mode must exit 0 and surface the truthful status — unsupported
+    // when every scanned asset is unsupported.
     let root = temp_dir("inherent");
     let content = root.join("Content");
     write_future_package(&content.join("Future.uasset"));
@@ -124,7 +125,7 @@ fn strict_project_scan_without_hard_failures_exits_zero_despite_partial() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_ne!(report["status"], "complete");
+    assert_eq!(report["status"], "unsupported");
     assert_eq!(report["stats"]["indexed"], 1);
     assert_eq!(report["stats"]["failed"], 0);
     assert!(

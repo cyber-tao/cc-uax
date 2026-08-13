@@ -372,17 +372,23 @@ impl ProjectReport {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.stage != ScanFailureStage::Cache);
-        let status = if !index.failures.is_empty()
-            || !focus_issues.is_empty()
-            || evidence_diagnostic
-            || index.analysis.status != AnalysisStatus::Complete
-            || focused
-                .values()
-                .any(|analysis| analysis.status != AnalysisStatus::Complete)
-        {
+        let has_hard_failure =
+            !index.failures.is_empty() || !focus_issues.is_empty() || evidence_diagnostic;
+        let status = if has_hard_failure {
             AnalysisStatus::Partial
-        } else {
+        } else if index.analysis.status == AnalysisStatus::Unsupported {
+            // Every scanned asset is unsupported (e.g. all future-version packages) and
+            // nothing failed to scan; reflect that honestly instead of flattening to
+            // partial, which the contract lists as a distinct status.
+            AnalysisStatus::Unsupported
+        } else if index.analysis.status == AnalysisStatus::Complete
+            && focused
+                .values()
+                .all(|analysis| analysis.status == AnalysisStatus::Complete)
+        {
             AnalysisStatus::Complete
+        } else {
+            AnalysisStatus::Partial
         };
         let inventory = index
             .assets
