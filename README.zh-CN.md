@@ -6,7 +6,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/ci.yml?branch=master&label=CI)](https://github.com/cyber-tao/cc-uax/actions/workflows/ci.yml)
-[![UE5](https://img.shields.io/badge/reference-UE%205.6–5.8-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
+[![UE5](https://img.shields.io/badge/UE5-5.1–5.8-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
 [English](README.md) · **简体中文**
@@ -208,7 +208,7 @@ cc-uax-cli ──> cc-uax-project ──> cc-uax-core
 
 ## 验证与支持边界
 
-序列化判断以 UE5.6–5.8 源码为依据，解析器使用外部真实编辑器资产验证。验收门禁由外部语料 harness 定义，该 harness 独立于 workspace crate 维护，不作为 workspace 成员提交。
+序列化判断对照 UE5.1–5.8 源码核对，其中 UE5.6–5.8 是经过真实语料验证的参照范围，解析器使用外部真实编辑器资产验证。验收门禁由外部语料 harness 定义，该 harness 独立于 workspace crate 维护，不作为 workspace 成员提交。
 
 外部资产和机器相关的绝对路径均保留在本地，仓库不提交此类内容。
 

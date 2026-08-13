@@ -9,7 +9,7 @@ Use `cc-uax` as the binary-evidence source. Treat its structured graph, referenc
 
 When analyzing a cc-uax checkout that is under active development, run the checkout binary with `cargo run -p cc-uax-cli -- ...` or an explicit `target/release/cc-uax` path so results do not come from an older installed binary on `PATH`.
 
-Scope the result to versioned, uncooked UE5 editor packages. Report cooked, unversioned, unsupported, missing, or corrupt inputs as limitations instead of guessing.
+Scope the result to versioned, uncooked UE5.1–5.8 editor packages (`FileVersionUE5` 1008–1018). UE5.6–5.8 are the real-corpus-verified range; UE5.1–5.5 reports carry a `package_below_verified_version` info note until verified against real assets. Report cooked, unversioned, unsupported, missing, or corrupt inputs as limitations instead of guessing.
 
 ## Establish the project report
 
