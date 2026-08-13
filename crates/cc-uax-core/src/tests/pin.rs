@@ -72,10 +72,16 @@ fn anim_graph_node_binding_is_not_a_graph_node() {
     // UEdGraphNode, so the "Binding" exclusion must keep them out of pin decoding even
     // though their names contain "GraphNode".
     use crate::decode::pins::is_graph_node_class;
-    assert!(!is_graph_node_class("/Script/AnimGraph.UAnimGraphNodeBinding"));
-    assert!(!is_graph_node_class("/Script/AnimGraph.UAnimGraphNodeBinding_Base"));
+    assert!(!is_graph_node_class(
+        "/Script/AnimGraph.UAnimGraphNodeBinding"
+    ));
+    assert!(!is_graph_node_class(
+        "/Script/AnimGraph.UAnimGraphNodeBinding_Base"
+    ));
     // Genuine graph nodes still match, including non-K2 AnimGraph nodes.
-    assert!(is_graph_node_class("/Script/AnimGraph.UAnimGraphNode_LookAt"));
+    assert!(is_graph_node_class(
+        "/Script/AnimGraph.UAnimGraphNode_LookAt"
+    ));
     assert!(is_graph_node_class("/Script/BlueprintGraph.K2Node_Event"));
 }
 
