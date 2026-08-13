@@ -1,4 +1,4 @@
-use super::common::{minimal_package, temp_project};
+use super::common::{minimal_package, package_with_soft_refs, temp_project};
 use crate::{
     CachePathPolicy, MountTable, ProjectIndex, ProjectLayout, ProjectScanner,
     ScanDiagnosticSeverity, ScanFailureStage, ScanMode, ScanOptions,
@@ -325,6 +325,60 @@ fn scans_real_project_from_environment() {
         "real project scan failures: {:#?}",
         index.failures
     );
+}
+
+#[test]
+fn synthetic_project_scan_builds_adjacency_without_self_loops() {
+    // CI-runnable analogue of scans_real_project_from_environment: hand-built packages
+    // with cross-package soft references, so the full file-scan -> parse -> adjacency ->
+    // aggregate path runs in CI without external assets. A references B and itself; the
+    // self-reference must be dropped while the real edges remain.
+    let root = temp_project("synthetic");
+    std::fs::write(
+        root.join("Content/A.uasset"),
+        package_with_soft_refs(&["/Game/B", "/Game/A"]),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Content/B.uasset"),
+        package_with_soft_refs(&["/Game/A"]),
+    )
+    .unwrap();
+    let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
+    let index = scanner.scan(scan_options(ScanMode::AllowPartial)).unwrap();
+
+    assert_eq!(index.stats.discovered, 2);
+    assert_eq!(index.stats.indexed, 2);
+    assert_scan_accounting(&index);
+    assert_eq!(index.analysis.assets, 2);
+    assert_eq!(index.analysis.coverage.unclassified_bytes, 0);
+
+    // A -> B survives; the A -> A self-reference is excluded.
+    let a_refs = index.forward_references("/Game/A").unwrap();
+    assert!(a_refs.contains("/Game/B"));
+    assert!(!a_refs.contains("/Game/A"));
+    assert!(
+        index
+            .forward_references("/Game/B")
+            .unwrap()
+            .contains("/Game/A")
+    );
+    assert!(
+        index
+            .reverse_referencers("/Game/B")
+            .unwrap()
+            .contains("/Game/A")
+    );
+
+    let self_loops = index
+        .forward
+        .iter()
+        .filter(|(package, references)| references.contains(package.as_str()))
+        .count();
+    assert_eq!(self_loops, 0, "adjacency must not contain self-loops");
+    assert!(index.failures.is_empty(), "failures: {:#?}", index.failures);
+
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
