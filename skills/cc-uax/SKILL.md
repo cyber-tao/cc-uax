@@ -13,7 +13,7 @@ Scope the result to versioned, uncooked UE5.1–5.8 editor packages (`FileVersio
 
 ## Establish the project report
 
-1. Locate the `.uproject` or `Content` directory and any plugin content roots.
+1. Locate the `.uproject` or `Content` directory and any plugin content roots. If several `.uproject` files share one Content tree, pass one file path explicitly; a directory scan still fails when more than one `.uproject` is present.
 2. Read the project report's config-derived `entry_points` first. Inspect raw `Config/DefaultEngine.ini`, `DefaultGame.ini`, or platform overrides only when a reported diagnostic or missing key requires it; do not copy unrelated config values into the analysis.
 3. Run exactly one project scan for the investigation:
 

@@ -94,8 +94,10 @@ cc-uax project <PROJECT_OR_CONTENT_DIR>
 ```
 
 ```powershell
-# Scan a .uproject directory or Content directory once
+# Scan a .uproject directory or Content directory once.
+# If several .uproject files share one Content tree, pass one file explicitly.
 cc-uax project D:/Games/MyGame --output project-report.json
+cc-uax project D:/Games/MyGame/MyGame.uproject --output project-report.json
 
 # Add full analyses for matching packages while retaining one shared project index
 cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"

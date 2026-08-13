@@ -33,5 +33,11 @@ fn rejects_ambiguous_project_files() {
     let error = ProjectLayout::discover(&root).unwrap_err();
     assert!(error.to_string().contains("multiple .uproject"));
 
+    let from_file = ProjectLayout::discover(root.join("One.uproject")).unwrap();
+    assert_eq!(
+        from_file.project_file().unwrap(),
+        std::fs::canonicalize(root.join("One.uproject")).unwrap()
+    );
+
     std::fs::remove_dir_all(root).unwrap();
 }

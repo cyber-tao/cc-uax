@@ -21,7 +21,7 @@ impl ProjectLayout {
                         input.display()
                     ))
                 })?;
-                return Self::from_project_root(root);
+                return Self::from_explicit_project_file(&input, root);
             }
             return Self::discover_from_ancestor(&input);
         }
@@ -40,6 +40,33 @@ impl ProjectLayout {
             "input path is neither a file nor directory: {}",
             input.display()
         )))
+    }
+
+    /// Discover from an explicit `.uproject` path, even when sibling `.uproject`
+    /// files exist (platform-specific targets sharing one Content tree).
+    fn from_explicit_project_file(
+        project_file: &Path,
+        project_root: &Path,
+    ) -> Result<Self, ProjectLayoutError> {
+        let project_root = canonicalize(project_root, "project root")?;
+        if !project_root.is_dir() {
+            return Err(ProjectLayoutError::Invalid(format!(
+                "project root is not a directory: {}",
+                project_root.display()
+            )));
+        }
+        let content_root = find_child_dir(&project_root, "Content")?.ok_or_else(|| {
+            ProjectLayoutError::Invalid(format!(
+                "project Content directory not found under {}",
+                project_root.display()
+            ))
+        })?;
+        let project_file = canonicalize(project_file, "project file")?;
+        Ok(Self {
+            project_root,
+            content_root,
+            project_file: Some(project_file),
+        })
     }
 
     pub fn from_project_root(path: impl AsRef<Path>) -> Result<Self, ProjectLayoutError> {

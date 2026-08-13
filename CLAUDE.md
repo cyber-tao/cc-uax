@@ -109,7 +109,7 @@ Stable node identity must include graph ownership and serialized identity. Edges
 
 ## Project analysis
 
-`cc-uax-project` discovers either a project directory/`.uproject` or a `Content` directory and scans mapped assets once.
+`cc-uax-project` discovers either a project directory/`.uproject` or a `Content` directory and scans mapped assets once. Passing an explicit `.uproject` file selects that file even when sibling platform `.uproject` files share the same Content tree; a directory or Content path still errors if more than one `.uproject` is present.
 
 The index contains:
 

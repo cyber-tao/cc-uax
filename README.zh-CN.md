@@ -94,8 +94,10 @@ cc-uax project <PROJECT_OR_CONTENT_DIR>
 ```
 
 ```powershell
-# 对 .uproject 目录或 Content 目录执行一次扫描
+# 对 .uproject 目录或 Content 目录执行一次扫描。
+# 同一 Content 树下有多个 .uproject 时，显式传入其中一个文件。
 cc-uax project D:/Games/MyGame --output project-report.json
+cc-uax project D:/Games/MyGame/MyGame.uproject --output project-report.json
 
 # 复用同一项目索引，并为匹配包附加完整分析
 cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
