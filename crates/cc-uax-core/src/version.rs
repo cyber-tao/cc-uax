@@ -170,9 +170,10 @@ pub const PACKAGE_FILE_TAG: u32 = 0x9E2A_83C1;
 
 pub const PACKAGE_FILE_TAG_SWAPPED: u32 = 0xC183_2A9E;
 
-/// Lowest FileVersionUE5 this parser accepts. UE5.1 AUTOMATIC is
-/// `ADD_SOFTOBJECTPATH_LIST` (1008); 1000–1007 are UE5.0.
-pub const SUPPORTED_FILE_VERSION_FLOOR: i32 = ue5::ADD_SOFTOBJECTPATH_LIST;
+/// Lowest FileVersionUE5 this parser accepts. `INITIAL_VERSION` (1000) is the
+/// first UE5 AUTOMATIC value; 1000–1007 are UE5.0. UE4 packages keep
+/// FileVersionUE5 = 0 and remain out of scope.
+pub const SUPPORTED_FILE_VERSION_FLOOR: i32 = ue5::INITIAL_VERSION;
 
 /// Lowest `FileVersionUE5` verified against real UE5 corpora (UE5.6). Packages below
 /// this floor still decode per the version gates, but analysis cannot be `complete`:

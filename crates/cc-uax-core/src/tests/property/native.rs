@@ -179,6 +179,83 @@ fn native_struct_box_decodes() {
 }
 
 #[test]
+fn native_vector_uses_f32_below_large_world_coordinates() {
+    let names = NameMap {
+        names: vec![
+            "Location".to_string(),
+            "StructProperty".to_string(),
+            "Vector".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let fv = crate::version::ue5::LARGE_WORLD_COORDINATES - 1;
+    let mut d = Vec::new();
+    push_legacy_tag_header(&mut d, 0, 1, 12);
+    push_raw_name(&mut d, 2);
+    d.extend_from_slice(&[0u8; 16]);
+    push_legacy_tag_tail(&mut d, fv);
+    push_f32(&mut d, 1.0);
+    push_f32(&mut d, 2.0);
+    push_f32(&mut d, 3.0);
+    push_raw_name(&mut d, 3);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: fv,
+    };
+    let mut reader = Reader::new(&d);
+    let entries = parse_properties(&mut reader, &ctx, d.len() as u64);
+    assert_eq!(reader.pos(), d.len() as u64);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["x"].as_f64(), Some(1.0));
+    assert_eq!(entries[0].value["y"].as_f64(), Some(2.0));
+    assert_eq!(entries[0].value["z"].as_f64(), Some(3.0));
+}
+
+#[test]
+fn native_vector_uses_f64_at_large_world_coordinates() {
+    let names = NameMap {
+        names: vec![
+            "Location".to_string(),
+            "StructProperty".to_string(),
+            "Vector".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let fv = crate::version::ue5::LARGE_WORLD_COORDINATES;
+    let mut d = Vec::new();
+    push_legacy_tag_header(&mut d, 0, 1, 24);
+    push_raw_name(&mut d, 2);
+    d.extend_from_slice(&[0u8; 16]);
+    push_legacy_tag_tail(&mut d, fv);
+    push_f64(&mut d, 1.0);
+    push_f64(&mut d, 2.0);
+    push_f64(&mut d, 3.0);
+    push_raw_name(&mut d, 3);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: fv,
+    };
+    let mut reader = Reader::new(&d);
+    let entries = parse_properties(&mut reader, &ctx, d.len() as u64);
+    assert_eq!(reader.pos(), d.len() as u64);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].value["x"].as_f64(), Some(1.0));
+    assert_eq!(entries[0].value["z"].as_f64(), Some(3.0));
+}
+
+#[test]
 fn native_struct_box2f_decodes() {
     let names = NameMap {
         names: vec![

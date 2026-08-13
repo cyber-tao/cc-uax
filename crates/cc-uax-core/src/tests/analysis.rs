@@ -464,10 +464,16 @@ fn future_file_version_is_reported_as_unsupported() {
 
 #[test]
 fn below_verified_floor_is_partial_with_package_version_capability() {
-    // UE5.1–5.5 still decode, but they are below the real-corpus-verified floor
+    // UE5.0–5.5 still decode, but they are below the real-corpus-verified floor
     // (UE5.6 = 1017). Status must be partial so agents do not treat the result as
     // verified evidence. 1016 is the last unverified FileVersionUE5.
-    for (fv, major, minor) in [(1008, 5, 1), (1013, 5, 5), (1016, 5, 5)] {
+    for (fv, major, minor) in [
+        (1000, 5, 0),
+        (1004, 5, 0),
+        (1008, 5, 1),
+        (1013, 5, 5),
+        (1016, 5, 5),
+    ] {
         let bytes = build_minimal_package_with_version(fv, major, minor);
         let package = Package::parse(&bytes).unwrap();
         let analysis = analyze_package(&package, &bytes, AssetView::Summary);

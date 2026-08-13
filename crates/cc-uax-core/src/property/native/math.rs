@@ -1,32 +1,66 @@
+use crate::property::ParseCtx;
 use crate::reader::Reader;
 use crate::structured_value::{Value, json};
+use crate::version::ue5;
 use anyhow::Result;
-// structs). None of these need name resolution or the value window.
-pub(super) fn parse_math_struct(r: &mut Reader, name: &str) -> Result<Option<Value>> {
+
+fn large_world(ctx: &ParseCtx) -> bool {
+    ctx.file_version_ue5 >= ue5::LARGE_WORLD_COORDINATES
+}
+
+fn read_coord(r: &mut Reader, lwc: bool) -> Result<f64> {
+    if lwc {
+        r.read_f64()
+    } else {
+        Ok(f64::from(r.read_f32()?))
+    }
+}
+
+fn vec2(r: &mut Reader, lwc: bool) -> Result<Value> {
+    Ok(json!({ "x": read_coord(r, lwc)?, "y": read_coord(r, lwc)? }))
+}
+
+fn vec3(r: &mut Reader, lwc: bool) -> Result<Value> {
+    Ok(json!({
+        "x": read_coord(r, lwc)?,
+        "y": read_coord(r, lwc)?,
+        "z": read_coord(r, lwc)?
+    }))
+}
+
+fn vec4(r: &mut Reader, lwc: bool) -> Result<Value> {
+    Ok(json!({
+        "x": read_coord(r, lwc)?,
+        "y": read_coord(r, lwc)?,
+        "z": read_coord(r, lwc)?,
+        "w": read_coord(r, lwc)?
+    }))
+}
+
+pub(super) fn parse_math_struct(
+    r: &mut Reader,
+    name: &str,
+    ctx: &ParseCtx,
+) -> Result<Option<Value>> {
+    let lwc = large_world(ctx);
     let v = match name {
         // Note: FVector_NetQuantize* subclasses only declare WithNetSerializer, so
         // their package payload is tagged properties — do not decode them natively.
-        "Vector" => {
-            json!({ "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()? })
-        }
+        "Vector" => vec3(r, lwc)?,
         "Vector3f" => json!({ "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()? }),
-        "Vector2D" => json!({ "x": r.read_f64()?, "y": r.read_f64()? }),
+        "Vector2D" => vec2(r, lwc)?,
         "Vector2f" => json!({ "x": r.read_f32()?, "y": r.read_f32()? }),
-        "Vector4" => json!({
-            "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()?, "w": r.read_f64()?
-        }),
+        "Vector4" => vec4(r, lwc)?,
         "Vector4f" => json!({
             "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()?, "w": r.read_f32()?
         }),
         "Rotator" => json!({
-            "pitch": r.read_f64()?, "yaw": r.read_f64()?, "roll": r.read_f64()?
+            "pitch": read_coord(r, lwc)?, "yaw": read_coord(r, lwc)?, "roll": read_coord(r, lwc)?
         }),
         "Rotator3f" => json!({
             "pitch": r.read_f32()?, "yaw": r.read_f32()?, "roll": r.read_f32()?
         }),
-        "Quat" => json!({
-            "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()?, "w": r.read_f64()?
-        }),
+        "Quat" => vec4(r, lwc)?,
         "Quat4f" => json!({
             "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()?, "w": r.read_f32()?
         }),
@@ -41,12 +75,11 @@ pub(super) fn parse_math_struct(r: &mut Reader, name: &str) -> Result<Option<Val
         }),
         "DateTime" | "Timespan" => json!(r.read_i64()?),
         "Transform" => {
-            let rot = json!({
-                "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()?, "w": r.read_f64()?
-            });
-            let trans = json!({ "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()? });
-            let scale = json!({ "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()? });
-            json!({ "rotation": rot, "translation": trans, "scale3d": scale })
+            json!({
+                "rotation": vec4(r, lwc)?,
+                "translation": vec3(r, lwc)?,
+                "scale3d": vec3(r, lwc)?
+            })
         }
         "Transform3f" => {
             let rot = json!({
@@ -57,10 +90,11 @@ pub(super) fn parse_math_struct(r: &mut Reader, name: &str) -> Result<Option<Val
             json!({ "rotation": rot, "translation": trans, "scale3d": scale })
         }
         "Box" => {
-            let min = json!({ "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()? });
-            let max = json!({ "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()? });
-            let is_valid = r.read_u8()? != 0;
-            json!({ "min": min, "max": max, "is_valid": is_valid })
+            json!({
+                "min": vec3(r, lwc)?,
+                "max": vec3(r, lwc)?,
+                "is_valid": r.read_u8()? != 0
+            })
         }
         "Box3f" => {
             let min = json!({ "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()? });
@@ -69,11 +103,12 @@ pub(super) fn parse_math_struct(r: &mut Reader, name: &str) -> Result<Option<Val
             json!({ "min": min, "max": max, "is_valid": is_valid })
         }
         "Box2D" => {
-            let min = json!({ "x": r.read_f64()?, "y": r.read_f64()? });
-            let max = json!({ "x": r.read_f64()?, "y": r.read_f64()? });
-            // TBox2::Serialize writes bIsValid as a single uint8 (not a 4-byte UBOOL).
-            let is_valid = r.read_u8()? != 0;
-            json!({ "min": min, "max": max, "is_valid": is_valid })
+            json!({
+                "min": vec2(r, lwc)?,
+                "max": vec2(r, lwc)?,
+                // TBox2::Serialize writes bIsValid as a single uint8 (not a 4-byte UBOOL).
+                "is_valid": r.read_u8()? != 0
+            })
         }
         "Box2f" => {
             let min = json!({ "x": r.read_f32()?, "y": r.read_f32()? });
@@ -85,7 +120,7 @@ pub(super) fn parse_math_struct(r: &mut Reader, name: &str) -> Result<Option<Val
         "Matrix" => {
             let mut m = Vec::with_capacity(16);
             for _ in 0..16 {
-                m.push(json!(r.read_f64()?));
+                m.push(json!(read_coord(r, lwc)?));
             }
             json!({ "m": m })
         }

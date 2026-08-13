@@ -124,7 +124,7 @@ impl PackageFileSummary {
         }
         if file_version_ue5 < crate::version::SUPPORTED_FILE_VERSION_FLOOR {
             bail!(
-                "unsupported package FileVersionUE5={file_version_ue5}; this tool targets UE5.1–5.8 versioned editor assets (FileVersionUE5 >= {})",
+                "unsupported package FileVersionUE5={file_version_ue5}; this tool targets UE5.0–5.8 versioned editor assets (FileVersionUE5 >= {})",
                 crate::version::SUPPORTED_FILE_VERSION_FLOOR
             );
         }

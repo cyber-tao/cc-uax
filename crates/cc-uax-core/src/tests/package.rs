@@ -32,20 +32,14 @@ fn package_rejects_pre_ue5_version() {
 }
 
 #[test]
-fn package_rejects_ue50_file_version() {
-    // FileVersionUE5 1007 is the last UE5.0 AUTOMATIC value; the supported floor is
-    // 1008 (UE5.1 ADD_SOFTOBJECTPATH_LIST).
-    let mut data = Vec::new();
-    push_u32(&mut data, 0x9E2A_83C1);
-    push_i32(&mut data, -8);
-    push_i32(&mut data, 0);
-    push_i32(&mut data, 522);
-    push_i32(&mut data, 1007);
-    push_i32(&mut data, 0);
-
-    let error = Package::parse(&data).err().unwrap().to_string();
-    assert!(error.contains("FileVersionUE5=1007"));
-    assert!(error.contains("UE5.1"));
+fn package_accepts_ue50_file_versions() {
+    // FileVersionUE5 1000 is INITIAL_VERSION; 1007 is the last UE5.0 AUTOMATIC value.
+    for (fv, major, minor) in [(1000, 5, 0), (1004, 5, 0), (1007, 5, 0)] {
+        let data = build_minimal_package_with_version(fv, major, minor);
+        let package = Package::parse(&data)
+            .unwrap_or_else(|err| panic!("UE5.0 FileVersionUE5 {fv} failed to parse: {err:#}"));
+        assert_eq!(package.summary.file_version_ue5, fv);
+    }
 }
 
 #[test]
@@ -103,10 +97,13 @@ fn package_view_parses_ue56_file_version_1017() {
 #[test]
 fn minimal_package_parses_across_supported_ue5_versions() {
     // The version-aware summary builder must emit a header the parser accepts for
-    // every supported FileVersionUE5, from UE5.1 (1008) through UE5.8 (1018). Each
+    // every supported FileVersionUE5, from UE5.0 (1000) through UE5.8 (1018). Each
     // version gates a different set of summary fields, so a layout bug for any one
     // of them surfaces here as a parse failure.
     for (fv, major, minor) in [
+        (1000, 5, 0),
+        (1004, 5, 0),
+        (1007, 5, 0),
         (1008, 5, 1),
         (1009, 5, 2),
         (1009, 5, 3),

@@ -60,7 +60,7 @@ pub(crate) fn parse_native_struct(
     if let Some(v) = anim::parse_anim_struct(r, name, ctx)? {
         return Ok(Some(v));
     }
-    if let Some(v) = math::parse_math_struct(r, name)? {
+    if let Some(v) = math::parse_math_struct(r, name, ctx)? {
         return Ok(Some(v));
     }
     if let Some(v) = scalar::parse_scalar_struct(r, name, ctx, value_end)? {

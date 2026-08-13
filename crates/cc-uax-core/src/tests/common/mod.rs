@@ -47,7 +47,7 @@ pub fn build_minimal_package() -> Vec<u8> {
 // Builds a minimal but *valid* versioned package summary for any supported
 // FileVersionUE5. Every version-gated field is written only when the parser reads
 // it for that version (mirroring PackageFileSummary::parse), so the bytes line up
-// for UE5.1 (1008) through UE5.8 (1018) alike. ue4v is always 522 and
+// for UE5.0 (1000) through UE5.8 (1018) alike. ue4v is always 522 and
 // FilterEditorOnly is set, which keeps the editor-only/localization fields absent.
 pub fn build_minimal_package_with_version(
     file_version_ue5: i32,
@@ -159,8 +159,12 @@ fn build_minimal_package_header(
     push_i32(&mut d, 0); // chunk ids count (ue4 >= 392)
     push_i32(&mut d, 0); // preload_dependency_count (ue4 >= 507)
     push_i32(&mut d, 0); // preload_dependency_offset
-    push_i32(&mut d, 0); // names_referenced_from_export_data_count (ue5 >= 1001)
-    push_i64(&mut d, 0); // payload_toc_offset (ue5 >= 1002)
+    if fv >= ue5::NAMES_REFERENCED_FROM_EXPORT_DATA {
+        push_i32(&mut d, 0); // names_referenced_from_export_data_count
+    }
+    if fv >= ue5::PAYLOAD_TOC {
+        push_i64(&mut d, 0); // payload_toc_offset
+    }
     if fv >= ue5::DATA_RESOURCES {
         push_i32(&mut d, 0); // data_resource_offset
     }
@@ -231,11 +235,11 @@ pub fn push_legacy_tag_header(v: &mut Vec<u8>, name_idx: i32, type_idx: i32, siz
     push_i32(v, 0); // ArrayIndex
 }
 
-// Legacy (pre-`PROPERTY_TAG_COMPLETE_TYPE_NAME`) tag tail. UE serializes the
-// `HasPropertyGuid` bool as a 4-byte legacy UBOOL, and only appends the
-// PropertyTagExtensions byte when `file_version_ue5 >= 1011`.
+// Legacy (pre-`PROPERTY_TAG_COMPLETE_TYPE_NAME`) tag tail. FPropertyTag stores
+// `HasPropertyGuid` as uint8 (PropertyTag.h). The PropertyTagExtensions byte is
+// appended only when `file_version_ue5 >= 1011`.
 pub fn push_legacy_tag_tail(v: &mut Vec<u8>, file_version_ue5: i32) {
-    push_u32(v, 0); // HasPropertyGuid = false (4-byte UBOOL)
+    v.push(0); // HasPropertyGuid = false (uint8)
     if file_version_ue5 >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
     {
         v.push(0); // PropertyTagExtensions = NoExtension
@@ -243,7 +247,7 @@ pub fn push_legacy_tag_tail(v: &mut Vec<u8>, file_version_ue5: i32) {
 }
 
 pub fn push_legacy_tag_tail_with_guid(v: &mut Vec<u8>, file_version_ue5: i32) {
-    push_u32(v, 1); // HasPropertyGuid = true (4-byte UBOOL)
+    v.push(1); // HasPropertyGuid = true (uint8)
     push_guid(v, 1, 2, 3, 4);
     if file_version_ue5 >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
     {

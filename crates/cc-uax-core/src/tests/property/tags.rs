@@ -220,7 +220,7 @@ fn legacy_property_tags_decode_type_metadata() {
     d.push(0); // object serialization control byte
 
     push_legacy_tag_header(&mut d, 0, 1, 0);
-    push_u32(&mut d, 1); // BoolVal (4-byte legacy UBOOL)
+    d.push(1); // BoolVal = true (uint8)
     push_legacy_tag_tail(&mut d, fv);
 
     push_legacy_tag_header(&mut d, 2, 3, 8);
@@ -312,10 +312,9 @@ fn legacy_property_tags_decode_type_metadata() {
 #[test]
 fn legacy_property_tags_match_ue5_1_on_disk_layout() {
     // UE5.1 (FileVersionUE5 = 1008) legacy tags have no complete type name and no
-    // extension byte (< 1011), and both `BoolVal` and `HasPropertyGuid` are serialized
-    // as 4-byte legacy UBOOLs (FArchive::SerializeBool). Reading either as a single
-    // byte desyncs every following tag, so exact byte conservation plus the decoded
-    // values prove the widths are right.
+    // extension byte (< 1011). FPropertyTag stores both `BoolVal` and
+    // `HasPropertyGuid` as uint8 (PropertyTag.h). Reading either as a 4-byte
+    // UBOOL desyncs every following tag, which is what broke real UE5.0–5.4 K2 pins.
     let names = NameMap {
         names: vec![
             "Flag".to_string(),         // 0
@@ -330,12 +329,12 @@ fn legacy_property_tags_match_ue5_1_on_disk_layout() {
     // No object serialization-control byte: that is only written for a top-level
     // UClass when FileVersionUE5 >= 1011 (UE5.4+).
 
-    // BoolProperty: 4-byte BoolVal, then 4-byte HasPropertyGuid = false, no ext byte.
+    // BoolProperty: uint8 BoolVal, then uint8 HasPropertyGuid = false, no ext byte.
     push_legacy_tag_header(&mut d, 0, 1, 0);
-    push_u32(&mut d, 1); // BoolVal = true (4-byte UBOOL)
+    d.push(1); // BoolVal = true (uint8)
     push_legacy_tag_tail(&mut d, fv);
 
-    // IntProperty carrying a property GUID: 4-byte HasPropertyGuid = true + 16-byte GUID.
+    // IntProperty carrying a property GUID: uint8 HasPropertyGuid = true + 16-byte GUID.
     push_legacy_tag_header(&mut d, 2, 3, 4);
     push_legacy_tag_tail_with_guid(&mut d, fv);
     push_i32(&mut d, 42);

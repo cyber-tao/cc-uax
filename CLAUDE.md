@@ -6,7 +6,7 @@ This file is the repository source of truth for engineering agents working on `c
 
 `cc-uax` analyzes versioned, uncooked Unreal Engine 5 editor packages (`.uasset` and `.umap`) without loading Unreal Editor. It serves AI engineering tools that need evidence about serialized properties, Blueprint and plugin graph logic, asset references, gameplay structure, and project resource usage.
 
-UE5.1–5.8 source is the serialization authority (UE5.7/5.8 share `FileVersionUE5 = 1018`; UE5.6 is 1017; UE5.1 is 1008). The parser targets versioned, uncooked UE5.1–5.8 editor packages (`FileVersionUE5` 1008–1018). Packages below `VERIFIED_FILE_VERSION_FLOOR` (currently UE5.6 / 1017) decode per the version gates but cannot be `status=complete`; they carry `CapabilityKind::PackageVersion` = `partial` and a `package_below_verified_version` info diagnostic. Cooked/unversioned packages, UE5.0 (`FileVersionUE5` < 1008), and UE4 packages are out of scope.
+UE5.0–5.8 source is the serialization authority (UE5.7/5.8 share `FileVersionUE5 = 1018`; UE5.6 is 1017; UE5.1 is 1008; UE5.0 is 1000–1007). The parser targets versioned, uncooked UE5.0–5.8 editor packages (`FileVersionUE5` 1000–1018). Packages below `VERIFIED_FILE_VERSION_FLOOR` (currently UE5.6 / 1017) decode per the version gates but cannot be `status=complete`; they carry `CapabilityKind::PackageVersion` = `partial` and a `package_below_verified_version` info diagnostic. Cooked/unversioned packages, UE4 packages (`FileVersionUE5` = 0), and FileVersionUE5 below 1000 are out of scope.
 
 Development policy: this repository is in active development. Prefer the cleanest correct API and representation; do not retain obsolete 0.8 CLI/JSON compatibility unless a task explicitly requires it.
 
@@ -81,6 +81,8 @@ Never guess a cursor position after a failed parse. Never parse beyond an export
 
 Important version-gated formats include:
 
+- `FVector`/`FRotator`/`FQuat`/`FTransform`/`FBox`/`FBox2D`/`FMatrix`: `float` below `LARGE_WORLD_COORDINATES` (1004), `double` from 1004;
+- Legacy `FPropertyTag` `BoolVal` and `HasPropertyGuid` are uint8 (PropertyTag.h), not 4-byte UBOOL, for `FileVersionUE5` < 1012;
 - `FInstancedStruct`: legacy optional editor header/version versus modern payload;
 - `FInstancedPropertyBag`: `FPropertyBagCustomVersion` desc layout (verified through UE5.8 = version 5, which adds `PropertyFlags` and a map key type);
 - `FStateTreeInstanceData`: legacy tagged instance data versus custom instance storage;
@@ -91,7 +93,7 @@ Important version-gated formats include:
 
 The same `FileVersionUE5` does not guarantee the same layout: UE5.7 and UE5.8 share `1018` yet diverge (for example `FObjectImport::PackageName` gating and the `FInstancedPropertyBag` desc fields), so custom versions and, where needed, the engine version must gate those formats.
 
-Only classify a struct as native when UE5.1–5.8 source actually provides binary/structured custom serialization. A `WithSerializer` function that returns `false` uses tagged-property fallback.
+Only classify a struct as native when UE5.0–5.8 source actually provides binary/structured custom serialization. A `WithSerializer` function that returns `false` uses tagged-property fallback.
 
 Known native formats require exact consumption. Unknown registry-dependent or compiled payloads must retain type, byte range, size, reason, and preview as `known_opaque`; do not silently discard a tail.
 

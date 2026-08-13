@@ -6,7 +6,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20edition-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![CI](https://img.shields.io/github/actions/workflow/status/cyber-tao/cc-uax/ci.yml?branch=master&label=CI)](https://github.com/cyber-tao/cc-uax/actions/workflows/ci.yml)
-[![UE5](https://img.shields.io/badge/UE5-5.1–5.8-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
+[![UE5](https://img.shields.io/badge/UE5-5.0–5.8-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
 [English](README.md) · **简体中文**
@@ -21,7 +21,7 @@ Unreal 项目的大量逻辑和数据位于二进制 `.uasset`、`.umap` 包中�
 
 `cc-uax` 将受支持的 UE5 编辑器包转换为带类型和证据的报告。它既能分析单个资产，也能在不启动 Unreal Editor 的情况下建立项目级索引。
 
-> 支持范围：有版本信息、未 Cook 的 UE5.1–5.8 编辑器包（`FileVersionUE5` 1008–1018）。UE5.6–5.8 是经过真实语料验证的范围，可以为 `status=complete`。UE5.1–5.5 仍按版本门控解码，但结果为 `status=partial`，并带有 `package_version` / `package_below_verified_version`，直至经过真实资产验证。UE5.0（`FileVersionUE5` < 1008）、Cooked/无版本包及 UE4 包明确不支持。
+> 支持范围：有版本信息、未 Cook 的 UE5.0–5.8 编辑器包（`FileVersionUE5` 1000–1018）。UE5.6–5.8 是经过真实语料验证的范围，可以为 `status=complete`。UE5.0–5.5 仍按版本门控解码，但结果为 `status=partial`，并带有 `package_version` / `package_below_verified_version`，直至经过真实资产验证。Cooked/无版本包及 UE4 包明确不支持。
 
 ## 能力
 
@@ -210,7 +210,7 @@ cc-uax-cli ──> cc-uax-project ──> cc-uax-core
 
 ## 验证与支持边界
 
-序列化判断对照 UE5.1–5.8 源码核对，其中 UE5.6–5.8 是经过真实语料验证的参照范围，解析器使用外部真实编辑器资产验证。验收门禁由外部语料 harness 定义，该 harness 独立于 workspace crate 维护，不作为 workspace 成员提交。
+序列化判断对照 UE5.0–5.8 源码核对，其中 UE5.6–5.8 是经过真实语料验证的参照范围，解析器使用外部真实编辑器资产验证。验收门禁由外部语料 harness 定义，该 harness 独立于 workspace crate 维护，不作为 workspace 成员提交。
 
 外部资产和机器相关的绝对路径均保留在本地，仓库不提交此类内容。
 

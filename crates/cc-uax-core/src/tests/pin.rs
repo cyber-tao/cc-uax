@@ -507,14 +507,56 @@ fn legacy_property_terminator_locates_the_same_pin_stream_as_script_offset() {
 }
 
 #[test]
-fn ue51_and_ue53_k2_nodes_decode_legacy_tags_none_guid_and_pins() {
+fn locate_legacy_pin_start_after_bool_property_tags() {
+    // Real UE5.0–5.4 K2 nodes serialize many BoolProperty tags. FPropertyTag
+    // stores BoolVal and HasPropertyGuid as uint8; a 4-byte UBOOL read desyncs
+    // the stream so the None terminator is never found.
+    let names = NameMap {
+        names: vec!["bEnabled".into(), "BoolProperty".into(), "None".into()],
+    };
+    for fv in [1004, 1009] {
+        let mut data = Vec::new();
+        push_legacy_tag_header(&mut data, 0, 1, 0);
+        data.push(1); // BoolVal = true (uint8)
+        push_legacy_tag_tail(&mut data, fv);
+        push_raw_name(&mut data, 2); // None
+        let pin_start = data.len() as u64;
+        push_minimal_owned_pin(&mut data);
+
+        let context = ParseCtx {
+            names: &names,
+            resolve_object: &|_| crate::DecodedValue::Null,
+            pins: PinSerCtx::default(),
+            soft_object_paths: &[],
+            serialization: crate::version::SerializationPolicy::default(),
+            file_version_ue4: crate::version::ue4::HIGHEST,
+            file_version_ue5: fv,
+        };
+        let mut reader = Reader::new(&data);
+        let located = locate_legacy_pin_start(
+            &mut reader,
+            data.len() as u64,
+            &context,
+            "/exports/0/pins",
+        )
+        .unwrap_or_else(|diagnostic| {
+            panic!(
+                "FileVersionUE5={fv}: expected pin start after BoolProperty tags: {diagnostic:?}"
+            )
+        });
+        assert_eq!(located, pin_start, "FileVersionUE5={fv}");
+    }
+}
+
+#[test]
+fn ue50_to_ue53_k2_nodes_decode_bool_tags_none_guid_and_pins() {
     use crate::analysis::analyze_package;
     use crate::model::{AnalysisStatus, AssetView};
     use crate::object::{ObjectImport, PackageIndex};
     use crate::reader::RawName;
 
-    for fv in [1008, 1009] {
-        let header = build_minimal_package_with_version(fv, 5, 1);
+    for (fv, major, minor) in [(1004, 5, 0), (1008, 5, 1), (1009, 5, 3)] {
+        let header = build_minimal_package_with_version(fv, major, minor);
         let mut package = Package::parse(&header).unwrap();
         package.names = NameMap {
             names: vec![
@@ -523,6 +565,8 @@ fn ue51_and_ue53_k2_nodes_decode_legacy_tags_none_guid_and_pins() {
                 "None".into(),
                 "K2Node_CallFunction".into(),
                 "Node".into(),
+                "bEnabled".into(),
+                "BoolProperty".into(),
             ],
         };
         package.imports = vec![ObjectImport {
@@ -542,6 +586,9 @@ fn ue51_and_ue53_k2_nodes_decode_legacy_tags_none_guid_and_pins() {
             package_name: None,
         }];
         let mut data = Vec::new();
+        push_legacy_tag_header(&mut data, 5, 6, 0);
+        data.push(1); // BoolVal = true (uint8)
+        push_legacy_tag_tail(&mut data, fv);
         push_raw_name(&mut data, 2); // property None terminator
         push_i32(&mut data, 1); // UObject guid present
         push_guid(&mut data, 9, 8, 7, 6);
