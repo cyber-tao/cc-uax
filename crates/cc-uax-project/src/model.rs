@@ -40,6 +40,8 @@ pub struct AssetRecord {
     pub asset_kind: AssetKind,
     pub ownership: AssetOwnership,
     pub forward_references: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub owned_sublevels: BTreeSet<String>,
     pub analysis: AssetAnalysisSummary,
 }
 

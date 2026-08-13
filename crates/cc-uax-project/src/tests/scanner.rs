@@ -499,23 +499,33 @@ fn unavailable_system_cache_warns_without_failing_strict_scan() {
 }
 
 #[test]
-fn unavailable_custom_cache_is_fatal_even_when_partial_results_are_allowed() {
+fn unavailable_custom_cache_is_recorded_when_partial_results_are_allowed() {
     let root = temp_project("custom_cache_error");
     std::fs::write(root.join("Content/A.uasset"), minimal_package()).unwrap();
     let cache_parent = root.join("cache-parent");
     std::fs::write(&cache_parent, b"not a directory").unwrap();
     let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
 
-    let error = scanner
+    let index = scanner
         .scan(ScanOptions {
             mode: ScanMode::AllowPartial,
             cache: CachePathPolicy::CustomFile(cache_parent.join("index.sqlite")),
         })
-        .unwrap_err();
+        .expect("AllowPartial must return the index when only the cache fails");
 
-    assert_eq!(error.index().stats.indexed, 1);
-    assert!(error.index().diagnostics.is_empty());
-    assert!(error.index().failures.iter().any(|failure| {
+    assert_eq!(index.stats.indexed, 1);
+    assert!(index.failures.iter().any(|failure| {
+        failure.stage == ScanFailureStage::Cache
+            && failure.message.contains("create cache directory")
+    }));
+
+    let strict = scanner
+        .scan(ScanOptions {
+            mode: ScanMode::Strict,
+            cache: CachePathPolicy::CustomFile(cache_parent.join("index.sqlite")),
+        })
+        .unwrap_err();
+    assert!(strict.index().failures.iter().any(|failure| {
         failure.stage == ScanFailureStage::Cache
             && failure.message.contains("create cache directory")
     }));

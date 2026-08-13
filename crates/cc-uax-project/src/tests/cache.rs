@@ -9,6 +9,7 @@ fn cache_entry(mtime: i64, size: i64, references: &[&str]) -> CacheEntry {
         size,
         parse_ok: true,
         references: references.iter().map(|value| value.to_string()).collect(),
+        owned_sublevels: Vec::new(),
         analysis: None,
         parse_error: None,
     }

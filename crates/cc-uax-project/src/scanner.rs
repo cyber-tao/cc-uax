@@ -6,7 +6,7 @@ use crate::{
     ProjectLayout, ProjectReachability, ProjectReachabilityRoot, ScanDiagnostic, ScanFailure,
     ScanFailureStage, ScanStats, package_path_from_relative, strip_asset_extension,
 };
-use cc_uax_core::{AnalysisStatus, AssetView, PackageView};
+use cc_uax_core::{AnalysisStatus, AssetAnalysis, AssetView, DecodedValue, PackageView};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -140,6 +140,7 @@ impl ProjectScanner {
                                 asset_kind,
                                 ownership: classify_ownership(&file.relative_path),
                                 forward_references: entry.references.iter().cloned().collect(),
+                                owned_sublevels: entry.owned_sublevels.iter().cloned().collect(),
                                 analysis,
                             });
                             current_cache.insert(cache_key, entry);
@@ -189,6 +190,7 @@ impl ProjectScanner {
                                 size,
                                 parse_ok: false,
                                 references: Vec::new(),
+                                owned_sublevels: Vec::new(),
                                 analysis: None,
                                 parse_error: Some(message),
                             },
@@ -205,6 +207,7 @@ impl ProjectScanner {
                         size,
                         parse_ok: true,
                         references: parsed.references.clone(),
+                        owned_sublevels: parsed.owned_sublevels.iter().cloned().collect(),
                         analysis: Some(parsed.analysis.clone()),
                         parse_error: None,
                     },
@@ -218,6 +221,7 @@ impl ProjectScanner {
                 asset_kind,
                 ownership: classify_ownership(&file.relative_path),
                 forward_references: parsed.references.into_iter().collect(),
+                owned_sublevels: parsed.owned_sublevels,
                 analysis: parsed.analysis,
             });
         }
@@ -247,7 +251,7 @@ impl ProjectScanner {
         index.stats.cache_hits = cache_hits;
         index.stats.cache_misses = cache_misses;
         index.stats.cached_parse_failures = cached_parse_failures;
-        if fatal_cache_error || (options.mode == ScanMode::Strict && !index.failures.is_empty()) {
+        if options.mode == ScanMode::Strict && (fatal_cache_error || !index.failures.is_empty()) {
             return Err(ProjectScanError {
                 index: Box::new(index),
             });
@@ -386,7 +390,8 @@ pub(crate) fn build_project_index(
         .map(|failure| normalized_path(&failure.path))
         .collect::<BTreeSet<_>>()
         .len();
-    let ownership_closure = build_ownership_closure(&assets, &ownership);
+    let mut ownership_closure = build_ownership_closure(&assets, &ownership);
+    attach_sublevel_ownership(&assets, &mut ownership_closure);
     let reachability = build_project_reachability(
         &entry_points,
         &assets,
@@ -793,6 +798,7 @@ enum ParseFileError {
 
 struct ParsedAsset {
     references: Vec<String>,
+    owned_sublevels: BTreeSet<String>,
     analysis: AssetAnalysisSummary,
 }
 
@@ -810,10 +816,81 @@ fn read_asset(path: &Path) -> Result<ParsedAsset, ParseFileError> {
         .into_iter()
         .collect();
     let analysis = view.analyze(AssetView::Full);
+    let owned_sublevels = collect_owned_sublevels(&analysis);
     Ok(ParsedAsset {
         references,
+        owned_sublevels,
         analysis: AssetAnalysisSummary::from_analysis(&analysis),
     })
+}
+
+fn collect_owned_sublevels(analysis: &AssetAnalysis) -> BTreeSet<String> {
+    let mut owned = BTreeSet::new();
+    for export in &analysis.exports {
+        if !is_level_instance_or_packed_level_actor(&export.class) {
+            continue;
+        }
+        for property in &export.properties {
+            if !is_world_asset_property(&property.name) {
+                continue;
+            }
+            collect_package_paths_from_value(&property.value, &mut owned);
+        }
+    }
+    owned
+}
+
+fn is_level_instance_or_packed_level_actor(class_full: &str) -> bool {
+    class_full.rsplit(['.', '/']).next().is_some_and(|simple| {
+        matches!(
+            simple,
+            "LevelInstance" | "PackedLevelActor" | "PackedLevelActorDesc"
+        )
+    })
+}
+
+fn is_world_asset_property(name: &str) -> bool {
+    matches!(
+        name,
+        "WorldAsset" | "PackedWorldAsset" | "OverrideWorldAsset"
+    )
+}
+
+fn collect_package_paths_from_value(value: &DecodedValue, out: &mut BTreeSet<String>) {
+    if let Some(path) = value.as_str() {
+        if let Some(package) = package_path_from_soft_asset_path(path) {
+            out.insert(package);
+        }
+        return;
+    }
+    if let Some(object) = value.as_object() {
+        if let Some(path) = object.get("asset_path").and_then(DecodedValue::as_str)
+            && let Some(package) = package_path_from_soft_asset_path(path)
+        {
+            out.insert(package);
+        }
+        for nested in object.values() {
+            collect_package_paths_from_value(nested, out);
+        }
+        return;
+    }
+    if let Some(array) = value.as_array() {
+        for nested in array {
+            collect_package_paths_from_value(nested, out);
+        }
+    }
+}
+
+fn package_path_from_soft_asset_path(path: &str) -> Option<String> {
+    let path = path.trim();
+    if path.is_empty() || path.eq_ignore_ascii_case("None") || !path.starts_with('/') {
+        return None;
+    }
+    let package = path
+        .split_once('.')
+        .map(|(package, _)| package)
+        .unwrap_or(path);
+    (!package.is_empty()).then(|| package.to_string())
 }
 
 fn asset_kind(path: &Path) -> Option<AssetKind> {
@@ -915,6 +992,46 @@ fn build_ownership_closure(
         closure.insert(root.clone());
     }
     closures
+}
+
+fn attach_sublevel_ownership(
+    assets: &BTreeMap<String, AssetRecord>,
+    closures: &mut BTreeMap<String, BTreeSet<String>>,
+) {
+    let nested = closures.clone();
+    for record in assets.values() {
+        if record.owned_sublevels.is_empty() {
+            continue;
+        }
+        let root = record
+            .owner_package()
+            .unwrap_or(record.package_path.as_str())
+            .to_string();
+        let entry = closures.entry(root.clone()).or_default();
+        entry.insert(root);
+        for sublevel in &record.owned_sublevels {
+            let Some(resolved) = resolve_scanned_package(sublevel, assets) else {
+                continue;
+            };
+            entry.insert(resolved.clone());
+            if let Some(members) = nested.get(&resolved) {
+                entry.extend(members.iter().cloned());
+            }
+        }
+    }
+}
+
+fn resolve_scanned_package(
+    package: &str,
+    assets: &BTreeMap<String, AssetRecord>,
+) -> Option<String> {
+    if assets.contains_key(package) {
+        return Some(package.to_string());
+    }
+    assets
+        .keys()
+        .find(|key| key.eq_ignore_ascii_case(package))
+        .cloned()
 }
 
 fn path_has_prefix(path: &str, prefix: &str) -> bool {
