@@ -396,7 +396,11 @@ pub(crate) fn build_project_index(
         failed_asset_count,
         &canonical,
     );
-    stats.failed = failures.len();
+    // `stats.failed` counts asset-level failures (read/parse/index of a discovered
+    // asset) so the accounting `discovered == indexed + failed + skipped` holds.
+    // Infrastructure failures (mount/discovery/ownership/cache) are about the scan,
+    // not a discovered asset; they stay visible in `failures` and `analysis.scan_failures`.
+    stats.failed = failed_asset_count;
     stats.skipped = discovered.saturating_sub(assets.len() + failed_asset_count);
     let analysis = ProjectAnalysisSummary::aggregate(
         assets.values().map(|record| &record.analysis),
