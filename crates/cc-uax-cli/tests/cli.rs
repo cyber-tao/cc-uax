@@ -22,6 +22,101 @@ fn write_package(path: &Path) {
     std::fs::write(path, minimal_package()).unwrap();
 }
 
+// The exit code answers "did the run hold together", not "is the evidence
+// complete". Pin every boundary so the two cannot be conflated again: a partial or
+// unsupported report is still a successful run, only a project scan failure is 2,
+// and 1 is reserved for not producing a report at all.
+#[test]
+fn exit_codes_separate_run_failure_from_evidence_gaps() {
+    let root = temp_dir("exitcodes");
+    let content = root.join("Content");
+    write_package(&content.join("Good.uasset"));
+    let project = root.to_str().unwrap().to_string();
+
+    let code = |args: &[&str]| {
+        bin()
+            .args(args)
+            .output()
+            .unwrap()
+            .status
+            .code()
+            .expect("the process must exit normally")
+    };
+
+    // 0: a report was produced and nothing the run was asked to do failed.
+    assert_eq!(
+        code(&["asset", content.join("Good.uasset").to_str().unwrap()]),
+        0
+    );
+    assert_eq!(code(&["project", &project, "--no-cache"]), 0);
+
+    // 0: an out-of-scope package is unsupported evidence, not a failure.
+    std::fs::write(content.join("Legacy.uasset"), ue4_package()).unwrap();
+    let output = bin()
+        .args(["project", &project, "--no-cache"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["status"], "partial");
+    assert_eq!(report["analysis"]["unsupported_assets"], 1);
+    assert!(report.get("failures").is_none(), "{report}");
+
+    // 2: a mapped package that is not readable at all is a hard scan failure, and
+    // --allow-partial is the explicit override back to 0.
+    std::fs::write(content.join("Broken.uasset"), b"not a package").unwrap();
+    assert_eq!(code(&["project", &project, "--no-cache"]), 2);
+    assert_eq!(
+        code(&["project", &project, "--no-cache", "--allow-partial"]),
+        0
+    );
+    std::fs::remove_file(content.join("Broken.uasset")).unwrap();
+
+    // 2: a --focus pattern that selects nothing is a hard failure too.
+    assert_eq!(
+        code(&[
+            "project",
+            &project,
+            "--no-cache",
+            "--focus",
+            "/Game/Nope/**"
+        ]),
+        2
+    );
+
+    // 1: no report could be produced. Each of these fails before analysis.
+    assert_eq!(
+        code(&["asset", root.join("Missing.uasset").to_str().unwrap()]),
+        1
+    );
+    assert_eq!(
+        code(&["project", root.join("NoSuchProject").to_str().unwrap()]),
+        1
+    );
+    assert_eq!(
+        code(&[
+            "project",
+            &project,
+            "--no-cache",
+            "--mount",
+            "not-a-mapping"
+        ]),
+        1
+    );
+
+    // The exit-1 document is the only place `status` is "error"; it is not a report.
+    let output = bin()
+        .args(["asset", root.join("Missing.uasset").to_str().unwrap()])
+        .output()
+        .unwrap();
+    let failure: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(failure["status"], "error");
+    assert!(failure["message"].is_string());
+    assert!(failure.get("coverage").is_none());
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 #[test]
 fn asset_summary_uses_the_new_subcommand_and_typed_schema() {
     let root = temp_dir("asset");
@@ -403,6 +498,18 @@ fn minimal_package() -> Vec<u8> {
     }
     push_i64(&mut bytes, 0);
     push_i32(&mut bytes, 0);
+    bytes
+}
+
+/// A real UE4 package header (`FileVersionUE5` = 0). Readable, deliberately out of
+/// scope, and therefore `unsupported` evidence rather than a scan failure.
+fn ue4_package() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_u32(&mut bytes, 0x9E2A_83C1);
+    push_i32(&mut bytes, -7); // legacy_file_version: no FileVersionUE5 field follows
+    push_i32(&mut bytes, 0); // legacy ue3
+    push_i32(&mut bytes, 522); // file_version_ue4
+    push_i32(&mut bytes, 0); // licensee
     bytes
 }
 

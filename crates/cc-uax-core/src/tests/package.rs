@@ -178,15 +178,22 @@ fn minimal_package_parses_across_supported_ue5_versions() {
     // every supported FileVersionUE5, from UE5.0 (1000) through UE5.8 (1018). Each
     // version gates a different set of summary fields, so a layout bug for any one
     // of them surfaces here as a parse failure.
+    // 1010 (script offsets) and 1012 (complete tag type name) are the two gates
+    // with the most branches behind them, and 1010/1011/1012 have no real-corpus
+    // asset, so keep each of them in the matrix explicitly.
     for (fv, major, minor) in [
         (1000, 5, 0),
         (1004, 5, 0),
         (1007, 5, 0),
         (1008, 5, 1),
         (1009, 5, 2),
-        (1009, 5, 3),
+        (1010, 5, 3),
+        (1011, 5, 3),
         (1012, 5, 4),
         (1013, 5, 5),
+        (1014, 5, 5),
+        (1015, 5, 5),
+        (1016, 5, 6),
         (1017, 5, 6),
         (1018, 5, 7),
         (1018, 5, 8),
@@ -196,6 +203,164 @@ fn minimal_package_parses_across_supported_ue5_versions() {
             panic!("FileVersionUE5 {fv} (UE{major}.{minor}) failed to parse: {err:#}")
         });
         assert_eq!(package.summary.file_version_ue5, fv);
+    }
+}
+
+// SCRIPT_SERIALIZATION_OFFSET (1010) adds the two int64 tagged-property offsets to
+// every export map entry. No corpus asset sits on either side of this gate, and the
+// offsets decide the export window shape, so pin the layout at threshold-1 and
+// threshold and confirm a stray value is rejected rather than mis-sliced.
+#[test]
+fn export_map_script_offsets_appear_exactly_at_their_version_gate() {
+    use crate::object::ObjectExport;
+
+    let ue4 = crate::version::ue4::HIGHEST;
+    let gate = crate::version::ue5::SCRIPT_SERIALIZATION_OFFSET;
+
+    let entry = |ue5v: i32, script: Option<(i64, i64)>| {
+        // parse_table requires a positive table offset, so pad the front.
+        let mut table = vec![0u8; 4];
+        let start = table.len();
+        push_i32(&mut table, 0); // class_index
+        push_i32(&mut table, 0); // super_index
+        push_i32(&mut table, 0); // template_index
+        push_i32(&mut table, 0); // outer_index
+        push_raw_name(&mut table, 0); // object_name
+        push_u32(&mut table, 0); // object_flags
+        push_i64(&mut table, 64); // serial_size
+        push_i64(&mut table, 1024); // serial_offset
+        for _ in 0..3 {
+            push_i32(&mut table, 0); // forced/not-for-client/not-for-server
+        }
+        push_i32(&mut table, 0); // bIsInheritedInstance (>= 1006)
+        push_u32(&mut table, 0); // package_flags
+        push_i32(&mut table, 0); // not_always_loaded_for_editor_game
+        push_i32(&mut table, 0); // is_asset
+        push_i32(&mut table, 0); // bGeneratePublicHash (>= 1003)
+        for _ in 0..5 {
+            push_i32(&mut table, 0); // preload dependency counts
+        }
+        if let Some((script_start, script_end)) = script {
+            push_i64(&mut table, script_start);
+            push_i64(&mut table, script_end);
+        }
+        let mut reader = Reader::new(&table);
+        let parsed = ObjectExport::parse_table(&mut reader, start as i32, 1, ue4, ue5v);
+        (parsed, table.len(), reader.pos())
+    };
+
+    // At threshold-1 the offsets are absent and the entry ends without them.
+    let (parsed, len, pos) = entry(gate - 1, None);
+    let exports = parsed.expect("a pre-gate entry parses without script offsets");
+    assert_eq!(exports[0].script_serialization_start_offset, 0);
+    assert_eq!(exports[0].script_serialization_end_offset, 0);
+    assert_eq!(pos, len as u64, "pre-gate entry must consume exactly");
+
+    // At the threshold both offsets are read, and a non-zero range is preserved so
+    // the export window can bracket the tagged-property block.
+    let (parsed, len, pos) = entry(gate, Some((8, 40)));
+    let exports = parsed.expect("a gated entry parses with script offsets");
+    assert_eq!(exports[0].script_serialization_start_offset, 8);
+    assert_eq!(exports[0].script_serialization_end_offset, 40);
+    assert_eq!(pos, len as u64, "gated entry must consume exactly");
+
+    // A pre-gate byte layout read as if it were gated runs off the end rather than
+    // silently reinterpreting neighbouring bytes as offsets.
+    let (parsed, _, _) = entry(gate, None);
+    assert!(
+        parsed.is_err(),
+        "reading absent script offsets must fail, not invent a window"
+    );
+}
+
+// PROPERTY_TAG_COMPLETE_TYPE_NAME (1012) switches FPropertyTag from the legacy
+// FName type plus type-specific extras to a TypeName tree with a flag byte. The
+// same bytes must decode under exactly one layout, and no corpus asset sits on
+// either side of this gate.
+#[test]
+fn property_tag_layout_switches_exactly_at_its_version_gate() {
+    use crate::name::NameMap;
+    use crate::pin::PinSerCtx;
+    use crate::property::{ParseCtx, parse_properties_report};
+
+    let names = NameMap {
+        names: vec![
+            "Count".to_string(),       // 0
+            "IntProperty".to_string(), // 1
+            "None".to_string(),        // 2
+        ],
+    };
+    let gate = crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME;
+
+    // Modern layout: name, TypeName tree (name + param count), size, flags, value.
+    let mut modern = Vec::new();
+    push_raw_name(&mut modern, 0);
+    push_raw_name(&mut modern, 1);
+    push_i32(&mut modern, 0); // inner type param count
+    push_i32(&mut modern, 4); // size
+    modern.push(0); // flags
+    push_i32(&mut modern, 7);
+    push_raw_name(&mut modern, 2);
+
+    // Legacy layout: name, type FName, size, array index, HasPropertyGuid, then at
+    // 1011 the property-extension flags, then the value.
+    let mut legacy = Vec::new();
+    push_raw_name(&mut legacy, 0);
+    push_raw_name(&mut legacy, 1);
+    push_i32(&mut legacy, 4); // size
+    push_i32(&mut legacy, 0); // array index
+    legacy.push(0); // HasPropertyGuid (uint8, not bool32)
+    legacy.push(0); // EPropertyTagExtension flags (>= 1011)
+    push_i32(&mut legacy, 7);
+    push_raw_name(&mut legacy, 2);
+
+    let decode = |bytes: &[u8], file_version_ue5: i32| {
+        let ctx = ParseCtx {
+            names: &names,
+            resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+            pins: PinSerCtx::default(),
+            soft_object_paths: &[],
+            serialization: crate::version::SerializationPolicy::default(),
+            file_version_ue4: crate::version::ue4::HIGHEST,
+            file_version_ue5,
+        };
+        let mut reader = Reader::new(bytes);
+        let parse = parse_properties_report(&mut reader, &ctx, bytes.len() as u64, "/properties");
+        (parse, reader.pos())
+    };
+
+    for (label, bytes, version) in [
+        ("modern at the gate", &modern, gate),
+        ("legacy below the gate", &legacy, gate - 1),
+    ] {
+        let (parse, pos) = decode(bytes, version);
+        assert_eq!(parse.entries.len(), 1, "{label}: {:#?}", parse.entries);
+        assert_eq!(parse.entries[0].name, "Count", "{label}");
+        assert_eq!(parse.entries[0].value.as_i64(), Some(7), "{label}");
+        assert!(
+            parse.diagnostics.is_empty(),
+            "{label}: {:#?}",
+            parse.diagnostics
+        );
+        assert_eq!(pos, bytes.len() as u64, "{label} must consume exactly");
+    }
+
+    // Each layout read under the other version must not silently produce a clean
+    // decode: the tag fields do not line up.
+    for (label, bytes, version) in [
+        ("legacy bytes at the gate", &legacy, gate),
+        ("modern bytes below the gate", &modern, gate - 1),
+    ] {
+        let (parse, _) = decode(bytes, version);
+        let clean = parse.entries.len() == 1
+            && parse.entries[0].name == "Count"
+            && parse.entries[0].value.as_i64() == Some(7)
+            && parse.diagnostics.is_empty();
+        assert!(
+            !clean,
+            "{label} must not decode cleanly: {:#?}",
+            parse.entries
+        );
     }
 }
 

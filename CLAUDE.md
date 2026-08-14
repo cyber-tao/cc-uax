@@ -172,7 +172,15 @@ An empty diagnostics array alone does not prove completeness. Status is computed
 
 ## Validation
 
-Real-corpus acceptance is separate from ordinary workspace tests. When a real-corpus harness is needed, it should be built as an external consumer of the workspace crates, not as a workspace member. Do not commit external assets, generated corpus reports, caches, absolute local paths, or secrets.
+Real-corpus acceptance is separate from ordinary workspace tests, and is run by `tools/corpus-acceptance.ps1`:
+
+```pwsh
+./tools/corpus-acceptance.ps1 -Project <PROJECT_OR_CONTENT_DIR>[,<MORE>...] [-UpdateBaseline]
+```
+
+It is not a workspace member. Corpus paths are arguments, and every report and the baseline go to `-OutputDirectory` (default: a directory under the OS temp dir), so nothing corpus-specific enters the repository. Do not commit external assets, generated corpus reports, caches, absolute local paths, or secrets.
+
+The harness checks invariants that hold for any corpus — `unclassified_bytes == 0`, `discovered == indexed + failed + skipped`, asset-status accounting, grouped opaque regions and bytes reconciling with `coverage` — then compares against a recorded baseline in one direction only: evidence may improve, never degrade. Run it after any decoder, classification, or report-shape change; a change that silently reclassifies packages or loses evidence shows up there and not in `cargo test`. Record the FileVersionUE5 distribution it reports, since it is the only statement of which version gates real assets actually exercised.
 
 ## Conventions
 
