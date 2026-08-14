@@ -256,7 +256,10 @@ fn resolves_world_partition_actor_and_object_ownership_closure() {
         .flat_map(|asset| &asset.analysis.known_opaque.groups)
         .map(|group| group.regions)
         .sum::<usize>();
-    assert_eq!(index.analysis.coverage.known_opaque_regions, grouped_regions);
+    assert_eq!(
+        index.analysis.coverage.known_opaque_regions,
+        grouped_regions
+    );
     assert_eq!(closure.len(), 3);
     assert!(closure.contains("/Game/Maps/World"));
     assert!(closure.contains("/Game/__ExternalActors__/Maps/World/0/AA/Actor"));

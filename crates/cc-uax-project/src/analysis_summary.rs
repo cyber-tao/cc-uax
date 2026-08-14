@@ -375,11 +375,7 @@ impl KnownOpaqueSummary {
             }
             let bytes = region.byte_range.as_ref().map_or(0, |range| range.size);
             let entry = grouped
-                .entry((
-                    region.kind,
-                    region.type_name.clone(),
-                    region.reason.clone(),
-                ))
+                .entry((region.kind, region.type_name.clone(), region.reason.clone()))
                 .or_default();
             entry.0 += 1;
             entry.1 += bytes;
@@ -387,13 +383,15 @@ impl KnownOpaqueSummary {
         }
         summary.groups = grouped
             .into_iter()
-            .map(|((kind, type_name, reason), (regions, bytes))| KnownOpaqueGroup {
-                kind,
-                type_name,
-                reason,
-                regions,
-                bytes,
-            })
+            .map(
+                |((kind, type_name, reason), (regions, bytes))| KnownOpaqueGroup {
+                    kind,
+                    type_name,
+                    reason,
+                    regions,
+                    bytes,
+                },
+            )
             .collect();
         summary
     }
