@@ -197,10 +197,30 @@ Write-Host "cc-uax: $binary"
 Write-Host "output: $OutputDirectory"
 Write-Host ""
 
+# Names key the baseline and the report files, so a leaf like `trunk` shared by two
+# corpora must not silently overwrite the other. Qualify with parent directories
+# until the name is unique.
+function Get-CorpusName {
+    param([string] $Target, [System.Collections.Specialized.OrderedDictionary] $Taken)
+
+    $parts = [System.Collections.Generic.List[string]]::new()
+    $parts.Add([System.IO.Path]::GetFileNameWithoutExtension((Split-Path -Leaf $Target)))
+    $parent = Split-Path -Parent $Target
+    while ($Taken.Contains(($parts.ToArray() -join '-')) -and $parent) {
+        $leaf = Split-Path -Leaf $parent
+        if ([string]::IsNullOrEmpty($leaf)) { break }
+        $parts.Insert(0, $leaf)
+        $parent = Split-Path -Parent $parent
+    }
+    $name = $parts.ToArray() -join '-'
+    if ($Taken.Contains($name)) { throw "cannot derive a unique name for $Target" }
+    return $name
+}
+
 $results = [ordered] @{}
 foreach ($target in $Project) {
     if (-not (Test-Path -LiteralPath $target)) { throw "corpus not found: $target" }
-    $name = [System.IO.Path]::GetFileNameWithoutExtension((Split-Path -Leaf $target))
+    $name = Get-CorpusName -Target $target -Taken $results
     $reportPath = Join-Path $OutputDirectory "$name.json"
     Write-Host "scanning $name ..."
     $result = Measure-Project -Binary $binary -Target $target -ReportPath $reportPath
