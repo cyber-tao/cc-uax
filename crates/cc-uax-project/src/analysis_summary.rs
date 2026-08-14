@@ -12,6 +12,10 @@ fn is_zero(value: &usize) -> bool {
     *value == 0
 }
 
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilitySummary {
     pub kind: CapabilityKind,
@@ -114,8 +118,12 @@ pub struct KnownOpaqueSummary {
     pub metadata: usize,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub capabilities: usize,
+    /// Total bytes across every opaque region in this asset. Equal to
+    /// `coverage.opaque_bytes`, repeated here so `groups` sums back to a whole.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub bytes: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub identities: Vec<KnownOpaqueIdentity>,
+    pub groups: Vec<KnownOpaqueGroup>,
 }
 
 impl KnownOpaqueSummary {
@@ -124,13 +132,21 @@ impl KnownOpaqueSummary {
     }
 }
 
+/// Opaque regions of one asset grouped by what the region is and why it could not
+/// be decoded, with the region count and byte total for each group.
+///
+/// A project report aggregates rather than listing every region: a single Niagara
+/// asset can carry thousands of regions of a handful of distinct kinds, and the
+/// per-region byte ranges and previews are what `cc-uax asset` and `--focus`
+/// attach in full.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KnownOpaqueIdentity {
-    pub path: String,
+pub struct KnownOpaqueGroup {
     pub kind: KnownOpaqueKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_name: Option<String>,
     pub reason: String,
+    pub regions: usize,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -345,17 +361,10 @@ impl KnownOpaqueSummary {
     fn from_regions(regions: &[KnownOpaque]) -> Self {
         let mut summary = Self {
             total: regions.len(),
-            identities: regions
-                .iter()
-                .map(|region| KnownOpaqueIdentity {
-                    path: region.path.clone(),
-                    kind: region.kind,
-                    type_name: region.type_name.clone(),
-                    reason: region.reason.clone(),
-                })
-                .collect(),
             ..Self::default()
         };
+        let mut grouped: BTreeMap<(KnownOpaqueKind, Option<String>, String), (usize, u64)> =
+            BTreeMap::new();
         for region in regions {
             match region.kind {
                 KnownOpaqueKind::PropertyValue => summary.property_values += 1,
@@ -364,7 +373,28 @@ impl KnownOpaqueSummary {
                 KnownOpaqueKind::Metadata => summary.metadata += 1,
                 KnownOpaqueKind::Capability => summary.capabilities += 1,
             }
+            let bytes = region.byte_range.as_ref().map_or(0, |range| range.size);
+            let entry = grouped
+                .entry((
+                    region.kind,
+                    region.type_name.clone(),
+                    region.reason.clone(),
+                ))
+                .or_default();
+            entry.0 += 1;
+            entry.1 += bytes;
+            summary.bytes += bytes;
         }
+        summary.groups = grouped
+            .into_iter()
+            .map(|((kind, type_name, reason), (regions, bytes))| KnownOpaqueGroup {
+                kind,
+                type_name,
+                reason,
+                regions,
+                bytes,
+            })
+            .collect();
         summary
     }
 }

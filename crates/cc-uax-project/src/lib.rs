@@ -8,7 +8,7 @@ mod scanner;
 
 pub use analysis_summary::{
     AnalysisDiagnosticSummary, AssetAnalysisSummary, CapabilitySummary, GraphSummary,
-    KnownOpaqueIdentity, KnownOpaqueSummary, PcgGraphSummary, ProjectAnalysisSummary,
+    KnownOpaqueGroup, KnownOpaqueSummary, PcgGraphSummary, ProjectAnalysisSummary,
     RigVmGraphSummary, StateTreeGraphSummary,
 };
 pub use cache::{CachePathError, CachePathPolicy};

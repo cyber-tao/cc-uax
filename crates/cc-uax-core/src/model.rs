@@ -457,7 +457,7 @@ pub struct KnownOpaque {
     pub byte_range: Option<OpaqueByteRange>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KnownOpaqueKind {
     PropertyValue,

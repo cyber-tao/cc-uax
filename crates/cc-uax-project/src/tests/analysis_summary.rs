@@ -47,21 +47,91 @@ fn preserves_partial_coverage_capabilities_and_compact_limitations() {
     assert_eq!(summary.diagnostics.codes.get("test_partial"), Some(&1));
     assert_eq!(summary.known_opaque.total, 1);
     assert_eq!(summary.known_opaque.post_property_tails, 1);
-    assert_eq!(summary.known_opaque.identities.len(), 1);
-    assert_eq!(summary.known_opaque.identities[0].path, "/exports/0/tail");
+    assert_eq!(summary.known_opaque.groups.len(), 1);
     assert_eq!(
-        summary.known_opaque.identities[0].kind,
+        summary.known_opaque.groups[0].kind,
         KnownOpaqueKind::PostPropertyTail
     );
-    assert!(summary.known_opaque.identities[0].type_name.is_none());
+    assert!(summary.known_opaque.groups[0].type_name.is_none());
     assert_eq!(
-        summary.known_opaque.identities[0].reason,
+        summary.known_opaque.groups[0].reason,
         "full opaque reason is intentionally omitted"
     );
+    assert_eq!(summary.known_opaque.groups[0].regions, 1);
     assert!(summary.capabilities.iter().any(|capability| {
         capability.kind == CapabilityKind::EdGraphLogic
             && capability.status == AnalysisStatus::Partial
     }));
+}
+
+// A project report aggregates opaque regions instead of listing every one: an
+// asset can carry thousands. Grouping must keep the region count and, unlike the
+// old per-region identity list, the byte total so `opaque_bytes` is attributable.
+#[test]
+fn opaque_regions_are_grouped_by_kind_type_and_reason_with_byte_totals() {
+    let bytes = minimal_package();
+    let mut analysis = PackageView::parse(&bytes).unwrap().analyze(AssetView::Full);
+    let tail = |index: usize, type_name: &str, size: u64| KnownOpaque {
+        path: format!("/exports/{index}/post_property_tail"),
+        kind: KnownOpaqueKind::PostPropertyTail,
+        type_name: Some(type_name.to_string()),
+        reason: "bytes remain after all known export serializers".to_string(),
+        byte_range: Some(cc_uax_core::OpaqueByteRange {
+            start: 0,
+            end: size,
+            size,
+            preview: String::new(),
+        }),
+    };
+    analysis.known_opaque = vec![
+        tail(1, "/Script/Engine.Texture2D", 68),
+        tail(2, "/Script/Engine.Texture2D", 68),
+        tail(3, "/Script/Engine.Material", 12),
+        KnownOpaque {
+            path: "/exports/4/properties/Map".to_string(),
+            kind: KnownOpaqueKind::PropertyValue,
+            type_name: Some("MapProperty(StructProperty,NameProperty)".to_string()),
+            reason: "property decoder emitted an unparsed byte preview".to_string(),
+            byte_range: None,
+        },
+    ];
+
+    let summary = AssetAnalysisSummary::from_analysis(&analysis);
+
+    assert_eq!(summary.known_opaque.total, 4);
+    assert_eq!(summary.known_opaque.post_property_tails, 3);
+    assert_eq!(summary.known_opaque.property_values, 1);
+    assert_eq!(summary.known_opaque.bytes, 68 + 68 + 12);
+    // Four regions collapse to three groups; the two Texture2D tails merge.
+    assert_eq!(summary.known_opaque.groups.len(), 3);
+    let texture = summary
+        .known_opaque
+        .groups
+        .iter()
+        .find(|group| group.type_name.as_deref() == Some("/Script/Engine.Texture2D"))
+        .expect("the Texture2D tails are one group");
+    assert_eq!(texture.regions, 2);
+    assert_eq!(texture.bytes, 136);
+    assert_eq!(
+        summary
+            .known_opaque
+            .groups
+            .iter()
+            .map(|group| group.regions)
+            .sum::<usize>(),
+        summary.known_opaque.total,
+        "every region belongs to exactly one group"
+    );
+    assert_eq!(
+        summary
+            .known_opaque
+            .groups
+            .iter()
+            .map(|group| group.bytes)
+            .sum::<u64>(),
+        summary.known_opaque.bytes,
+        "group bytes sum back to the asset total"
+    );
 }
 
 #[test]

@@ -250,15 +250,13 @@ fn resolves_world_partition_actor_and_object_ownership_closure() {
             + index.analysis.unsupported_assets,
         index.analysis.assets
     );
-    let opaque_identities = index
+    let grouped_regions = index
         .assets
         .values()
-        .map(|asset| asset.analysis.known_opaque.identities.len())
+        .flat_map(|asset| &asset.analysis.known_opaque.groups)
+        .map(|group| group.regions)
         .sum::<usize>();
-    assert_eq!(
-        index.analysis.coverage.known_opaque_regions,
-        opaque_identities
-    );
+    assert_eq!(index.analysis.coverage.known_opaque_regions, grouped_regions);
     assert_eq!(closure.len(), 3);
     assert!(closure.contains("/Game/Maps/World"));
     assert!(closure.contains("/Game/__ExternalActors__/Maps/World/0/AA/Actor"));
@@ -372,7 +370,8 @@ fn scans_real_project_from_environment() {
         index
             .assets
             .values()
-            .map(|asset| asset.analysis.known_opaque.identities.len())
+            .flat_map(|asset| &asset.analysis.known_opaque.groups)
+            .map(|group| group.regions)
             .sum::<usize>()
     );
     // Byte conservation (P0): every export byte is decoded or classified opaque.
