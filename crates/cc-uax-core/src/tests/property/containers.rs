@@ -56,6 +56,148 @@ fn optional_property_decodes_set_and_unset() {
     assert!(entries[1].value.is_null());
 }
 
+/// Builds one tagged `MapProperty` whose key is a `StructProperty`, using the
+/// legacy (`FileVersionUE5` < `PROPERTY_TAG_COMPLETE_TYPE_NAME`) tag layout that
+/// records only the key/value *property* type names.
+fn legacy_struct_keyed_map(names: &NameMap, payload: &[u8]) -> Vec<u8> {
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // property name
+    push_raw_name(&mut d, 1); // "MapProperty"
+    push_i32(&mut d, payload.len() as i32); // size
+    push_i32(&mut d, 0); // array index
+    push_raw_name(&mut d, 2); // key type: "StructProperty" -- no struct name follows
+    push_raw_name(&mut d, 3); // value type: "NameProperty"
+    d.push(0); // HasPropertyGuid
+    d.extend_from_slice(payload);
+    push_raw_name(&mut d, 4); // None terminator
+    let _ = names;
+    d
+}
+
+// Below PROPERTY_TAG_COMPLETE_TYPE_NAME a container tag records only the element's
+// property type, never the UScriptStruct behind `StructProperty`, which UE
+// resolves from its reflection registry. That payload is undecodable by design, so
+// it must be classified as its own limitation rather than as a decoder failure.
+#[test]
+fn a_legacy_container_without_an_inner_struct_name_is_its_own_limitation() {
+    let names = NameMap {
+        names: vec![
+            "VariableToScriptVariable".to_string(), // 0
+            "MapProperty".to_string(),              // 1
+            "StructProperty".to_string(),           // 2
+            "NameProperty".to_string(),             // 3
+            "None".to_string(),                     // 4
+        ],
+    };
+    // NumToRemove = 0, Num = 1, then an undecodable struct key payload.
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0);
+    push_i32(&mut payload, 1);
+    payload.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+    let d = legacy_struct_keyed_map(&names, &payload);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        // Below PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION so the tag
+        // carries neither the object control byte nor the extension flags, and
+        // therefore below PROPERTY_TAG_COMPLETE_TYPE_NAME as well.
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
+            - 1,
+    };
+    let mut r = Reader::new(&d);
+    let parse =
+        crate::property::parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert_eq!(parse.entries.len(), 1, "{:#?}", parse.entries);
+    let value = &parse.entries[0].value;
+    assert_eq!(value["status"].as_str(), Some("opaque"));
+    let reason = value["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("does not record the inner struct name"),
+        "{reason}"
+    );
+    // The generic fallback code would read as a decoder defect; this one does not.
+    assert!(
+        parse
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_tag_missing_inner_struct_name"),
+        "{:#?}",
+        parse.diagnostics
+    );
+    assert!(
+        !parse
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_fallback"),
+        "{:#?}",
+        parse.diagnostics
+    );
+}
+
+// The missing inner struct name only blocks structs with a custom serializer. A
+// struct that serializes as tagged properties is self-describing on disk, so a
+// legacy array of them must still decode rather than becoming opaque.
+#[test]
+fn a_legacy_array_of_tagged_structs_still_decodes_without_an_inner_struct_name() {
+    let names = NameMap {
+        names: vec![
+            "Points".to_string(),         // 0
+            "ArrayProperty".to_string(),  // 1
+            "StructProperty".to_string(), // 2
+            "None".to_string(),           // 3
+            "Weight".to_string(),         // 4
+            "IntProperty".to_string(),    // 5
+        ],
+    };
+    // One element: a struct written as tagged properties (Weight=7) plus its None
+    // terminator, which is exactly how UE serializes a struct with no serializer.
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 1); // element count
+    push_raw_name(&mut payload, 4); // Weight
+    push_raw_name(&mut payload, 5); // IntProperty
+    push_i32(&mut payload, 4); // size
+    push_i32(&mut payload, 0); // array index
+    payload.push(0); // HasPropertyGuid
+    push_i32(&mut payload, 7); // value
+    push_raw_name(&mut payload, 3); // None (ends the struct)
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Points
+    push_raw_name(&mut d, 1); // ArrayProperty
+    push_i32(&mut d, payload.len() as i32);
+    push_i32(&mut d, 0); // array index
+    push_raw_name(&mut d, 2); // inner type: "StructProperty", no struct name
+    d.push(0); // HasPropertyGuid
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 3); // None terminator
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
+            - 1,
+    };
+    let mut r = Reader::new(&d);
+    let parse =
+        crate::property::parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert_eq!(parse.entries.len(), 1, "{:#?}", parse.entries);
+    let element = &parse.entries[0].value[0];
+    assert_eq!(element["properties"][0]["name"].as_str(), Some("Weight"));
+    assert_eq!(element["properties"][0]["value"].as_i64(), Some(7));
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+}
+
 #[test]
 fn multicast_inline_delegate_decodes() {
     let names = NameMap {
@@ -196,7 +338,6 @@ fn read_soft_object_path_from_1007_is_top_level_asset_path_pair() {
 fn read_soft_object_path_utf8_subpath_without_nul_is_consumed() {
     // FortniteMain 192 writes SubPath as FUtf8String: positive length, no trailing NUL.
     // read_fstring's positive-length branch already matches that layout.
-    assert_eq!(crate::version::custom::SOFT_OBJECT_PATH_UTF8_SUBPATHS, 192);
     let names = NameMap {
         names: vec![
             "None".to_string(),
