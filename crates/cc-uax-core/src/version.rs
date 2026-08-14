@@ -108,8 +108,17 @@ pub mod custom {
         Guid([0x60C4_F0DE, 0x8B26_4C34, 0xAA93_7201, 0x5DFF_09CC]);
     pub const PROPERTY_BAG_VERSION: Guid =
         Guid([0x134A_157E, 0xD5E2_49A3, 0x8D4E_843C, 0x98FE_9E31]);
+    /// FFrameworkObjectVersion, which gates the EdGraph pin field layout.
+    pub const FRAMEWORK_OBJECT_VERSION: Guid =
+        Guid([0xCFFC_743F, 0x43B0_4480, 0x9391_14DF, 0x171D_2073]);
 
     pub const EDGRAPH_PIN_SOURCE_INDEX: i32 = 50;
+    /// FFrameworkObjectVersion::PinsStoreFName — pin names serialize as FName
+    /// rather than FString from this version on.
+    pub const FRAMEWORK_PINS_STORE_FNAME: i32 = 31;
+    /// FFrameworkObjectVersion::LatestVersion. A package claiming more than this
+    /// uses a pin layout this parser has not verified.
+    pub const FRAMEWORK_LATEST: i32 = 37;
     /// FFortniteMainBranchObjectVersion::SerializeFloatChannelShowCurve — from this
     /// version on, MovieScene float/double channels serialize a trailing bShowCurve.
     pub const SERIALIZE_FLOAT_CHANNEL_SHOW_CURVE: i32 = 53;
@@ -159,11 +168,6 @@ pub mod custom {
     /// FFortniteMainBranchObjectVersion::AddDevNotesToFText — UE5.8 editor Base
     /// FText history appends an extra FString when not FilterEditorOnly.
     pub const ADD_DEV_NOTES_TO_FTEXT: i32 = 260;
-    /// FFortniteMainBranchObjectVersion::SoftObjectPathUtf8SubPaths — SubPath is
-    /// an FUtf8String (positive length, no NUL) from this version on. Named so
-    /// tests can lock the threshold; `read_fstring` already consumes this layout.
-    #[allow(dead_code)]
-    pub const SOFT_OBJECT_PATH_UTF8_SUBPATHS: i32 = 192;
 }
 
 pub const PACKAGE_FILE_TAG: u32 = 0x9E2A_83C1;
@@ -180,3 +184,13 @@ pub const SUPPORTED_FILE_VERSION_FLOOR: i32 = ue5::INITIAL_VERSION;
 /// when their evidence is complete. Packages below this floor still decode per the
 /// version gates, but `CapabilityKind::PackageVersion` stays `partial`.
 pub const VERIFIED_FILE_VERSION_FLOOR: i32 = ue5::INITIAL_VERSION;
+
+/// Whether a package version decodes per the version gates but has not been
+/// checked against a real asset of that version.
+///
+/// Unreachable while the verified floor equals [`SUPPORTED_FILE_VERSION_FLOOR`],
+/// because parsing rejects anything below it first. It exists as one predicate so
+/// the diagnostic and the capability cannot disagree if the floor is ever raised.
+pub fn is_below_verified_floor(file_version_ue5: i32) -> bool {
+    file_version_ue5 < VERIFIED_FILE_VERSION_FLOOR
+}

@@ -16,9 +16,6 @@ pub(crate) const CONTAINER_TYPE_SET: u8 = 2;
 pub(crate) const CONTAINER_TYPE_MAP: u8 = 3;
 #[cfg(test)]
 pub(crate) const PIN_DIRECTION_INPUT: u8 = 0;
-const FRAMEWORK_PINS_STORE_FNAME: i32 = 31;
-const FRAMEWORK_LATEST: i32 = 37;
-const FRAMEWORK_OBJECT_VERSION: Guid = Guid([0xCFFC_743F, 0x43B0_4480, 0x9391_14DF, 0x171D_2073]);
 
 #[derive(Clone, Copy, Default)]
 pub struct PinSerCtx {
@@ -139,11 +136,11 @@ pub struct PinParse {
 }
 
 pub(crate) fn framework_pin_version(summary: &PackageFileSummary) -> Option<i32> {
-    summary.custom_version(FRAMEWORK_OBJECT_VERSION)
+    summary.custom_version(custom::FRAMEWORK_OBJECT_VERSION)
 }
 
 pub(crate) fn is_supported_framework_pin_version(version: i32) -> bool {
-    version <= FRAMEWORK_LATEST
+    version <= custom::FRAMEWORK_LATEST
 }
 
 /// Locate the UObject tail that follows a legacy tagged-property stream.
@@ -267,7 +264,7 @@ pub(crate) fn parse_user_defined_pins_report(
         }
         let mut pins = Vec::with_capacity(count as usize);
         for _ in 0..count {
-            let name = if framework_version >= FRAMEWORK_PINS_STORE_FNAME {
+            let name = if framework_version >= custom::FRAMEWORK_PINS_STORE_FNAME {
                 ctx.names.resolve_raw(r.read_raw_name()?)
             } else {
                 r.read_fstring()?
