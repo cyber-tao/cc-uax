@@ -63,7 +63,7 @@ pub struct ProjectArgs {
 
     #[arg(
         long,
-        value_name = "PACKAGE=RELATIVE",
+        value_name = "PACKAGE_PREFIX=RELATIVE_DIR",
         help = "Add a project-relative mount, for example /Plugin=Plugins/X/Content"
     )]
     pub mount: Vec<String>,

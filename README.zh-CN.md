@@ -69,8 +69,10 @@ CLI 使用两个明确的工作流。
 ### 分析单个资产
 
 ```text
-cc-uax asset <FILE> --view <summary|logic|properties|references|full>
+cc-uax asset <FILE> [--view summary|logic|properties|references|full]
 ```
+
+`--view` 默认为 `full`。
 
 ```powershell
 # 资产身份、状态、coverage 和 capabilities
@@ -87,7 +89,7 @@ cc-uax asset Content/Blueprints/BP_Player.uasset --view full --output BP_Player.
 
 ```text
 cc-uax project <PROJECT_OR_CONTENT_DIR>
-  [--focus <PACKAGE_OR_GLOB>]
+  [--focus <PACKAGE_OR_GLOB>]...
   [--mount <PACKAGE_PREFIX=RELATIVE_DIR>]...
   [--allow-partial]
   [--cache-file <FILE> | --no-cache]
@@ -106,13 +108,13 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
 cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 ```
 
-项目分析默认采用 **strict** 模式。任何已映射资产读取、索引或解析失败都会生成结构化 failure 并以非零状态退出。固有的 partial 或 unsupported 证据（例如已知不可解的编译期 RigVM 字节码，或不受支持的包版本）会如实保留非 complete 的 status，但本身不会使进程失败。`--allow-partial` 只是把 hard scan failure 降级为零退出，不会粉饰报告；真实 status、失败项和降低后的 coverage 都会保留。
+项目分析默认采用 **strict** 模式。任何已映射资产读取、索引或解析失败都会生成结构化 failure 并以退出码 `2` 结束。本工具按设计不处理的包——UE4 包，以及 cooked、unversioned、UE3、大端或使用包级压缩的包——不算失败：它们会作为 `unsupported` 证据进入 inventory，进程仍以 `0` 退出。`--allow-partial` 只是把 hard scan failure 降级为零退出，不会粉饰报告；真实 status、失败项和降低后的 coverage 都会保留。退出码 `1` 表示根本没能产出报告（资产不可读、项目无法发现、`--mount` 语法错误、写出失败）。
 
 项目缓存默认放在操作系统缓存目录，不写入被分析项目。对未变化的包，fresh cache entry 会复用已验证的引用列表和紧凑逐资产分析摘要。使用 `--cache-file` 指定位置，或用 `--no-cache` 完全禁用缓存。
 
-输出格式选项以 `cc-uax asset --help` 和 `cc-uax project --help` 为准。
+两个命令共用的全局参数：`--compact`、`--max-output-bytes <BYTES>`、`-o`/`--output <FILE>`。完整参数以 `cc-uax asset --help` 和 `cc-uax project --help` 为准。
 
-当调用方（如 AI 工具）上下文窗口有限时，可用全局参数 `--max-output-bytes <N>` 把渲染出的 JSON 限制在 N 个 UTF-8 字节内。输出仍是合法 JSON，并完整保留证据骨架（`status`、`coverage`、`capabilities`、`diagnostics`、`known_opaque`）；顶层新增 `output` 块记录 `truncated` 及每个被省略的区段，便于据此改用更窄的 `--focus`/`--view` 复查被丢弃的细节。`output.truncated=true` 只表示渲染预算，不表示证据不完整；仍以 `status` / coverage / capabilities 为准。
+当调用方（如 AI 工具）上下文窗口有限时，可用 `--max-output-bytes <N>` 把渲染出的 JSON 限制在 N 个 UTF-8 字节内。输出仍是合法 JSON，保留顶层证据骨架，并在顶层新增 `output` 块记录 `truncated` 及每个被省略的区段，便于据此改用更窄的 `--focus`/`--view` 复查被丢弃的细节。`output.truncated=true` 只表示渲染预算，不表示证据不完整。具体保留哪些字段、两条已知限制以及退出码契约见 [report-contract.md](skills/cc-uax/references/report-contract.md)。
 
 ## 报告契约
 
@@ -125,7 +127,7 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
   "schema_version": 5,
   "status": "complete",
   "view": "full",
-  "summary": { /* 包名、类、文件版本…… */ },
+  "summary": { /* 包名、文件版本与 custom version、引擎版本、各表计数…… */ },
   "coverage": {
     /* 非零的请求/已解码/opaque/失败计数（零值计数被省略） */
   },
@@ -141,13 +143,13 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 ```jsonc
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "status": "complete",
   "layout": {}, "mounts": [], "entry_points": {},
   "reachability": {
     /* 配置根、运行时可达包、closure 成员、孤立包和 coverage 缺口 */
   },
-  "stats": { "discovered": 1961, "indexed": 1961, "failed": 0, "skipped": 0 },
+  "stats": { /* 全部文件系统/索引/缓存计数，含零值 */ },
   "analysis": {
     /* 聚合 coverage、capabilities 及逐资产摘要 */
   },

@@ -21,9 +21,9 @@ Scope the result to versioned, uncooked UE5.0–5.8 editor packages (`FileVersio
 cc-uax project "<PROJECT_OR_CONTENT_DIR>" --output "<REPORT.json>"
 ```
 
-Add each nonstandard content root with `--mount <PACKAGE=RELATIVE>`. Use `--focus <PACKAGE_OR_GLOB>` to attach full typed analyses for selected packages while retaining the single project inventory and reference graph.
+Add each nonstandard content root with `--mount <PACKAGE_PREFIX=RELATIVE_DIR>`. Use `--focus <PACKAGE_OR_GLOB>` to attach full typed analyses for selected packages while retaining the single project inventory and reference graph. Both flags are repeatable.
 
-Keep strict mode enabled: it exits nonzero only for hard scan failures (unreadable, unparseable, or unindexable mapped assets), while inherent partial or unsupported evidence keeps a truthful non-complete `status` and exits zero. Use `--allow-partial` only when the user explicitly accepts hard failures with a zero exit, and carry every failure and non-complete status into the conclusion.
+Keep strict mode enabled: it exits nonzero only for hard scan failures, while inherent partial or unsupported evidence keeps a truthful non-complete `status` and exits zero. A UE4, cooked, or otherwise out-of-scope package is `unsupported` evidence in the inventory, not a failure. Use `--allow-partial` only when the user explicitly accepts hard failures with a zero exit, and carry every failure and non-complete status into the conclusion. See [references/report-contract.md](references/report-contract.md) for the exact exit-code contract.
 
 4. Inspect `schema_version`, `status`, `stats`, `reachability`, aggregate `analysis`, per-asset coverage/capabilities, `failures`, and `diagnostics` before analyzing gameplay. Read [references/report-contract.md](references/report-contract.md) when interpreting these fields.
 
@@ -54,7 +54,7 @@ cc-uax asset "<FILE.uasset>" --view references --output "<ASSET.json>"
 
 Use `--view full` only for a bounded asset; it can be large.
 
-When the caller's context window is limited, pass `--max-output-bytes <N>` (UTF-8 bytes) to cap any `asset` or `project` render to the space that is actually available. The report stays valid JSON and preserves the evidence skeleton (`status`, `coverage`, `capabilities`, `diagnostics`, `known_opaque`); a top-level `output` block reports `truncated` and every elided section with its dropped-element count. `output.truncated=true` means the render was size-capped, not that evidence is incomplete — keep using `status` / coverage / capabilities, and re-query a narrower `--focus` or `--view` only to recover elided detail.
+When the caller's context window is limited, pass `--max-output-bytes <N>` (UTF-8 bytes) to cap any `asset` or `project` render to the space that is actually available. The report stays valid JSON and preserves the top-level evidence skeleton; a top-level `output` block reports `truncated` and every elided section with its dropped-element count. `output.truncated=true` means the render was size-capped, not that evidence is incomplete — keep using `status` / coverage / capabilities, and re-query a narrower `--focus` or `--view` only to recover elided detail. [references/report-contract.md](references/report-contract.md) lists exactly which fields survive and the two limits of the guarantee.
 
 ## Build an evidence-backed explanation
 

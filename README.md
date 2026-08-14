@@ -69,8 +69,10 @@ The CLI has two explicit workflows.
 ### Analyze one asset
 
 ```text
-cc-uax asset <FILE> --view <summary|logic|properties|references|full>
+cc-uax asset <FILE> [--view summary|logic|properties|references|full]
 ```
+
+`--view` defaults to `full`.
 
 ```powershell
 # High-level identity, status, coverage, and capabilities
@@ -87,7 +89,7 @@ cc-uax asset Content/Blueprints/BP_Player.uasset --view full --output BP_Player.
 
 ```text
 cc-uax project <PROJECT_OR_CONTENT_DIR>
-  [--focus <PACKAGE_OR_GLOB>]
+  [--focus <PACKAGE_OR_GLOB>]...
   [--mount <PACKAGE_PREFIX=RELATIVE_DIR>]...
   [--allow-partial]
   [--cache-file <FILE> | --no-cache]
@@ -106,13 +108,13 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
 cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 ```
 
-Project analysis is **strict by default**. A mapped asset that cannot be read, indexed, or parsed produces a structured failure and a non-zero exit. Inherent partial or unsupported evidence (for example known-opaque compiled RigVM bytecode, or an unsupported package version) keeps a truthful non-complete `status` but does not by itself fail the process. `--allow-partial` downgrades a hard scan failure to a successful exit while preserving the real status, failures, and reduced coverage in the report.
+Project analysis is **strict by default**. A mapped asset that cannot be read, indexed, or parsed produces a structured failure and exit code `2`. A package this tool deliberately does not target — a UE4 package, or a cooked, unversioned, UE3, big-endian or package-compressed one — is not a failure: it is indexed as `unsupported` evidence and the run still exits `0`. `--allow-partial` downgrades a hard scan failure to a zero exit while preserving the real status, failures, and reduced coverage in the report. Exit `1` means no report could be produced at all (unreadable asset, undiscoverable project, malformed `--mount`, failed write).
 
 Project cache data defaults to the operating system's cache directory, never the analyzed project. Fresh cache entries reuse validated references and compact per-asset analysis summaries for unchanged packages. Use `--cache-file` for an explicit location or `--no-cache` for a cache-free run.
 
-Run `cc-uax asset --help` and `cc-uax project --help` for output formatting options.
+Global options apply to both commands: `--compact`, `--max-output-bytes <BYTES>`, and `-o`/`--output <FILE>`. Run `cc-uax asset --help` and `cc-uax project --help` for the full surface.
 
-When a consumer's context window is limited, pass the global `--max-output-bytes <N>` to cap the rendered JSON at N UTF-8 bytes. Output stays valid JSON with the evidence skeleton (`status`, `coverage`, `capabilities`, `diagnostics`, `known_opaque`) intact; a top-level `output` block records `truncated` and every elided section so you can re-query a narrower `--focus`/`--view` for the dropped detail. `output.truncated=true` is a render budget, not incomplete evidence: keep using `status` / coverage / capabilities.
+When a consumer's context window is limited, pass `--max-output-bytes <N>` to cap the rendered JSON at N UTF-8 bytes. Output stays valid JSON with the top-level evidence skeleton intact and a top-level `output` block recording `truncated` and every elided section, so you can re-query a narrower `--focus`/`--view` for the dropped detail. `output.truncated=true` is a render budget, not incomplete evidence. See [report-contract.md](skills/cc-uax/references/report-contract.md) for exactly which fields are preserved, the two documented limits, and the exit-code contract.
 
 ## Report contract
 
@@ -125,7 +127,7 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
   "schema_version": 5,
   "status": "complete",
   "view": "full",
-  "summary": { /* package name, class, file version, … */ },
+  "summary": { /* package name, file/custom versions, engine version, table counts, … */ },
   "coverage": {
     /* non-zero requested/decoded/opaque/failed counters (zero counters omitted) */
   },
@@ -141,13 +143,13 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
 
 ```jsonc
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "status": "complete",
   "layout": {}, "mounts": [], "entry_points": {},
   "reachability": {
     /* configured roots, reachable runtime packages, closure members, isolated packages, and coverage gaps */
   },
-  "stats": { "discovered": 1961, "indexed": 1961, "failed": 0, "skipped": 0 },
+  "stats": { /* every filesystem/index/cache counter, including zeros */ },
   "analysis": {
     /* aggregate coverage, capabilities, and per-asset summaries */
   },

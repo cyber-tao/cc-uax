@@ -84,7 +84,7 @@ Important version-gated formats include:
 - `FVector`/`FRotator`/`FQuat`/`FTransform`/`FBox`/`FBox2D`/`FMatrix`: `float` below `LARGE_WORLD_COORDINATES` (1004), `double` from 1004;
 - Legacy `FPropertyTag` `BoolVal` and `HasPropertyGuid` are uint8 (PropertyTag.h), not 4-byte UBOOL, for `FileVersionUE5` < 1012;
 - `FInstancedStruct`: legacy optional editor header/version versus modern payload;
-- `FInstancedPropertyBag`: `FPropertyBagCustomVersion` desc layout (verified through UE5.8 = version 5, which adds `PropertyFlags` and a map key type);
+- `FInstancedPropertyBag`: `FPropertyBagCustomVersion` desc layout, verified through UE5.8; version 4 (`PropertyFlags`) appends a `uint64` per desc and version 5 (`KeyTypes`) appends a map key type after it, so 5 is the highest known layout;
 - `FStateTreeInstanceData`: legacy tagged instance data versus custom instance storage;
 - `FPCGPoint`: legacy tagged properties versus structured field-mask serialization;
 - Niagara, Sequencer, and EdGraph pin fields controlled by their owning custom versions;
@@ -95,7 +95,7 @@ The same `FileVersionUE5` does not guarantee the same layout: UE5.7 and UE5.8 sh
 
 Only classify a struct as native when UE5.0–5.8 source actually provides binary/structured custom serialization. A `WithSerializer` function that returns `false` uses tagged-property fallback.
 
-Known native formats require exact consumption. Unknown registry-dependent or compiled payloads must retain type, byte range, size, reason, and preview as `known_opaque`; do not silently discard a tail.
+Known native formats require exact consumption. Unknown registry-dependent or compiled payloads must retain type, byte range, size, reason, and preview as `known_opaque`; do not silently discard a tail. A project report aggregates those regions per (kind, type, reason) with region and byte totals rather than listing each one — the full per-region ranges stay in the `asset` and `--focus` output — so opaque bytes remain attributable at both levels.
 
 ## Graph adapters
 
@@ -123,7 +123,9 @@ The index contains:
 - external-package ownership closure: World Partition external packages owned by their map, plus Level Instance / Packed Level Actor sub-levels whose `WorldAsset` / `PackedWorldAsset` was decoded on those actor classes;
 - per-asset logic, capability, and coverage summaries needed by the requested focus.
 
-Strict mode is the default. Any mapped read/index/parse failure returns the partial index as a structured error and causes a non-zero CLI exit. Inherent partial or unsupported evidence (for example known-opaque compiled RigVM bytecode, or an unsupported package version) keeps a truthful non-complete `status` but does not by itself fail the process. `--allow-partial` downgrades a hard scan failure to a zero exit; it must not change report truth.
+Strict mode is the default. Any mapped read/index/parse failure returns the partial index as a structured error and causes a non-zero CLI exit. Inherent partial or unsupported evidence (for example known-opaque compiled RigVM bytecode, or a package version outside the supported range) keeps a truthful non-complete `status` but does not by itself fail the process. `--allow-partial` downgrades a hard scan failure to a zero exit; it must not change report truth.
+
+A package rejection must stay classified. `PackageRejection::OutOfScope` covers readable formats this tool deliberately does not target (UE4 `FileVersionUE5` = 0, cooked/unversioned, UE3, big-endian, package-level compression); the scanner indexes those as `unsupported` evidence with a reason, counts them in `analysis.unsupported_assets` and `reachability.unsupported_packages`, and keeps them out of `failures`. `PackageRejection::Malformed` covers bytes that are not a readable package and stays a `Parse` failure. Collapsing the two back into one error is the defect this split exists to prevent.
 
 Project cache data defaults to the operating system cache directory. Never create a cache inside the analyzed project by default. Fresh cache entries may reuse validated references and compact per-asset analysis summaries for unchanged packages. `--cache-file` explicitly selects a file and `--no-cache` disables caching.
 
@@ -132,28 +134,30 @@ Project cache data defaults to the operating system cache directory. Never creat
 The supported command shape is:
 
 ```text
-cc-uax asset <FILE> --view summary|logic|properties|references|full
+cc-uax asset <FILE> [--view summary|logic|properties|references|full]
 cc-uax project <PROJECT_OR_CONTENT_DIR>
-  [--focus <PACKAGE_OR_GLOB>]
+  [--focus <PACKAGE_OR_GLOB>]...
   [--mount <PACKAGE_PREFIX=RELATIVE_DIR>]...
   [--allow-partial]
   [--cache-file <FILE> | --no-cache]
 
 Global options (apply to both commands):
-  [--compact]              # Emit compact JSON (no pretty-printing)
-  [--max-output-bytes <BYTES>]  # Cap rendered JSON at N UTF-8 bytes; elides heavy detail and adds an `output` truncation block. Never elides status/coverage/capabilities/diagnostics/known_opaque.
-  [--output <FILE>]       # Write JSON report to FILE instead of stdout
+  [--compact]                   # Emit compact JSON (no pretty-printing)
+  [--max-output-bytes <BYTES>]  # Cap rendered JSON at N UTF-8 bytes; elides heavy detail and adds an `output` truncation block
+  [-o, --output <FILE>]         # Write JSON report to FILE instead of stdout
 ```
 
-`--view` defaults to `full` for the `asset` command.
+`--view` defaults to `full` for the `asset` command. `--focus` and `--mount` are repeatable.
 
 Keep the command surface centered on the explicit `asset` and `project` workflows; do not add alternate content-selection APIs.
 
-The CLI renders typed reports, writes output, and maps strict/partial outcomes to exit codes. It must not drive parser decisions or infer graph edges from rendered text.
+The CLI renders typed reports, writes output, and maps outcomes to exit codes: `0` for any produced report including `partial` and `unsupported`, `2` for a `project` hard scan failure (mapped read/index/parse, in-scan mount/cache, or a `--focus` miss), and `1` when no report could be produced at all — which emits a `{"status": "error", "message"}` document instead. `"error"` is that fatal document only and is never a report `status`. [report-contract.md](skills/cc-uax/references/report-contract.md) is the field-level and exit-code contract; keep it in sync when the rendered shape changes, and do not restate its field lists in the README or SKILL.md.
+
+The CLI must not drive parser decisions or infer graph edges from rendered text.
 
 ## Diagnostics, coverage, and capabilities
 
-Diagnostics use stable machine-readable fields: severity, code, path, message, optional byte offset/range, and optional typed context.
+Diagnostics use stable machine-readable fields: `severity`, `code`, `path`, `message`, an optional byte `offset`, and optional typed `details`.
 
 Coverage is evidence accounting, not a marketing counter. At minimum it must distinguish:
 

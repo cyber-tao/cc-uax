@@ -16,7 +16,10 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const PROJECT_REPORT_SCHEMA_VERSION: u32 = 5;
+/// Bumped to 6 when out-of-scope packages became `unsupported` inventory entries
+/// with an `unsupported_reason`, and per-asset `known_opaque` replaced its
+/// per-region `identities` list with aggregated `groups`.
+const PROJECT_REPORT_SCHEMA_VERSION: u32 = 6;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {
