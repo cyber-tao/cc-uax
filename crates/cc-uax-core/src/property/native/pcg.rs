@@ -1,6 +1,5 @@
-use crate::property::{
-    ParseCtx, PropertyParseStatus, entries_to_values, parse_properties_report, validate_count,
-};
+use super::ensure_complete_tagged_payload;
+use crate::property::{ParseCtx, entries_to_values, parse_properties_report, validate_count};
 use crate::reader::Reader;
 use crate::structured_value::{Map, Value, json};
 use anyhow::{Result, bail};
@@ -217,27 +216,6 @@ fn parse_pcg_point(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Val
         bail!("PCGPoint ended at byte {}, expected {value_end}", r.pos());
     }
     Ok(Value::Object(o))
-}
-
-fn ensure_complete_tagged_payload(
-    r: &Reader,
-    value_end: u64,
-    status: &PropertyParseStatus,
-    name: &str,
-) -> Result<()> {
-    if matches!(
-        status,
-        PropertyParseStatus::NonTaggedPayload | PropertyParseStatus::FailedAfterEntries
-    ) {
-        bail!("{name} tagged payload is malformed ({})", status.as_str());
-    }
-    if r.pos() != value_end {
-        bail!(
-            "{name} tagged payload ended at byte {}, expected {value_end}",
-            r.pos()
-        );
-    }
-    Ok(())
 }
 
 fn read_pcg_value(r: &mut Reader, kind: PcgValueKind) -> Result<Value> {

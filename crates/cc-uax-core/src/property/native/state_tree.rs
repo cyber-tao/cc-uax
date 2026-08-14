@@ -1,7 +1,8 @@
-use crate::property::{ParseCtx, PropertyParseStatus, entries_to_values, parse_properties_report};
+use super::ensure_complete_tagged_payload;
+use crate::property::{ParseCtx, entries_to_values, parse_properties_report};
 use crate::reader::Reader;
 use crate::structured_value::{Map, Value, json};
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 // Runtime StateTree structs with custom serializers.
 pub(super) fn parse_state_tree_struct(
@@ -65,25 +66,4 @@ fn parse_state_tree_instance_storage(
         o.insert("property_diagnostics".into(), json!(parsed.diagnostics));
     }
     Ok(Value::Object(o))
-}
-
-fn ensure_complete_tagged_payload(
-    r: &Reader,
-    value_end: u64,
-    status: &PropertyParseStatus,
-    name: &str,
-) -> Result<()> {
-    if matches!(
-        status,
-        PropertyParseStatus::NonTaggedPayload | PropertyParseStatus::FailedAfterEntries
-    ) {
-        bail!("{name} tagged payload is malformed ({})", status.as_str());
-    }
-    if r.pos() != value_end {
-        bail!(
-            "{name} tagged payload ended at byte {}, expected {value_end}",
-            r.pos()
-        );
-    }
-    Ok(())
 }

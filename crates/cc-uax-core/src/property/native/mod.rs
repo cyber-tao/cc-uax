@@ -10,10 +10,37 @@ mod scalar;
 mod sequencer;
 mod state_tree;
 
-use crate::property::ParseCtx;
+use crate::property::{ParseCtx, PropertyParseStatus};
 use crate::reader::Reader;
 use crate::structured_value::Value;
-use anyhow::Result;
+use anyhow::{Result, bail};
+
+/// Rejects a native struct whose payload is really tagged properties unless those
+/// properties parsed cleanly and consumed the declared value window exactly.
+///
+/// A native decoder must consume exactly its payload; accepting a short or
+/// malformed tagged block here would let the surrounding property loop resume at
+/// the wrong offset.
+pub(crate) fn ensure_complete_tagged_payload(
+    r: &Reader,
+    value_end: u64,
+    status: &PropertyParseStatus,
+    name: &str,
+) -> Result<()> {
+    if matches!(
+        status,
+        PropertyParseStatus::NonTaggedPayload | PropertyParseStatus::FailedAfterEntries
+    ) {
+        bail!("{name} tagged payload is malformed ({})", status.as_str());
+    }
+    if r.pos() != value_end {
+        bail!(
+            "{name} tagged payload ended at byte {}, expected {value_end}",
+            r.pos()
+        );
+    }
+    Ok(())
+}
 
 pub(crate) fn is_tagged_fallback_struct(name: &str) -> bool {
     matches!(

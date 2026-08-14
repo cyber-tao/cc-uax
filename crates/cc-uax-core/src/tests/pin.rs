@@ -1,5 +1,5 @@
 use super::common::*;
-use crate::analysis::build_logic_graphs;
+use crate::analysis::{ControlRigMirrors, build_logic_graphs};
 use crate::decode::pins::{consume_known_node_tail, is_editable_pin_class};
 use crate::decode::{DecodeReport, DecodedExport, DecodedExportIdentity};
 use crate::graph_models::EdgeKind;
@@ -945,7 +945,7 @@ fn logic_graphs_group_by_outer_and_never_emit_cross_graph_edges() {
         diagnostics: Vec::new(),
     };
 
-    let typed_graphs = build_logic_graphs(&report);
+    let typed_graphs = build_logic_graphs(&report, &ControlRigMirrors::detect(&report));
     assert_eq!(typed_graphs.len(), 2);
     assert_eq!(typed_graphs[0].nodes.len(), 2);
     assert_eq!(typed_graphs[0].edges.len(), 2);
