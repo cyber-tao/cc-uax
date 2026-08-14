@@ -114,6 +114,99 @@ fn later_default_files_and_platform_files_override_without_cross_platform_leakag
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// `TransitionMap=` and `GlobalDefaultServerGameMode=None` are how stock UE
+// project configs spell "no object". They are not invalid paths, so they must not
+// produce a diagnostic: any non-cache diagnostic forces the project report to
+// `partial`, which would make a healthy project look broken.
+#[test]
+fn empty_and_none_entry_point_values_are_an_explicit_unset_not_a_diagnostic() {
+    let root = temp_project("entry_points_unset");
+    std::fs::create_dir_all(root.join("Config")).unwrap();
+    std::fs::write(
+        root.join("Config/DefaultEngine.ini"),
+        "[/Script/EngineSettings.GameMapsSettings]\n\
+         EditorStartupMap=/Game/Maps/Start.Start\n\
+         LocalMapOptions=\n\
+         TransitionMap=\n\
+         GameInstanceClass=none\n\
+         GlobalDefaultServerGameMode=None\n\
+         ServerDefaultMap=   \n\
+         GlobalDefaultGameMode=\"\"\n",
+    )
+    .unwrap();
+
+    let index = scan(&root);
+    assert!(
+        index.diagnostics.is_empty(),
+        "an explicit unset is not a diagnostic: {:#?}",
+        index.diagnostics
+    );
+    for key in [
+        "TransitionMap",
+        "GameInstanceClass",
+        "GlobalDefaultServerGameMode",
+        "ServerDefaultMap",
+        "GlobalDefaultGameMode",
+    ] {
+        assert!(
+            index.entry_points.reference(key).is_none(),
+            "{key} is unset and must not become a reachability root"
+        );
+    }
+    assert_eq!(
+        index
+            .entry_points
+            .reference("EditorStartupMap")
+            .unwrap()
+            .package_path,
+        "/Game/Maps/Start"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// UE does not clear an already-configured property because a later line failed to
+// parse. Dropping the earlier value would silently shrink the set of reachability
+// roots and inflate `unreachable_project_assets`.
+#[test]
+fn an_invalid_value_keeps_the_earlier_value_while_an_unset_clears_it() {
+    let root = temp_project("entry_points_keep");
+    std::fs::create_dir_all(root.join("Config")).unwrap();
+    std::fs::write(
+        root.join("Config/DefaultEngine.ini"),
+        "[/Script/EngineSettings.GameMapsSettings]\n\
+         GameDefaultMap=/Game/Maps/Keep.Keep\n\
+         GameDefaultMap=not-a-path\n\
+         EditorStartupMap=/Game/Maps/Drop.Drop\n\
+         EditorStartupMap=None\n",
+    )
+    .unwrap();
+
+    let index = scan(&root);
+    assert_eq!(
+        index
+            .entry_points
+            .reference("GameDefaultMap")
+            .unwrap()
+            .package_path,
+        "/Game/Maps/Keep",
+        "an invalid later value must not erase a valid earlier one"
+    );
+    assert!(
+        index.entry_points.reference("EditorStartupMap").is_none(),
+        "an explicit unset still wins over an earlier value"
+    );
+    assert_eq!(index.diagnostics.len(), 1, "{:#?}", index.diagnostics);
+    assert_eq!(index.diagnostics[0].stage, ScanFailureStage::Config);
+    assert!(
+        index.diagnostics[0].message.contains("GameDefaultMap"),
+        "{}",
+        index.diagnostics[0].message
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn invalid_paths_warn_without_exposing_values_or_absolute_source_paths() {
     let root = temp_project("entry_points_redaction");

@@ -1,4 +1,4 @@
-use super::common::{minimal_package, package_with_soft_refs, temp_project};
+use super::common::{minimal_package, package_with_soft_refs, temp_project, ue4_package};
 use crate::{
     CachePathPolicy, MountTable, ProjectIndex, ProjectLayout, ProjectScanner,
     ScanDiagnosticSeverity, ScanFailureStage, ScanMode, ScanOptions,
@@ -56,6 +56,91 @@ fn strict_returns_partial_index_and_allow_partial_returns_success() {
     assert_eq!(index.stats.failed, 1);
     assert!(index.asset("/Game/Valid").is_some());
     assert_scan_accounting(&index);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// UE5 projects routinely contain UE4 assets that were never resaved. Such a
+// package is real evidence about the project, so it is indexed as `unsupported`
+// and does not abort a strict scan; only an unreadable package is a failure.
+#[test]
+fn out_of_scope_packages_are_indexed_as_unsupported_and_do_not_fail_strict_mode() {
+    let root = temp_project("unsupported");
+    std::fs::write(root.join("Content/Valid.uasset"), minimal_package()).unwrap();
+    std::fs::write(root.join("Content/Legacy.uasset"), ue4_package()).unwrap();
+    let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
+
+    let index = scanner.scan(scan_options(ScanMode::Strict)).unwrap();
+    assert_eq!(index.stats.discovered, 2);
+    assert_eq!(index.stats.indexed, 2);
+    assert_eq!(index.stats.failed, 0);
+    assert!(index.failures.is_empty(), "{:#?}", index.failures);
+    assert_eq!(index.analysis.unsupported_assets, 1);
+    assert_eq!(index.analysis.complete_assets, 1);
+    assert_eq!(index.analysis.status, cc_uax_core::AnalysisStatus::Partial);
+    assert_scan_accounting(&index);
+
+    let legacy = index.asset("/Game/Legacy").expect("UE4 asset is indexed");
+    assert_eq!(
+        legacy.analysis.status,
+        cc_uax_core::AnalysisStatus::Unsupported
+    );
+    let reason = legacy
+        .analysis
+        .unsupported_reason
+        .as_deref()
+        .expect("an unsupported asset records why it is out of scope");
+    assert!(reason.contains("FileVersionUE5"), "{reason}");
+    assert!(
+        index
+            .reachability
+            .unsupported_packages
+            .contains("/Game/Legacy"),
+        "an unsupported package is listed in reachability"
+    );
+
+    // A package that is not readable at all is still a strict failure.
+    std::fs::write(root.join("Content/Broken.uasset"), b"not a package").unwrap();
+    let error = scanner.scan(scan_options(ScanMode::Strict)).unwrap_err();
+    assert_eq!(error.index().failures.len(), 1);
+    assert_eq!(
+        error.index().failures[0].stage,
+        ScanFailureStage::Parse,
+        "{:#?}",
+        error.index().failures
+    );
+    assert_eq!(error.index().analysis.unsupported_assets, 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// A warm cache must replay the same classification it recorded: an out-of-scope
+// package stays `unsupported` evidence instead of becoming a Parse failure.
+#[test]
+fn cached_out_of_scope_packages_replay_as_unsupported() {
+    let root = temp_project("unsupported_cache");
+    std::fs::write(root.join("Content/Legacy.uasset"), ue4_package()).unwrap();
+    let cache_file = root.join("cache/index.sqlite");
+    let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
+    let options = ScanOptions {
+        mode: ScanMode::Strict,
+        cache: CachePathPolicy::CustomFile(cache_file),
+    };
+
+    let cold = scanner.scan(options.clone()).unwrap();
+    assert_eq!(cold.stats.cache_misses, 1);
+    assert_eq!(cold.analysis.unsupported_assets, 1);
+
+    let warm = scanner.scan(options).unwrap();
+    assert_eq!(warm.stats.cache_hits, 1);
+    assert_eq!(warm.stats.cached_parse_failures, 0);
+    assert!(warm.failures.is_empty(), "{:#?}", warm.failures);
+    assert_eq!(warm.analysis.unsupported_assets, 1);
+    assert_eq!(
+        warm.asset("/Game/Legacy").unwrap().analysis,
+        cold.asset("/Game/Legacy").unwrap().analysis,
+        "a warm cache hit must reproduce the cold-run summary"
+    );
 
     std::fs::remove_dir_all(root).unwrap();
 }

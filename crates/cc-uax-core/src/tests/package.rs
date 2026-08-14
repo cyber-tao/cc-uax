@@ -3,8 +3,8 @@ use crate::analysis::analyze_package;
 use crate::name::NameMap;
 use crate::reader::Reader;
 use crate::{
-    AnalysisDiagnostic, AssetView, DiagnosticSeverity, KnownOpaqueKind, Package, PackageView,
-    PropertyDecodeStatus,
+    AnalysisDiagnostic, AssetView, DiagnosticSeverity, KnownOpaqueKind, Package, PackageRejection,
+    PackageView, PropertyDecodeStatus,
 };
 
 fn diagnostic_with_code<'a>(
@@ -29,6 +29,84 @@ fn package_rejects_pre_ue5_version() {
 
     let error = Package::parse(&data).err().unwrap().to_string();
     assert!(error.contains("FileVersionUE5=999"));
+}
+
+/// A header that stops right after the version fields, so `PackageView::parse`
+/// rejects it on the version check rather than on a later table read.
+fn version_only_header(legacy: i32, ue4: i32, ue5: i32, licensee: i32) -> Vec<u8> {
+    let mut data = Vec::new();
+    push_u32(&mut data, 0x9E2A_83C1);
+    push_i32(&mut data, legacy);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, ue4);
+    if legacy <= -8 {
+        push_i32(&mut data, ue5);
+    }
+    push_i32(&mut data, licensee);
+    data
+}
+
+// A package this tool deliberately does not target is `OutOfScope`: callers that
+// scan whole projects must be able to record it as `unsupported` evidence instead
+// of a scan failure. Bytes that are not a readable package stay `Malformed`.
+#[test]
+fn out_of_scope_packages_are_classified_apart_from_malformed_ones() {
+    let out_of_scope: [(&str, Vec<u8>); 4] = [
+        // UE4 package: FileVersionUE5 is 0 but the UE4 version is set.
+        ("ue4 package", version_only_header(-7, 522, 0, 0)),
+        // Cooked/unversioned package: every version field is 0.
+        ("unversioned", version_only_header(-8, 0, 0, 0)),
+        // UE3 package: LegacyFileVersion is not negative.
+        ("ue3 package", version_only_header(1, 0, 0, 0)),
+        // FileVersionUE5 below the supported floor but non-zero.
+        ("below floor", version_only_header(-8, 522, 999, 0)),
+    ];
+    for (label, data) in out_of_scope {
+        let error = PackageView::parse(&data)
+            .err()
+            .unwrap_or_else(|| panic!("{label} should be rejected"));
+        assert_eq!(
+            error.rejection(),
+            PackageRejection::OutOfScope,
+            "{label} should be out of scope, got: {error}"
+        );
+        assert!(error.is_out_of_scope(), "{label}");
+    }
+
+    // Wrong package magic is not a package at all.
+    let mut wrong_magic = Vec::new();
+    push_u32(&mut wrong_magic, 0x1234_5678);
+    push_i32(&mut wrong_magic, -8);
+    let error = PackageView::parse(&wrong_magic)
+        .err()
+        .expect("wrong magic should be rejected");
+    assert_eq!(error.rejection(), PackageRejection::Malformed);
+    assert!(!error.is_out_of_scope());
+
+    // A truncated but otherwise in-scope header is malformed, not out of scope:
+    // the version fields pass and the name table read runs off the end.
+    let mut truncated = build_minimal_package();
+    truncated.truncate(40);
+    let error = PackageView::parse(&truncated)
+        .err()
+        .expect("truncated package should be rejected");
+    assert_eq!(
+        error.rejection(),
+        PackageRejection::Malformed,
+        "truncated package should be malformed, got: {error}"
+    );
+}
+
+// Big-endian console packages and package-level compression are readable formats
+// this tool does not target, so they must not look like corruption either.
+#[test]
+fn swapped_byte_order_is_out_of_scope() {
+    let mut data = Vec::new();
+    push_u32(&mut data, 0xC183_2A9E);
+    let error = PackageView::parse(&data)
+        .err()
+        .expect("swapped tag should be rejected");
+    assert_eq!(error.rejection(), PackageRejection::OutOfScope);
 }
 
 #[test]
@@ -207,6 +285,50 @@ fn soft_object_path_table_error_is_structured() {
             .message
             .contains("soft object path table seek failed")
     );
+}
+
+// Every header table rejects a declared count that cannot fit in the remaining
+// file before allocating for it. The soft-object-path table is no exception: a
+// package must not be able to make the parser reserve for a count it cannot back.
+#[test]
+fn soft_object_path_count_beyond_the_file_is_rejected_before_reading() {
+    // A FileVersionUE5 = 1018 entry is two FNames plus an FString length: 20 bytes.
+    const ENTRY_BYTES: usize = 20;
+    let base = build_minimal_package();
+    // Point the table at the very end of the file so `remaining` is a known value.
+    let table_offset = base.len();
+
+    for (label, count, extra_bytes, should_fail) in [
+        (
+            "count needs one byte more than the file has",
+            2,
+            ENTRY_BYTES * 2 - 1,
+            true,
+        ),
+        ("count fits exactly", 2, ENTRY_BYTES * 2, false),
+    ] {
+        let mut data = base.clone();
+        data.resize(table_offset + extra_bytes, 0);
+        put_i32(&mut data, 76, count);
+        put_i32(&mut data, 80, table_offset as i32);
+
+        let package = Package::parse(&data).unwrap();
+        let error = package.soft_object_path_error.as_deref();
+        if should_fail {
+            let error = error.unwrap_or_else(|| panic!("{label}: expected a structured error"));
+            assert!(
+                error.contains("soft object path count out of range"),
+                "{label}: {error}"
+            );
+            assert!(
+                package.soft_object_paths.is_empty(),
+                "{label}: nothing should be decoded"
+            );
+        } else {
+            assert!(error.is_none(), "{label}: {error:?}");
+            assert_eq!(package.soft_object_paths.len(), count as usize, "{label}");
+        }
+    }
 }
 
 #[test]

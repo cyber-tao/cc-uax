@@ -6,6 +6,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 const GAME_MAPS_SETTINGS_SECTION: &str = "/Script/EngineSettings.GameMapsSettings";
+/// How UE writes a null object reference in an `.ini` value.
+const NULL_OBJECT_REFERENCE: &str = "None";
 const ENTRY_POINT_KEYS: [&str; 7] = [
     "GameDefaultMap",
     "ServerDefaultMap",
@@ -241,9 +243,11 @@ fn apply_config_file(
             continue;
         };
 
-        references.remove(key);
         match parse_config_object_path(raw_value) {
-            Some((object_path, package_path)) => {
+            ConfigValue::Reference {
+                object_path,
+                package_path,
+            } => {
                 references.insert(
                     key.to_string(),
                     ConfigReference {
@@ -254,7 +258,15 @@ fn apply_config_file(
                     },
                 );
             }
-            None => diagnostics.push(config_warning(
+            // `Key=` and `Key=None` are how UE spells "no object", not errors.
+            // Later files still win, so an explicit unset clears an earlier value.
+            ConfigValue::Unset => {
+                references.remove(key);
+            }
+            // A value that is neither a path nor an unset leaves whatever an
+            // earlier file set: UE does not clear a configured property because a
+            // later line failed to parse.
+            ConfigValue::Invalid => diagnostics.push(config_warning(
                 source,
                 format!(
                     "invalid {key} entry-point object path at line {}",
@@ -278,8 +290,25 @@ fn canonical_entry_point_key(key: &str) -> Option<&'static str> {
         .find(|candidate| candidate.eq_ignore_ascii_case(key))
 }
 
-fn parse_config_object_path(value: &str) -> Option<(String, String)> {
-    let value = strip_matching_quotes(value.trim());
+/// What a `GameMapsSettings` value says about its entry point. Keeping "no
+/// object" apart from "not a path" matters: UE ships `TransitionMap=` and
+/// `GlobalDefaultServerGameMode=None` in stock project configs, and reporting
+/// those as invalid turns a healthy project into a `partial` report.
+enum ConfigValue {
+    Reference {
+        object_path: String,
+        package_path: String,
+    },
+    /// UE's spelling of a null object reference: an empty value or `None`.
+    Unset,
+    Invalid,
+}
+
+fn parse_config_object_path(value: &str) -> ConfigValue {
+    let value = strip_matching_quotes(value.trim()).trim();
+    if value.is_empty() || value.eq_ignore_ascii_case(NULL_OBJECT_REFERENCE) {
+        return ConfigValue::Unset;
+    }
     let object_path = match value.split_once('\'') {
         Some((class_name, quoted_path))
             if is_class_wrapper(class_name)
@@ -288,21 +317,27 @@ fn parse_config_object_path(value: &str) -> Option<(String, String)> {
         {
             &quoted_path[..quoted_path.len() - 1]
         }
-        Some(_) => return None,
+        Some(_) => return ConfigValue::Invalid,
         None => value,
     };
-    let object_path = strip_matching_quotes(object_path.trim());
+    let object_path = strip_matching_quotes(object_path.trim()).trim();
+    if object_path.is_empty() || object_path.eq_ignore_ascii_case(NULL_OBJECT_REFERENCE) {
+        return ConfigValue::Unset;
+    }
     if !is_valid_object_path(object_path) {
-        return None;
+        return ConfigValue::Invalid;
     }
     let package_path = object_path
         .split_once('.')
         .map(|(package, _)| package)
         .unwrap_or(object_path);
     if !is_valid_package_path(package_path) {
-        return None;
+        return ConfigValue::Invalid;
     }
-    Some((object_path.to_string(), package_path.to_string()))
+    ConfigValue::Reference {
+        object_path: object_path.to_string(),
+        package_path: package_path.to_string(),
+    }
 }
 
 fn strip_matching_quotes(value: &str) -> &str {

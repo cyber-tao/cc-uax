@@ -12,7 +12,7 @@ const CACHE_NAMESPACE: &str = "cc-uax/projects";
 // on the same file actually triggers the in-place reset, instead of silently
 // orphaning a version-named file on every schema change.
 const CACHE_FILE_NAME: &str = "project-index.sqlite";
-const CACHE_SCHEMA_VERSION: i64 = 3;
+const CACHE_SCHEMA_VERSION: i64 = 4;
 // Cached analysis is only valid for the binary that produced it: a tool upgrade
 // can change decoded values without changing a file's mtime/size. Bind cache
 // validity to the crate version so a new release invalidates stale analysis.
@@ -54,15 +54,48 @@ impl fmt::Display for CachePathError {
 
 impl std::error::Error for CachePathError {}
 
+/// What the last parse of a cached file produced. A warm run must replay the
+/// same classification it recorded, so an out-of-scope package stays
+/// `unsupported` evidence instead of turning into a scan failure on cache hits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CachedParse {
+    /// The package parsed; `references`, `owned_sublevels`, and `analysis` apply.
+    Ok,
+    /// The package is readable but deliberately out of scope; `reason` explains why.
+    Unsupported,
+    /// The package could not be read; `reason` carries the parse error.
+    Failed,
+}
+
+impl CachedParse {
+    fn to_column(self) -> i64 {
+        match self {
+            Self::Failed => 0,
+            Self::Ok => 1,
+            Self::Unsupported => 2,
+        }
+    }
+
+    fn from_column(value: i64) -> Self {
+        match value {
+            1 => Self::Ok,
+            2 => Self::Unsupported,
+            _ => Self::Failed,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CacheEntry {
     pub(crate) mtime: i64,
     pub(crate) size: i64,
-    pub(crate) parse_ok: bool,
+    pub(crate) parse: CachedParse,
     pub(crate) references: Vec<String>,
     pub(crate) owned_sublevels: Vec<String>,
     pub(crate) analysis: Option<AssetAnalysisSummary>,
-    pub(crate) parse_error: Option<String>,
+    /// Message for a non-`Ok` parse: the scan failure text for `Failed`, or the
+    /// out-of-scope explanation for `Unsupported`.
+    pub(crate) reason: Option<String>,
 }
 
 /// Sentinel mtime used when a file's modification time cannot be read reliably.
@@ -119,11 +152,11 @@ impl ProjectCache {
                     file_path   TEXT PRIMARY KEY,
                     mtime       INTEGER NOT NULL,
                     size        INTEGER NOT NULL,
-                    parse_ok    INTEGER NOT NULL,
+                    parse       INTEGER NOT NULL,
                     refs        TEXT NOT NULL,
                     owned_sublevels TEXT NOT NULL,
                     analysis    TEXT,
-                    parse_error TEXT
+                    reason      TEXT
                 )",
                 [],
             )
@@ -168,7 +201,7 @@ impl ProjectCache {
         {
             let mut statement = connection
                 .prepare(
-                    "SELECT file_path, mtime, size, parse_ok, refs, owned_sublevels, analysis, parse_error FROM package_refs",
+                    "SELECT file_path, mtime, size, parse, refs, owned_sublevels, analysis, reason FROM package_refs",
                 )
                 .map_err(|error| format!("prepare cache load: {error}"))?;
             let rows = statement
@@ -178,11 +211,11 @@ impl ProjectCache {
                         CacheEntry {
                             mtime: row.get(1)?,
                             size: row.get(2)?,
-                            parse_ok: row.get::<_, i64>(3)? != 0,
+                            parse: CachedParse::from_column(row.get::<_, i64>(3)?),
                             references: split_references(&row.get::<_, String>(4)?),
                             owned_sublevels: split_references(&row.get::<_, String>(5)?),
                             analysis: None,
-                            parse_error: row.get(7)?,
+                            reason: row.get(7)?,
                         },
                         row.get::<_, Option<String>>(6)?,
                     ))
@@ -241,7 +274,7 @@ impl ProjectCache {
             let mut upsert = transaction
                 .prepare(
                     "INSERT OR REPLACE INTO package_refs
-                     (file_path, mtime, size, parse_ok, refs, owned_sublevels, analysis, parse_error)
+                     (file_path, mtime, size, parse, refs, owned_sublevels, analysis, reason)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 )
                 .map_err(|error| format!("prepare cache store: {error}"))?;
@@ -261,11 +294,11 @@ impl ProjectCache {
                         path,
                         entry.mtime,
                         entry.size,
-                        entry.parse_ok as i64,
+                        entry.parse.to_column(),
                         join_references(&entry.references),
                         join_references(&entry.owned_sublevels),
                         analysis.as_deref(),
-                        entry.parse_error.as_deref(),
+                        entry.reason.as_deref(),
                     ])
                     .map_err(|error| format!("store cache entry for {path}: {error}"))?;
             }

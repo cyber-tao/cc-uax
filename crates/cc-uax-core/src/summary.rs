@@ -1,4 +1,5 @@
 use crate::reader::{Guid, Reader};
+use crate::rejection::out_of_scope;
 use crate::version::{PACKAGE_FILE_TAG, PACKAGE_FILE_TAG_SWAPPED, ue4, ue5};
 use anyhow::{Result, bail};
 
@@ -81,9 +82,9 @@ impl PackageFileSummary {
     pub fn parse(r: &mut Reader) -> Result<Self> {
         let tag = r.read_u32()?;
         if tag == PACKAGE_FILE_TAG_SWAPPED {
-            bail!(
-                "package uses swapped (big-endian) byte order, possibly a cooked console package; unsupported"
-            );
+            return Err(out_of_scope(
+                "package uses swapped (big-endian) byte order, possibly a cooked console package; unsupported",
+            ));
         }
         if tag != PACKAGE_FILE_TAG {
             bail!(
@@ -93,14 +94,14 @@ impl PackageFileSummary {
 
         let legacy_file_version = r.read_i32()?;
         if legacy_file_version >= 0 {
-            bail!(
+            return Err(out_of_scope(format!(
                 "looks like a legacy UE3 package (LegacyFileVersion={legacy_file_version}); unsupported"
-            );
+            )));
         }
         if legacy_file_version < -9 {
-            bail!(
+            return Err(out_of_scope(format!(
                 "package format version too new (LegacyFileVersion={legacy_file_version}); out of known range"
-            );
+            )));
         }
 
         if legacy_file_version != -4 {
@@ -118,15 +119,15 @@ impl PackageFileSummary {
         let unversioned =
             file_version_ue4 == 0 && file_version_ue5 == 0 && file_version_licensee_ue == 0;
         if unversioned {
-            bail!(
-                "package is unversioned (no version info, typically a cooked package); this tool targets versioned editor assets"
-            );
+            return Err(out_of_scope(
+                "package is unversioned (no version info, typically a cooked package); this tool targets versioned editor assets",
+            ));
         }
         if file_version_ue5 < crate::version::SUPPORTED_FILE_VERSION_FLOOR {
-            bail!(
+            return Err(out_of_scope(format!(
                 "unsupported package FileVersionUE5={file_version_ue5}; this tool targets UE5.0–5.8 versioned editor assets (FileVersionUE5 >= {})",
                 crate::version::SUPPORTED_FILE_VERSION_FLOOR
-            );
+            )));
         }
 
         let ue4v = file_version_ue4;
@@ -254,9 +255,9 @@ impl PackageFileSummary {
 
         let compressed_chunks_count = r.read_i32()?;
         if compressed_chunks_count != 0 {
-            bail!(
+            return Err(out_of_scope(format!(
                 "package uses package-level compression (CompressedChunks={compressed_chunks_count}); cannot parse"
-            );
+            )));
         }
 
         let _package_source = r.read_u32()?;

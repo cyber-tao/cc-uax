@@ -9,11 +9,16 @@ use crate::property::read_soft_object_path;
 use crate::reader::Reader;
 use crate::structured_value::{Value, json};
 use crate::summary::PackageFileSummary;
+use crate::version::ue5;
 use anyhow::Result;
 
 /// Maximum outer-chain depth when resolving a full object name; guards against
 /// cyclic outer references in malformed packages.
 const MAX_RESOLVE_DEPTH: u32 = 64;
+/// An on-disk `FName` reference: 4-byte name-table index + 4-byte number.
+const RAW_NAME_BYTES: u64 = 8;
+/// The `int32` length that precedes every `FString` payload.
+const FSTRING_LENGTH_BYTES: u64 = 4;
 
 pub struct Package {
     pub(crate) summary: PackageFileSummary,
@@ -167,6 +172,15 @@ fn parse_soft_object_path_table(
             Some(format!("soft object path table seek failed: {err:#}")),
         );
     }
+    // Reject a declared count that cannot fit in the remaining file before
+    // allocating for it, the same way every other header table does.
+    if (count as u64).saturating_mul(soft_object_path_min_bytes(file_version_ue5)) > r.remaining() {
+        return (
+            out,
+            Some(format!("soft object path count out of range: {count}")),
+        );
+    }
+    out.reserve(count as usize);
     for i in 0..count {
         match read_soft_object_path(r, names, file_version_ue5) {
             Ok(v) => out.push(v),
@@ -184,6 +198,18 @@ fn parse_soft_object_path_table(
         }
     }
     (out, None)
+}
+
+/// Smallest on-disk `FSoftObjectPath` entry: an `FTopLevelAssetPath` (two FNames)
+/// from `FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES` on, one FName before it, plus
+/// the 4-byte length of an empty sub-path FString.
+fn soft_object_path_min_bytes(file_version_ue5: i32) -> u64 {
+    let asset_path = if file_version_ue5 >= ue5::FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES {
+        2 * RAW_NAME_BYTES
+    } else {
+        RAW_NAME_BYTES
+    };
+    asset_path + FSTRING_LENGTH_BYTES
 }
 
 /// The SoftPackageReferences header table: one FName package name per entry

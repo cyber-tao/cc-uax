@@ -136,6 +136,12 @@ pub struct KnownOpaqueIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetAnalysisSummary {
     pub status: AnalysisStatus,
+    /// Why this mapped package carries no decoded evidence at all: it is a real
+    /// package that the parser deliberately does not target (see
+    /// `cc_uax_core::PackageRejection::OutOfScope`). Absent for parsed packages,
+    /// whose evidence lives in `capabilities` and `diagnostics`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unsupported_reason: Option<String>,
     pub coverage: ParseCoverage,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<CapabilitySummary>,
@@ -154,9 +160,28 @@ pub struct AssetAnalysisSummary {
 }
 
 impl AssetAnalysisSummary {
+    /// Summary for a mapped package the parser deliberately does not target. The
+    /// file is real evidence about the project, so it stays in the inventory as
+    /// `unsupported` instead of being reduced to a scan failure.
+    pub(crate) fn unsupported(reason: impl Into<String>) -> Self {
+        Self {
+            status: AnalysisStatus::Unsupported,
+            unsupported_reason: Some(reason.into()),
+            coverage: ParseCoverage::default(),
+            capabilities: Vec::new(),
+            graphs: Vec::new(),
+            rigvm_graphs: Vec::new(),
+            pcg_graphs: Vec::new(),
+            state_tree_graphs: Vec::new(),
+            diagnostics: AnalysisDiagnosticSummary::default(),
+            known_opaque: KnownOpaqueSummary::default(),
+        }
+    }
+
     pub(crate) fn from_analysis(analysis: &AssetAnalysis) -> Self {
         Self {
             status: analysis.status,
+            unsupported_reason: None,
             coverage: analysis.coverage.clone(),
             capabilities: analysis
                 .capabilities

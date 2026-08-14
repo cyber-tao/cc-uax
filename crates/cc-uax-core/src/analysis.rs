@@ -17,6 +17,7 @@ use crate::pin::{
 use crate::property::{PropertyEntry, PropertyParseStatus};
 use crate::reader::Guid;
 use crate::references::collect_package_references;
+use crate::rejection::PackageParseError;
 use crate::structured_value::{Map, Value};
 use crate::version::ue5;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -44,9 +45,9 @@ pub struct PackageView<'a> {
 }
 
 impl<'a> PackageView<'a> {
-    pub fn parse(bytes: &'a [u8]) -> anyhow::Result<Self> {
+    pub fn parse(bytes: &'a [u8]) -> Result<Self, PackageParseError> {
         Ok(Self {
-            package: Package::parse(bytes)?,
+            package: Package::parse(bytes).map_err(PackageParseError::from)?,
             bytes,
         })
     }

@@ -1,5 +1,5 @@
 use super::common::temp_project;
-use crate::cache::{CacheEntry, ProjectCache, UNKNOWN_MTIME};
+use crate::cache::{CacheEntry, CachedParse, ProjectCache, UNKNOWN_MTIME};
 use crate::{CachePathPolicy, ProjectLayout};
 use std::collections::HashMap;
 
@@ -7,11 +7,11 @@ fn cache_entry(mtime: i64, size: i64, references: &[&str]) -> CacheEntry {
     CacheEntry {
         mtime,
         size,
-        parse_ok: true,
+        parse: CachedParse::Ok,
         references: references.iter().map(|value| value.to_string()).collect(),
         owned_sublevels: Vec::new(),
         analysis: None,
-        parse_error: None,
+        reason: None,
     }
 }
 

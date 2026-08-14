@@ -1,4 +1,4 @@
-use crate::cache::{CacheEntry, ProjectCache};
+use crate::cache::{CacheEntry, CachedParse, ProjectCache};
 use crate::entry_points::load_project_entry_points;
 use crate::{
     Adjacency, AssetAnalysisSummary, AssetKind, AssetOwnership, AssetRecord, CachePathPolicy,
@@ -130,8 +130,29 @@ impl ProjectScanner {
             match cached {
                 Some(entry) => {
                     cache_hits += 1;
-                    if entry.parse_ok {
-                        if let Some(analysis) = entry.analysis.clone() {
+                    match entry.parse {
+                        CachedParse::Ok => {
+                            if let Some(analysis) = entry.analysis.clone() {
+                                records.push(AssetRecord {
+                                    package_path,
+                                    mount_root: file.package_root,
+                                    file_path: file.path,
+                                    relative_path: file.relative_path.clone(),
+                                    asset_kind,
+                                    ownership: classify_ownership(&file.relative_path),
+                                    forward_references: entry.references.iter().cloned().collect(),
+                                    owned_sublevels: entry
+                                        .owned_sublevels
+                                        .iter()
+                                        .cloned()
+                                        .collect(),
+                                    analysis,
+                                });
+                                current_cache.insert(cache_key, entry);
+                                continue;
+                            }
+                        }
+                        CachedParse::Unsupported => {
                             records.push(AssetRecord {
                                 package_path,
                                 mount_root: file.package_root,
@@ -139,25 +160,31 @@ impl ProjectScanner {
                                 relative_path: file.relative_path.clone(),
                                 asset_kind,
                                 ownership: classify_ownership(&file.relative_path),
-                                forward_references: entry.references.iter().cloned().collect(),
-                                owned_sublevels: entry.owned_sublevels.iter().cloned().collect(),
-                                analysis,
+                                forward_references: BTreeSet::new(),
+                                owned_sublevels: BTreeSet::new(),
+                                analysis: AssetAnalysisSummary::unsupported(
+                                    entry
+                                        .reason
+                                        .clone()
+                                        .unwrap_or_else(unsupported_package_fallback_reason),
+                                ),
                             });
                             current_cache.insert(cache_key, entry);
                             continue;
                         }
-                    } else {
-                        cached_parse_failures += 1;
-                        failures.push(ScanFailure::new(
-                            &file.path,
-                            ScanFailureStage::Parse,
-                            entry
-                                .parse_error
-                                .clone()
-                                .unwrap_or_else(|| "cached package parse failure".to_string()),
-                        ));
-                        current_cache.insert(cache_key, entry);
-                        continue;
+                        CachedParse::Failed => {
+                            cached_parse_failures += 1;
+                            failures.push(ScanFailure::new(
+                                &file.path,
+                                ScanFailureStage::Parse,
+                                entry
+                                    .reason
+                                    .clone()
+                                    .unwrap_or_else(|| "cached package parse failure".to_string()),
+                            ));
+                            current_cache.insert(cache_key, entry);
+                            continue;
+                        }
                     }
                 }
                 None => {
@@ -188,14 +215,45 @@ impl ProjectScanner {
                             CacheEntry {
                                 mtime,
                                 size,
-                                parse_ok: false,
+                                parse: CachedParse::Failed,
                                 references: Vec::new(),
                                 owned_sublevels: Vec::new(),
                                 analysis: None,
-                                parse_error: Some(message),
+                                reason: Some(message),
                             },
                         );
                     }
+                    continue;
+                }
+                // A package the parser deliberately does not target is truthful
+                // `unsupported` evidence about a real asset, not a scan failure,
+                // so it is indexed instead of aborting a strict scan.
+                Err(ParseFileError::Unsupported(message)) => {
+                    if cache.is_some() {
+                        current_cache.insert(
+                            cache_key.clone(),
+                            CacheEntry {
+                                mtime,
+                                size,
+                                parse: CachedParse::Unsupported,
+                                references: Vec::new(),
+                                owned_sublevels: Vec::new(),
+                                analysis: None,
+                                reason: Some(message.clone()),
+                            },
+                        );
+                    }
+                    records.push(AssetRecord {
+                        package_path,
+                        mount_root: file.package_root,
+                        file_path: file.path,
+                        relative_path: file.relative_path.clone(),
+                        asset_kind,
+                        ownership: classify_ownership(&file.relative_path),
+                        forward_references: BTreeSet::new(),
+                        owned_sublevels: BTreeSet::new(),
+                        analysis: AssetAnalysisSummary::unsupported(message),
+                    });
                     continue;
                 }
             };
@@ -205,11 +263,11 @@ impl ProjectScanner {
                     CacheEntry {
                         mtime,
                         size,
-                        parse_ok: true,
+                        parse: CachedParse::Ok,
                         references: parsed.references.clone(),
                         owned_sublevels: parsed.owned_sublevels.iter().cloned().collect(),
                         analysis: Some(parsed.analysis.clone()),
-                        parse_error: None,
+                        reason: None,
                     },
                 );
             }
@@ -794,6 +852,9 @@ fn file_stamp(path: &Path) -> Result<(i64, i64), String> {
 enum ParseFileError {
     Read(String),
     Parse(String),
+    /// A readable package the parser deliberately does not target. Not a failure:
+    /// the asset is indexed as `unsupported` evidence.
+    Unsupported(String),
 }
 
 struct ParsedAsset {
@@ -802,10 +863,22 @@ struct ParsedAsset {
     analysis: AssetAnalysisSummary,
 }
 
+/// Used only when a cache row records an unsupported package without its
+/// original explanation, which a hand-edited or truncated database could produce.
+fn unsupported_package_fallback_reason() -> String {
+    "package is outside the supported UE5 editor package range".to_string()
+}
+
 fn read_asset(path: &Path) -> Result<ParsedAsset, ParseFileError> {
     let data = fs::read(path).map_err(|error| ParseFileError::Read(error.to_string()))?;
-    let view =
-        PackageView::parse(&data).map_err(|error| ParseFileError::Parse(format!("{error:#}")))?;
+    let view = PackageView::parse(&data).map_err(|error| {
+        let message = error.to_string();
+        if error.is_out_of_scope() {
+            ParseFileError::Unsupported(message)
+        } else {
+            ParseFileError::Parse(message)
+        }
+    })?;
     let references = view.references();
     let references = references
         .assets

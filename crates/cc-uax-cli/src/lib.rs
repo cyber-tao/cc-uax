@@ -187,9 +187,13 @@ fn analyze_focused_assets(
                 Ok(view) => {
                     analyses.insert(package, view.analyze(AssetView::Full));
                 }
+                // A focused package the parser deliberately does not target has no
+                // full analysis to attach; the inventory record already reports it
+                // as `unsupported`, so this is not a focus failure.
+                Err(error) if error.is_out_of_scope() => {}
                 Err(error) => issues.push(FocusIssue {
                     path: package.clone(),
-                    message: format!("failed to parse focused package {package}: {error:#}"),
+                    message: format!("failed to parse focused package {package}: {error}"),
                 }),
             },
             Err(error) => issues.push(FocusIssue {

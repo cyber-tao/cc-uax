@@ -312,17 +312,24 @@ fn account_export_tail(
         .decoded_end
         .unwrap_or(window.property_start)
         .clamp(window.property_start, window.serial_end);
-    // UObject::Serialize writes PossiblySerializeObjectGuid immediately after the
-    // tagged properties. Graph nodes read it inside the pin decoder; every other
-    // export reads it here so the GUID becomes evidence instead of opaque tail.
+    // UObject::Serialize writes PossiblySerializeObjectGuid immediately after
+    // SerializeScriptProperties returns (Obj.cpp), so the flag follows the tagged
+    // properties even when a subclass Serialize override appends more data. Graph
+    // nodes read it inside the pin decoder; every other export reads it here so
+    // the GUID becomes evidence instead of opaque tail.
+    //
+    // `property_end` only marks the real end of the property block when UE
+    // declared one; otherwise it is just `serial_end` and comparing against it
+    // would make this branch unreachable for every non-script export.
+    let property_block_closed = matches!(
+        export.property_status,
+        Some(PropertyParseStatus::Complete | PropertyParseStatus::Empty)
+    ) && (!window.has_declared_property_range
+        || decoded_end == window.property_end);
     if export.object_guid.is_none()
         && export.pins.is_none()
-        && decoded_end == window.property_end
         && decoded_end < window.serial_end
-        && matches!(
-            export.property_status,
-            Some(PropertyParseStatus::Complete | PropertyParseStatus::Empty)
-        )
+        && property_block_closed
         && reader.seek(decoded_end).is_ok()
     {
         consume_object_guid_tail(reader, window.serial_end, export);
@@ -340,33 +347,35 @@ fn account_export_tail(
         .saturating_sub(decoded);
 }
 
-/// Reads UObject's `PossiblySerializeObjectGuid` (a bool32 optionally followed
-/// by an `FGuid`) at the reader's position, bounded by `end`.
+/// Reads UObject's `PossiblySerializeObjectGuid` (a presence flag optionally
+/// followed by an `FGuid`) at the reader's position, bounded by `end`.
+///
+/// The flag is written through `FStructuredArchive::TryEnterField`, which in a
+/// binary archive emits `FArchive::SerializeBool` — exactly 0 or 1 as a uint32.
+/// Any other value means the property block did not end where the caller thinks
+/// it did, so the bytes stay classified opaque rather than being consumed.
 fn consume_object_guid_tail(reader: &mut Reader, end: u64, export: &mut DecodedExport) {
-    if end.saturating_sub(reader.pos()) < 4 {
+    let start = reader.pos();
+    if end.saturating_sub(start) < 4 {
         return;
     }
-    let start = reader.pos();
-    match reader.read_bool32() {
-        Ok(true) if end.saturating_sub(reader.pos()) >= 16 => {
-            // PossiblySerializeObjectGuid is the terminal write of UObject::Serialize, so
-            // a genuine trailing GUID lands exactly on the export end. If these bytes do
-            // not, the tail merely begins with a nonzero bool32 and is opaque data, not a
-            // GUID; rewind so it stays classified opaque instead of becoming a false GUID.
-            if let Ok(guid) = reader.read_guid()
+    let Ok(present) = reader.read_u32() else {
+        let _ = reader.seek(start);
+        return;
+    };
+    match present {
+        0 => {}
+        1 => {
+            if end.saturating_sub(reader.pos()) >= 16
+                && let Ok(guid) = reader.read_guid()
                 && !guid.is_zero()
-                && reader.pos() == end
             {
                 export.object_guid = Some(guid.to_hex());
             } else {
                 let _ = reader.seek(start);
             }
         }
-        Ok(true) => {
-            let _ = reader.seek(start);
-        }
-        Ok(false) => {}
-        Err(_) => {
+        _ => {
             let _ = reader.seek(start);
         }
     }

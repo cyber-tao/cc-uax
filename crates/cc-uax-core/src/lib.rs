@@ -10,6 +10,7 @@ mod pin;
 mod property;
 mod reader;
 mod references;
+mod rejection;
 mod structured_value;
 mod summary;
 mod version;
@@ -17,6 +18,7 @@ mod version;
 pub use analysis::PackageView;
 pub use graph_models::*;
 pub use model::*;
+pub use rejection::{PackageParseError, PackageRejection};
 
 #[cfg(test)]
 pub(crate) use diagnostic::{ByteRangePreview, Diagnostic, Severity};

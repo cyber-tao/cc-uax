@@ -351,13 +351,10 @@ fn object_guid_after_tagged_properties_is_decoded() {
     );
 }
 
-#[test]
-fn trailing_bytes_that_are_not_a_terminal_guid_stay_opaque() {
-    let base = Package::parse(&build_minimal_package()).unwrap();
-    // Tagged properties complete, then a tail whose first four bytes are nonzero (so it
-    // reads as bSerializeObjectGuid = true) but which continues past the 16 would-be GUID
-    // bytes. This is opaque payload, not PossiblySerializeObjectGuid, so it must stay
-    // classified opaque rather than be reported as a decoded object GUID.
+/// Builds an export payload of one IntProperty plus a `None` terminator, then
+/// whatever `tail` the caller wants after the tagged-property block. Returns the
+/// bytes and the offset where the property block ends.
+fn export_with_property_tail(tail: &[u8]) -> (Vec<u8>, usize) {
     let mut data = Vec::new();
     data.push(0); // object property serialization control
     push_raw_name(&mut data, 1); // Value
@@ -368,25 +365,86 @@ fn trailing_bytes_that_are_not_a_terminal_guid_stay_opaque() {
     push_i32(&mut data, 42);
     push_raw_name(&mut data, 3); // None
     let tagged_end = data.len();
-    push_i32(&mut data, 1); // looks like bSerializeObjectGuid = true
-    data.extend_from_slice(&[
-        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, // 16 nonzero "GUID" bytes
-        0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xF0, 0x0F,
-    ]);
-    data.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // payload past the would-be GUID
+    data.extend_from_slice(tail);
+    (data, tagged_end)
+}
+
+fn guid_tail_names() -> NameMap {
+    NameMap {
+        names: vec![
+            "Obj".into(),
+            "Value".into(),
+            "IntProperty".into(),
+            "None".into(),
+        ],
+    }
+}
+
+/// `UObject::Serialize` writes `PossiblySerializeObjectGuid` right after
+/// `SerializeScriptProperties` returns (Obj.cpp), *before* any subclass override
+/// appends its own data. So a real GUID need not land on the export end, and the
+/// flag must be read whether or not UE declared an explicit property range —
+/// without a declared range `property_end` is just `serial_end` and carries no
+/// information about where the property block closed.
+#[test]
+fn object_guid_is_read_after_the_property_block_in_both_window_shapes() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut tail = Vec::new();
+    push_i32(&mut tail, 1); // bSerializeObjectGuid = true
+    tail.extend_from_slice(&[0x01, 0, 0, 0, 0x02, 0, 0, 0, 0x03, 0, 0, 0, 0x04, 0, 0, 0]);
+    tail.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // subclass Serialize payload
+    let (data, tagged_end) = export_with_property_tail(&tail);
+
+    // `script_end = 0` is the shape UE writes for every export that does not need
+    // an explicit property range, which is the overwhelming majority.
+    for (label, script_end) in [
+        ("declared property range", tagged_end as i64),
+        ("no declared property range", 0),
+    ] {
+        let package = Package {
+            summary: base.summary.clone(),
+            names: guid_tail_names(),
+            imports: Vec::new(),
+            exports: vec![test_export(0, data.len() as i64, 0, script_end)],
+            soft_object_paths: Vec::new(),
+            soft_object_path_error: None,
+            soft_package_references: Vec::new(),
+            soft_package_reference_error: None,
+        };
+        let analysis = analyze_package(&package, &data, AssetView::Full);
+        assert_eq!(
+            analysis.exports[0].object_guid.as_deref(),
+            Some("00000001000000020000000300000004"),
+            "{label}"
+        );
+        assert_eq!(analysis.coverage.unclassified_bytes, 0, "{label}");
+        // Only the 4 bytes after the GUID stay opaque.
+        assert_eq!(analysis.coverage.known_opaque_regions, 1, "{label}");
+        assert_eq!(
+            analysis.known_opaque[0].byte_range.as_ref().unwrap().size,
+            4,
+            "{label}"
+        );
+    }
+}
+
+/// `TryEnterField` emits `FArchive::SerializeBool`, which writes exactly 0 or 1.
+/// Any other leading value means the property block did not end where the decoder
+/// thinks it did, so the tail must stay classified opaque instead of being
+/// consumed as a presence flag.
+#[test]
+fn a_tail_whose_flag_is_not_a_serialized_bool_stays_opaque() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut tail = Vec::new();
+    push_i32(&mut tail, 0x4433_2211); // not 0 or 1
+    tail.extend_from_slice(&[0x55, 0x66, 0x77, 0x88]);
+    let (data, _) = export_with_property_tail(&tail);
 
     let package = Package {
-        summary: base.summary.clone(),
-        names: NameMap {
-            names: vec![
-                "Obj".into(),
-                "Value".into(),
-                "IntProperty".into(),
-                "None".into(),
-            ],
-        },
+        summary: base.summary,
+        names: guid_tail_names(),
         imports: Vec::new(),
-        exports: vec![test_export(0, data.len() as i64, 0, tagged_end as i64)],
+        exports: vec![test_export(0, data.len() as i64, 0, 0)],
         soft_object_paths: Vec::new(),
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
@@ -395,12 +453,70 @@ fn trailing_bytes_that_are_not_a_terminal_guid_stay_opaque() {
     let analysis = analyze_package(&package, &data, AssetView::Full);
     assert!(analysis.exports[0].object_guid.is_none());
     assert_eq!(analysis.coverage.unclassified_bytes, 0);
-    // The whole 24-byte tail (4 + 16 + 4) stays one classified opaque region.
+    // The whole 8-byte tail stays one classified opaque region.
     assert_eq!(analysis.coverage.known_opaque_regions, 1);
     assert_eq!(
         analysis.known_opaque[0].byte_range.as_ref().unwrap().size,
-        24
+        8
     );
+}
+
+/// A cleared flag consumes only its four bytes; whatever a subclass `Serialize`
+/// wrote after it stays classified opaque.
+#[test]
+fn a_cleared_guid_flag_is_consumed_without_a_declared_property_range() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut tail = Vec::new();
+    push_i32(&mut tail, 0); // bSerializeObjectGuid = false
+    tail.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+    let (data, _) = export_with_property_tail(&tail);
+
+    let package = Package {
+        summary: base.summary,
+        names: guid_tail_names(),
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert!(analysis.exports[0].object_guid.is_none());
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+    assert_eq!(analysis.coverage.known_opaque_regions, 1);
+    assert_eq!(
+        analysis.known_opaque[0].byte_range.as_ref().unwrap().size,
+        4
+    );
+}
+
+/// A four-byte cleared flag that fills the tail exactly leaves no opaque region:
+/// this is the common case that used to be reported as a false 4-byte opaque tail
+/// on every plain UObject export.
+#[test]
+fn a_cleared_guid_flag_that_ends_the_export_leaves_no_opaque_tail() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut tail = Vec::new();
+    push_i32(&mut tail, 0);
+    let (data, _) = export_with_property_tail(&tail);
+
+    let package = Package {
+        summary: base.summary,
+        names: guid_tail_names(),
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert_eq!(analysis.status, AnalysisStatus::Complete);
+    assert!(analysis.exports[0].object_guid.is_none());
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+    assert_eq!(analysis.coverage.known_opaque_regions, 0);
+    assert!(analysis.known_opaque.is_empty());
 }
 
 #[test]

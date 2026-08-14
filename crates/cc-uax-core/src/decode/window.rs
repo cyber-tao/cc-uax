@@ -12,6 +12,15 @@ pub(super) struct ExportSerialWindow {
     pub property_start: u64,
     pub property_end: u64,
     pub serial_end: u64,
+    /// True when UE recorded an explicit tagged-property range for this export
+    /// (`FObjectExport::ScriptSerializationStart/EndOffset`, written from
+    /// `FileVersionUE5` 1010 and only non-zero for classes that need it).
+    ///
+    /// When false, `property_start`/`property_end` degrade to the whole export
+    /// payload and say nothing about where the tagged-property block really
+    /// ends, so callers must not compare a decoder's high-water mark against
+    /// `property_end` to decide whether the block closed cleanly.
+    pub has_declared_property_range: bool,
 }
 
 pub(super) fn export_serial_window(
@@ -43,24 +52,21 @@ pub(super) fn export_serial_window(
         ));
     }
 
+    let whole_payload = ExportSerialWindow {
+        serial_start,
+        property_start: serial_start,
+        property_end: serial_end,
+        serial_end,
+        has_declared_property_range: false,
+    };
     if !has_script {
-        return Ok(Some(ExportSerialWindow {
-            serial_start,
-            property_start: serial_start,
-            property_end: serial_end,
-            serial_end,
-        }));
+        return Ok(Some(whole_payload));
     }
 
     let script_start = exp.script_serialization_start_offset;
     let script_end = exp.script_serialization_end_offset;
     if script_start == 0 && script_end == 0 {
-        return Ok(Some(ExportSerialWindow {
-            serial_start,
-            property_start: serial_start,
-            property_end: serial_end,
-            serial_end,
-        }));
+        return Ok(Some(whole_payload));
     }
     if script_start < 0 || script_end < script_start || script_end > exp.serial_size {
         return Err(format!(
@@ -78,6 +84,7 @@ pub(super) fn export_serial_window(
             .checked_add(script_end as u64)
             .ok_or_else(|| "script serialization end overflows u64".to_string())?,
         serial_end,
+        has_declared_property_range: true,
     }))
 }
 

@@ -60,6 +60,19 @@ pub fn minimal_package() -> Vec<u8> {
     data
 }
 
+/// A real UE4 package header (`FileVersionUE5` = 0). UE5 projects routinely still
+/// contain assets that were never resaved by UE5, and the scan must treat them as
+/// `unsupported` evidence rather than as a read failure.
+pub fn ue4_package() -> Vec<u8> {
+    let mut data = Vec::new();
+    push_u32(&mut data, 0x9E2A_83C1);
+    push_i32(&mut data, -7); // legacy_file_version: no FileVersionUE5 field
+    push_i32(&mut data, 0); // legacy ue3
+    push_i32(&mut data, 522); // file_version_ue4
+    push_i32(&mut data, 0); // licensee
+    data
+}
+
 fn push_u16(bytes: &mut Vec<u8>, value: u16) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
