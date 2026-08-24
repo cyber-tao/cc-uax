@@ -221,6 +221,17 @@ impl AssetAnalysisSummary {
         }
     }
 
+    /// Whether this asset says what it is missing, through either a diagnostic
+    /// code or a capability detail. A `partial` status that answers `false` here
+    /// is a defect: the report names a gap it does not describe.
+    pub(crate) fn explains_its_gap(&self) -> bool {
+        !self.diagnostics.codes.is_empty()
+            || self
+                .capabilities
+                .iter()
+                .any(|capability| capability.detail.is_some())
+    }
+
     pub(crate) fn from_analysis(analysis: &AssetAnalysis) -> Self {
         Self {
             status: analysis.status,
@@ -446,6 +457,20 @@ pub struct ProjectAnalysisSummary {
     pub partial_assets: usize,
     pub unsupported_assets: usize,
     pub scan_failures: usize,
+    /// Partial assets carrying neither a diagnostic code nor a capability detail.
+    ///
+    /// Always `0` in a correct report: a partial status that names no gap tells a
+    /// consumer nothing. Published here so that can be checked without walking a
+    /// whole inventory.
+    pub partial_assets_without_explanation: usize,
+    /// Regions and bytes summed from the per-asset `known_opaque` groups.
+    ///
+    /// These must equal `coverage.known_opaque_regions` and
+    /// `coverage.opaque_bytes`. Reporting both sides makes it verifiable that
+    /// grouping did not lose a region, which is otherwise only checkable by
+    /// re-summing tens of thousands of inventory entries.
+    pub grouped_opaque_regions: usize,
+    pub grouped_opaque_bytes: u64,
     /// How many parsed packages carried each `FileVersionUE5`, keyed by version.
     ///
     /// This is the only statement of which version gates a scan actually
@@ -468,6 +493,9 @@ impl ProjectAnalysisSummary {
             partial_assets: 0,
             unsupported_assets: 0,
             scan_failures,
+            partial_assets_without_explanation: 0,
+            grouped_opaque_regions: 0,
+            grouped_opaque_bytes: 0,
             file_versions: BTreeMap::new(),
             coverage: ParseCoverage::default(),
         };
@@ -477,6 +505,13 @@ impl ProjectAnalysisSummary {
                 AnalysisStatus::Complete => aggregate.complete_assets += 1,
                 AnalysisStatus::Partial => aggregate.partial_assets += 1,
                 AnalysisStatus::Unsupported => aggregate.unsupported_assets += 1,
+            }
+            if summary.status == AnalysisStatus::Partial && !summary.explains_its_gap() {
+                aggregate.partial_assets_without_explanation += 1;
+            }
+            for group in &summary.known_opaque.groups {
+                aggregate.grouped_opaque_regions += group.regions;
+                aggregate.grouped_opaque_bytes += group.bytes;
             }
             if let Some(version) = summary.file_version_ue5 {
                 *aggregate.file_versions.entry(version).or_default() += 1;

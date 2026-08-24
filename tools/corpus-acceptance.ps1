@@ -12,6 +12,11 @@ FileVersionUE5 distribution the scan actually covered, and rendered report size.
 The version distribution is read from the report rather than by walking Content,
 so it reflects exactly what was scanned, including auto-mounted plugin roots.
 
+Reports are rendered with -max-output-bytes: the harness only reads aggregate
+numbers, and a full report for a large project takes longer to deserialize in
+Windows PowerShell than the scan itself takes to produce. The top-level skeleton
+that budgeting always preserves is exactly what is measured here.
+
 The first run writes a baseline. Later runs compare against it and fail on any
 regression, so a decoder change that silently loses evidence or reclassifies
 packages is caught against real assets.
@@ -99,88 +104,169 @@ function Get-ReleaseBinary {
     finally { Pop-Location }
 }
 
+# The harness reads aggregate numbers only, so it renders with a budget: the
+# top-level skeleton (status, stats, analysis, coverage) is always preserved while
+# the per-asset inventory is elided. That matters at corpus scale — a full report
+# for a 40,000-asset project runs to tens of megabytes, and `ConvertFrom-Json` on
+# one takes longer in Windows PowerShell than the scan itself.
+#
+# The per-asset reconciliation is not lost: the report publishes the grouped opaque
+# totals and the unexplained-partial count in `analysis`.
+$script:MetricsBudgetBytes = 1000000
+
+# Extracts one top-level `"key": {...}` or `"key": [...]` fragment from a compact
+# JSON document by brace matching.
+#
+# The whole report cannot be deserialized here. `ConvertFrom-Json` builds
+# PSCustomObjects whose properties are case-insensitive, so the adjacency and
+# ownership maps -- keyed by package path -- throw ArgumentException the moment two
+# packages differ only in case. Parsing just the sections the harness reads avoids
+# that and the deserialization cost of a large document at once.
+function Get-JsonSection {
+    param([string] $Json, [string] $Key)
+
+    $marker = '"' + $Key + '":'
+    $start = $Json.IndexOf($marker, [System.StringComparison]::Ordinal)
+    if ($start -lt 0) { return $null }
+    $open = $start + $marker.Length
+    while ($open -lt $Json.Length -and $Json[$open] -eq ' ') { $open++ }
+    $opener = $Json[$open]
+    $closer = if ($opener -eq '{') { '}' } elseif ($opener -eq '[') { ']' } else { $null }
+    if ($null -eq $closer) { return $null }
+
+    $depth = 0
+    $inString = $false
+    $escaped = $false
+    for ($i = $open; $i -lt $Json.Length; $i++) {
+        $ch = $Json[$i]
+        if ($escaped) { $escaped = $false; continue }
+        if ($ch -eq '\') { if ($inString) { $escaped = $true }; continue }
+        if ($ch -eq '"') { $inString = -not $inString; continue }
+        if ($inString) { continue }
+        if ($ch -eq $opener) { $depth++ }
+        elseif ($ch -eq $closer) {
+            $depth--
+            if ($depth -eq 0) {
+                return $Json.Substring($open, $i - $open + 1) | ConvertFrom-Json
+            }
+        }
+    }
+    return $null
+}
+
+# Reads a top-level string value. Depth-aware so a nested `"status"` -- every
+# inventory entry and capability has one -- cannot be mistaken for the report's.
+function Get-JsonTopLevelString {
+    param([string] $Json, [string] $Key)
+
+    $marker = '"' + $Key + '":"'
+    $depth = 0
+    $inString = $false
+    $escaped = $false
+    for ($i = 0; $i -lt $Json.Length; $i++) {
+        $ch = $Json[$i]
+        if ($escaped) { $escaped = $false; continue }
+        if ($ch -eq '\') { if ($inString) { $escaped = $true }; continue }
+        if ($ch -eq '"' -and -not $inString) {
+            if ($depth -eq 1 -and $Json.Length -ge $i + $marker.Length -and
+                [string]::CompareOrdinal($Json, $i, $marker, 0, $marker.Length) -eq 0) {
+                $valueStart = $i + $marker.Length
+                $end = $Json.IndexOf('"', $valueStart)
+                if ($end -lt 0) { return $null }
+                return $Json.Substring($valueStart, $end - $valueStart)
+            }
+            $inString = $true
+            continue
+        }
+        if ($ch -eq '"') { $inString = $false; continue }
+        if ($inString) { continue }
+        if ($ch -eq '{' -or $ch -eq '[') { $depth++ }
+        elseif ($ch -eq '}' -or $ch -eq ']') { $depth-- }
+    }
+    return $null
+}
+
+# A budgeted array keeps its leading entries followed by an `{"@elided": N}`
+# marker, so a raw element count understates the real total.
+function Measure-JsonArray {
+    param($Array)
+
+    $total = 0
+    foreach ($item in @($Array)) {
+        if ($item -is [psobject] -and $item.PSObject.Properties['@elided']) {
+            $total += $item.'@elided'
+        }
+        else { $total += 1 }
+    }
+    return $total
+}
+
 function Measure-Project {
     param([string] $Binary, [string] $Target, [string] $ReportPath)
 
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     # Exit code 2 is an expected outcome (a hard scan failure still writes a
     # report), so the run must not be treated as a terminating error.
-    Invoke-NativeLogged { & $Binary project $Target --no-cache --compact --output $ReportPath }
+    Invoke-NativeLogged {
+        & $Binary project $Target --no-cache --compact `
+            --max-output-bytes $script:MetricsBudgetBytes --output $ReportPath
+    }
     $exitCode = $LASTEXITCODE
     $stopwatch.Stop()
 
     if (-not (Test-Path -LiteralPath $ReportPath)) {
         throw "no report was written for $Target (exit code $exitCode)"
     }
-    $report = Get-Content -LiteralPath $ReportPath -Raw | ConvertFrom-Json
+    $json = Get-Content -LiteralPath $ReportPath -Raw
+    $analysis = Get-JsonSection -Json $json -Key 'analysis'
+    $stats = Get-JsonSection -Json $json -Key 'stats'
+    if ($null -eq $analysis -or $null -eq $stats) {
+        throw "report for $Target has no analysis/stats section"
+    }
+    $status = Get-JsonTopLevelString -Json $json -Key 'status'
+    if ($null -eq $status) { throw "report for $Target has no top-level status" }
+    $coverage = $analysis.coverage
 
     # Reports are sparse: a zero counter or empty collection is omitted, so an
     # absent property means the default rather than an error.
     $number = { param($object, $name) if ($object.PSObject.Properties[$name]) { $object.$name } else { 0 } }
-    $count = { param($object, $name) if ($object.PSObject.Properties[$name]) { @($object.$name).Count } else { 0 } }
-    $items = { param($object, $name) if ($object.PSObject.Properties[$name]) { @($object.$name) } else { @() } }
-
-    $coverage = $report.analysis.coverage
-    $groupRegions = 0
-    $groupBytes = 0
-    # A partial asset has to say why. The report is the only place a consumer can
-    # read that, so an unexplained partial is an acceptance failure even when
-    # every count reconciles.
-    $unexplainedPartials = 0
-    foreach ($asset in (& $items $report 'inventory')) {
-        $analysis = $asset.analysis
-        if ($analysis.PSObject.Properties['known_opaque']) {
-            foreach ($group in (& $items $analysis.known_opaque 'groups')) {
-                $groupRegions += $group.regions
-                $groupBytes += $group.bytes
-            }
-        }
-        if ($analysis.status -ne 'partial') { continue }
-        $hasCodes = $analysis.PSObject.Properties['diagnostics'] -and
-                    $analysis.diagnostics.PSObject.Properties['codes']
-        $hasDetail = $false
-        foreach ($capability in (& $items $analysis 'capabilities')) {
-            if ($capability.PSObject.Properties['detail']) { $hasDetail = $true; break }
-        }
-        if (-not $hasCodes -and -not $hasDetail) { $unexplainedPartials += 1 }
-    }
 
     # The version distribution comes from the report, so it covers exactly what was
     # scanned -- including auto-mounted plugin content, which a Content-directory
     # walk would miss.
     $versions = [ordered] @{}
-    if ($report.analysis.PSObject.Properties['file_versions']) {
-        foreach ($property in $report.analysis.file_versions.PSObject.Properties) {
+    if ($analysis.PSObject.Properties['file_versions']) {
+        foreach ($property in $analysis.file_versions.PSObject.Properties) {
             $versions[$property.Name] = $property.Value
         }
     }
 
     return [ordered] @{
         exit_code             = $exitCode
-        status                = $report.status
+        status                = $status
         seconds               = [math]::Round($stopwatch.Elapsed.TotalSeconds, 1)
         report_bytes          = (Get-Item -LiteralPath $ReportPath).Length
-        discovered            = $report.stats.discovered
-        indexed               = $report.stats.indexed
-        failed                = $report.stats.failed
-        skipped               = $report.stats.skipped
-        assets                = $report.analysis.assets
-        complete_assets       = $report.analysis.complete_assets
-        partial_assets        = $report.analysis.partial_assets
-        unsupported_assets    = $report.analysis.unsupported_assets
-        scan_failures         = $report.analysis.scan_failures
-        failures              = & $count $report 'failures'
-        diagnostics           = & $count $report 'diagnostics'
-        mounts                = & $count $report 'mounts'
+        discovered            = $stats.discovered
+        indexed               = $stats.indexed
+        failed                = $stats.failed
+        skipped               = $stats.skipped
+        assets                = $analysis.assets
+        complete_assets       = $analysis.complete_assets
+        partial_assets        = $analysis.partial_assets
+        unsupported_assets    = $analysis.unsupported_assets
+        scan_failures         = $analysis.scan_failures
+        failures              = Measure-JsonArray (Get-JsonSection -Json $json -Key 'failures')
+        diagnostics           = Measure-JsonArray (Get-JsonSection -Json $json -Key 'diagnostics')
+        mounts                = Measure-JsonArray (Get-JsonSection -Json $json -Key 'mounts')
         export_bytes_total    = & $number $coverage 'export_bytes_total'
         opaque_bytes          = & $number $coverage 'opaque_bytes'
         class_payload_bytes   = & $number $coverage 'class_payload_bytes'
         unattributed_tail_bytes = & $number $coverage 'unattributed_tail_bytes'
         known_opaque_regions  = & $number $coverage 'known_opaque_regions'
         unclassified_bytes    = & $number $coverage 'unclassified_bytes'
-        grouped_regions       = $groupRegions
-        grouped_bytes         = $groupBytes
-        unexplained_partials  = $unexplainedPartials
+        grouped_regions       = $analysis.grouped_opaque_regions
+        grouped_bytes         = $analysis.grouped_opaque_bytes
+        unexplained_partials  = $analysis.partial_assets_without_explanation
         file_version_ue5      = $versions
     }
 }
