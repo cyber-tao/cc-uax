@@ -129,10 +129,13 @@ impl ProjectScanner {
                 .cloned();
             match cached {
                 Some(entry) => {
-                    cache_hits += 1;
+                    // Counted per branch, not up front: a fresh `Ok` entry with no
+                    // stored analysis still needs a full re-read, and calling that
+                    // a hit made warm-cache stats claim work that did not happen.
                     match entry.parse {
                         CachedParse::Ok => {
                             if let Some(analysis) = entry.analysis.clone() {
+                                cache_hits += 1;
                                 records.push(AssetRecord {
                                     package_path,
                                     mount_root: file.package_root,
@@ -153,6 +156,7 @@ impl ProjectScanner {
                             }
                         }
                         CachedParse::Unsupported => {
+                            cache_hits += 1;
                             records.push(AssetRecord {
                                 package_path,
                                 mount_root: file.package_root,
@@ -173,6 +177,7 @@ impl ProjectScanner {
                             continue;
                         }
                         CachedParse::Failed => {
+                            cache_hits += 1;
                             cached_parse_failures += 1;
                             failures.push(ScanFailure::new(
                                 &file.path,
@@ -185,6 +190,11 @@ impl ProjectScanner {
                             current_cache.insert(cache_key, entry);
                             continue;
                         }
+                    }
+                    // Fresh entry that carried no analysis: re-read it, and count
+                    // the miss, since that is the work actually done.
+                    if cache.is_some() {
+                        cache_misses += 1;
                     }
                 }
                 None => {

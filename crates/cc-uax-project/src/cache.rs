@@ -13,10 +13,23 @@ const CACHE_NAMESPACE: &str = "cc-uax/projects";
 // orphaning a version-named file on every schema change.
 const CACHE_FILE_NAME: &str = "project-index.sqlite";
 const CACHE_SCHEMA_VERSION: i64 = 4;
-// Cached analysis is only valid for the binary that produced it: a tool upgrade
-// can change decoded values without changing a file's mtime/size. Bind cache
-// validity to the crate version so a new release invalidates stale analysis.
-const CACHE_TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Cached analysis is only valid for the decoder that produced it: a change to
+/// either can alter decoded values without touching a file's mtime or size.
+///
+/// The crate version alone is not enough. During development the version stays
+/// put across decoder fixes, so a warm cache replayed pre-fix summaries for every
+/// unchanged file — which is exactly when the cache is most misleading. Binding to
+/// the analysis and report schema versions as well means any change to what a
+/// report means discards the cache, and a decoder change that also bumps a schema
+/// is covered automatically.
+fn cache_identity() -> String {
+    format!(
+        "{}/asset-{}/project-{}",
+        env!("CARGO_PKG_VERSION"),
+        cc_uax_core::ASSET_ANALYSIS_SCHEMA_VERSION,
+        crate::PROJECT_INDEX_SCHEMA_VERSION,
+    )
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "policy", content = "path", rename_all = "snake_case")]
@@ -170,7 +183,8 @@ impl ProjectCache {
                 [],
             )
             .map_err(|error| format!("create cache meta table: {error}"))?;
-        let cached_tool_version: Option<String> = connection
+        let identity = cache_identity();
+        let cached_identity: Option<String> = connection
             .query_row(
                 "SELECT value FROM cache_meta WHERE key = 'tool_version'",
                 [],
@@ -178,21 +192,19 @@ impl ProjectCache {
             )
             .optional()
             .map_err(|error| format!("read cache tool version: {error}"))?;
-        if cached_tool_version.as_deref() != Some(CACHE_TOOL_VERSION) {
+        if cached_identity.as_deref() != Some(identity.as_str()) {
             connection
                 .execute("DELETE FROM package_refs", [])
                 .map_err(|error| format!("reset cache for new tool version: {error}"))?;
             connection
                 .execute(
                     "INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('tool_version', ?1)",
-                    params![CACHE_TOOL_VERSION],
+                    params![identity],
                 )
                 .map_err(|error| format!("record cache tool version: {error}"))?;
-            if cached_tool_version.is_some() {
+            if cached_identity.is_some() {
                 reset_reason.get_or_insert_with(|| {
-                    format!(
-                        "cache tool version changed to {CACHE_TOOL_VERSION}; cached analysis was discarded"
-                    )
+                    format!("cache identity changed to {identity}; cached analysis was discarded")
                 });
             }
         }

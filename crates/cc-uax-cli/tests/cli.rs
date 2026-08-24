@@ -4,6 +4,16 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
+/// Assert against the constants rather than copied literals, so a schema bump
+/// cannot leave these tests pinning a version the CLI no longer emits.
+fn asset_schema() -> serde_json::Value {
+    cc_uax_core::ASSET_ANALYSIS_SCHEMA_VERSION.into()
+}
+
+fn project_schema() -> serde_json::Value {
+    cc_uax_cli::PROJECT_REPORT_SCHEMA_VERSION.into()
+}
+
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_cc-uax"))
 }
@@ -134,7 +144,7 @@ fn asset_summary_uses_the_new_subcommand_and_typed_schema() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], 5);
+    assert_eq!(report["schema_version"], asset_schema());
     assert_eq!(report["view"], "summary");
     assert_eq!(report["status"], "complete");
     assert_eq!(report["summary"]["package_name"], "TestPkg");
@@ -154,7 +164,7 @@ fn strict_project_scan_emits_a_partial_report_and_fails() {
 
     assert_eq!(output.status.code(), Some(2));
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], 6);
+    assert_eq!(report["schema_version"], project_schema());
     assert_eq!(report["status"], "partial");
     assert_eq!(report["layout"]["project_root"], ".");
     assert_eq!(report["layout"]["content_root"], "Content");
@@ -327,7 +337,7 @@ fn max_output_bytes_below_skeleton_still_emits_valid_json() {
     assert!(output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["output"]["truncated"], true);
-    assert_eq!(report["schema_version"], 5);
+    assert_eq!(report["schema_version"], asset_schema());
     assert!(report["status"].is_string());
     assert!(report["coverage"].is_object());
     assert!(report["summary"].is_object());

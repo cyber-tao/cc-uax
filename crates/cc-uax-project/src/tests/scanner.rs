@@ -558,6 +558,50 @@ fn fresh_positive_cache_reuses_cached_analysis_summary() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// Cache validity has to follow the meaning of a cached summary, not just the
+// crate version. Within one version a decoder or schema change would otherwise
+// replay pre-change summaries for every file whose mtime and size are unchanged,
+// which is exactly when the cache misleads most.
+#[test]
+fn cache_identity_change_discards_stored_analysis() {
+    let root = temp_project("cache_identity");
+    let cache_file = root.join("scan-cache.sqlite");
+    std::fs::write(root.join("Content/A.uasset"), minimal_package()).unwrap();
+    let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
+    let options = || ScanOptions {
+        mode: ScanMode::AllowPartial,
+        cache: CachePathPolicy::CustomFile(cache_file.clone()),
+    };
+
+    scanner.scan(options()).unwrap();
+    let warm = scanner.scan(options()).unwrap();
+    assert_eq!(warm.stats.cache_hits, 1);
+
+    // Simulate the same binary version with a different analysis meaning.
+    let connection = rusqlite::Connection::open(&cache_file).unwrap();
+    connection
+        .execute(
+            "INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('tool_version', ?1)",
+            ["1.4.0/asset-0/project-0"],
+        )
+        .unwrap();
+    drop(connection);
+
+    let reset = scanner.scan(options()).unwrap();
+    assert_eq!(reset.stats.cache_hits, 0);
+    assert_eq!(reset.stats.cache_misses, 1);
+    assert!(
+        reset
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("cache identity changed")),
+        "{:#?}",
+        reset.diagnostics
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn unavailable_system_cache_warns_without_failing_strict_scan() {
     let root = temp_project("system_cache_warning");

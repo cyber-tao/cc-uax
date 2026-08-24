@@ -3,7 +3,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::AddAssign;
 
-pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 5;
+/// Bumped to 6 when coverage split its incomplete property outcomes and its
+/// opaque byte total, `blueprint_bytecode`/`niagara_compiled` joined the
+/// capability kinds, export tails gained per-cause reasons, and the StateTree
+/// graph gained the evaluator, global-task, single-task and consideration fields.
+pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 6;
 
 /// serde `skip_serializing_if` helper: drop `false` booleans from the rendered
 /// report so only set flags are emitted.

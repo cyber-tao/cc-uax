@@ -16,10 +16,12 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-/// Bumped to 6 when out-of-scope packages became `unsupported` inventory entries
-/// with an `unsupported_reason`, and per-asset `known_opaque` replaced its
-/// per-region `identities` list with aggregated `groups`.
-const PROJECT_REPORT_SCHEMA_VERSION: u32 = 6;
+/// Bumped to 7 when plugin content roots joined the default mounts, packaging
+/// cook roots became configured roots, `configured_roots` gained `resolution`,
+/// and per-asset capabilities kept the `detail` string that names their gap.
+///
+/// Public so tests assert against the constant rather than a copied literal.
+pub const PROJECT_REPORT_SCHEMA_VERSION: u32 = 7;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {
