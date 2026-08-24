@@ -817,7 +817,11 @@ fn determine_analysis_status(
     unclassified_bytes: u64,
     capabilities: &[AnalysisCapability],
 ) -> AnalysisStatus {
-    let unsupported_version = package.summary.file_version_ue5 > ue5::IMPORT_TYPE_HIERARCHIES;
+    // `PackageFileSummary::parse` already rejects a file version above
+    // `ue5::HIGHEST` as out of scope, matching UE's own refusal to read a package
+    // whose version it does not know. This backstop only fires for a `Package`
+    // assembled in-crate without going through that parse.
+    let unsupported_version = package.summary.file_version_ue5 > ue5::HIGHEST;
     // A classified opaque region is honest evidence, not a defect, so it only
     // downgrades status through the capability it blocks (already surfaced as a
     // non-complete capability). Unclassified bytes are always a defect.

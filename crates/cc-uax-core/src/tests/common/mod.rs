@@ -72,12 +72,36 @@ pub fn build_minimal_editor_package_with_version(
     build_minimal_package_header(file_version_ue5, major, minor, legacy, false)
 }
 
+/// Minimal package whose `CompressedChunks` count is `chunk_count`, so callers can
+/// exercise the sign classification without hunting for the field's offset.
+pub fn build_minimal_package_with_compressed_chunks(chunk_count: i32) -> Vec<u8> {
+    build_minimal_package_header_with_chunks(1018, 5, 7, -8, true, chunk_count)
+}
+
 fn build_minimal_package_header(
     file_version_ue5: i32,
     major: u16,
     minor: u16,
     legacy_file_version: i32,
     filter_editor_only: bool,
+) -> Vec<u8> {
+    build_minimal_package_header_with_chunks(
+        file_version_ue5,
+        major,
+        minor,
+        legacy_file_version,
+        filter_editor_only,
+        0,
+    )
+}
+
+fn build_minimal_package_header_with_chunks(
+    file_version_ue5: i32,
+    major: u16,
+    minor: u16,
+    legacy_file_version: i32,
+    filter_editor_only: bool,
+    compressed_chunks_count: i32,
 ) -> Vec<u8> {
     use crate::version::ue5;
     let fv = file_version_ue5;
@@ -149,7 +173,7 @@ fn build_minimal_package_header(
     push_u32(&mut d, 0);
     push_fstring(&mut d, "");
     push_u32(&mut d, 0); // compression_flags
-    push_i32(&mut d, 0); // compressed_chunks_count
+    push_i32(&mut d, compressed_chunks_count);
     push_u32(&mut d, 0); // package_source
     push_i32(&mut d, 0); // additional_packages_to_cook count
     // num_texture_allocations skipped: legacy (-8) is not > -7.

@@ -51,7 +51,7 @@ fn version_only_header(legacy: i32, ue4: i32, ue5: i32, licensee: i32) -> Vec<u8
 // of a scan failure. Bytes that are not a readable package stay `Malformed`.
 #[test]
 fn out_of_scope_packages_are_classified_apart_from_malformed_ones() {
-    let out_of_scope: [(&str, Vec<u8>); 4] = [
+    let out_of_scope: [(&str, Vec<u8>); 5] = [
         // UE4 package: FileVersionUE5 is 0 but the UE4 version is set.
         ("ue4 package", version_only_header(-7, 522, 0, 0)),
         // Cooked/unversioned package: every version field is 0.
@@ -60,6 +60,12 @@ fn out_of_scope_packages_are_classified_apart_from_malformed_ones() {
         ("ue3 package", version_only_header(1, 0, 0, 0)),
         // FileVersionUE5 below the supported floor but non-zero.
         ("below floor", version_only_header(-8, 522, 999, 0)),
+        // Above the highest known layout: UE refuses to read a package whose file
+        // version is too new, because every later field may have changed.
+        (
+            "above ceiling",
+            version_only_header(-8, 522, crate::version::ue5::HIGHEST + 1, 0),
+        ),
     ];
     for (label, data) in out_of_scope {
         let error = PackageView::parse(&data)
@@ -107,6 +113,30 @@ fn swapped_byte_order_is_out_of_scope() {
         .err()
         .expect("swapped tag should be rejected");
     assert_eq!(error.rejection(), PackageRejection::OutOfScope);
+}
+
+// `CompressedChunks` is a TArray, so a negative count is not an empty list.
+// Treating it as empty would read PackageSource and every later summary field
+// from the wrong offset, surfacing later as an unrelated malformed-table error.
+// A positive count stays out of scope: the payload really is compressed.
+#[test]
+fn compressed_chunk_counts_are_classified_by_sign() {
+    let negative = build_minimal_package_with_compressed_chunks(-1);
+    let error = PackageView::parse(&negative)
+        .err()
+        .expect("negative chunk count should be rejected");
+    assert!(
+        error.to_string().contains("CompressedChunks count"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(error.rejection(), PackageRejection::Malformed);
+
+    let positive = build_minimal_package_with_compressed_chunks(1);
+    let error = PackageView::parse(&positive)
+        .err()
+        .expect("compressed package should be rejected");
+    assert_eq!(error.rejection(), PackageRejection::OutOfScope);
+    assert!(error.to_string().contains("package-level compression"));
 }
 
 #[test]

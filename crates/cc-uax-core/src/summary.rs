@@ -1,4 +1,4 @@
-use crate::reader::{Guid, Reader};
+use crate::reader::{FSTRING_LENGTH_BYTES, Guid, Reader};
 use crate::rejection::out_of_scope;
 use crate::version::{PACKAGE_FILE_TAG, PACKAGE_FILE_TAG_SWAPPED, ue4, ue5};
 use anyhow::{Result, bail};
@@ -129,6 +129,17 @@ impl PackageFileSummary {
                 crate::version::SUPPORTED_FILE_VERSION_FLOOR
             )));
         }
+        // UE stops reading a package whose file version it does not know
+        // (PackageFileSummary.cpp bails right after FileVersionLicensee when
+        // IsFileVersionTooNew), because every field after this point may have
+        // changed. Assuming the 5.8 layout would parse the tables from the wrong
+        // offsets and still produce a report.
+        if file_version_ue5 > ue5::HIGHEST {
+            return Err(out_of_scope(format!(
+                "package FileVersionUE5={file_version_ue5} is newer than this parser understands (highest known is {})",
+                ue5::HIGHEST
+            )));
+        }
 
         let ue4v = file_version_ue4;
         let ue5v = file_version_ue5;
@@ -254,16 +265,23 @@ impl PackageFileSummary {
         let _compression_flags = r.read_u32()?;
 
         let compressed_chunks_count = r.read_i32()?;
-        if compressed_chunks_count != 0 {
+        if compressed_chunks_count > 0 {
             return Err(out_of_scope(format!(
                 "package uses package-level compression (CompressedChunks={compressed_chunks_count}); cannot parse"
             )));
+        }
+        // A negative count is not an empty TArray: continuing here would read
+        // PackageSource and every later field from the wrong offset.
+        if compressed_chunks_count < 0 {
+            bail!("CompressedChunks count out of range: {compressed_chunks_count}");
         }
 
         let _package_source = r.read_u32()?;
 
         let additional_count = r.read_i32()?;
-        if additional_count < 0 || additional_count as u64 > r.remaining() {
+        if additional_count < 0
+            || (additional_count as u64).saturating_mul(FSTRING_LENGTH_BYTES) > r.remaining()
+        {
             bail!("AdditionalPackagesToCook count out of range: {additional_count}");
         }
         for _ in 0..additional_count {

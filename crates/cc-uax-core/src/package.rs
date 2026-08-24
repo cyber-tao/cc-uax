@@ -6,7 +6,7 @@
 use crate::name::NameMap;
 use crate::object::{ObjectExport, ObjectImport};
 use crate::property::read_soft_object_path;
-use crate::reader::{RAW_NAME_BYTES, Reader};
+use crate::reader::{FSTRING_LENGTH_BYTES, RAW_NAME_BYTES, Reader};
 use crate::structured_value::{Value, json};
 use crate::summary::PackageFileSummary;
 use crate::version::ue5;
@@ -15,8 +15,6 @@ use anyhow::Result;
 /// Maximum outer-chain depth when resolving a full object name; guards against
 /// cyclic outer references in malformed packages.
 const MAX_RESOLVE_DEPTH: u32 = 64;
-/// The `int32` length that precedes every `FString` payload.
-const FSTRING_LENGTH_BYTES: u64 = 4;
 
 pub struct Package {
     pub(crate) summary: PackageFileSummary,

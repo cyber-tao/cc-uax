@@ -6,6 +6,10 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 /// windows are checked against this before a name is read.
 pub const RAW_NAME_BYTES: u64 = 8;
 
+/// The `int32` length that precedes every `FString` payload, and therefore the
+/// smallest number of bytes an `FString` array entry can occupy.
+pub const FSTRING_LENGTH_BYTES: u64 = 4;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Guid(pub [u32; 4]);
 

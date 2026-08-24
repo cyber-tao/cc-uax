@@ -232,16 +232,16 @@ fn strict_project_scan_without_hard_failures_exits_zero_despite_partial() {
 
 #[test]
 fn asset_with_inherent_partial_status_still_exits_zero() {
-    // A cleanly parsed but unsupported package yields a truthful non-complete
-    // status; producing that report is a success, not a process failure.
+    // A package that parses cleanly but carries an evidence gap yields a truthful
+    // non-complete status; producing that report is a success, not a process
+    // failure. A package this tool refuses outright is the other case and exits 1.
     let root = temp_dir("asset_partial");
-    let package = root.join("Future.uasset");
-    write_future_package(&package);
+    let package = root.join("BrokenRefs.uasset");
+    std::fs::write(&package, broken_soft_path_table_package()).unwrap();
     let output = bin()
-        .args(["asset", package.to_str().unwrap(), "--view", "summary"])
+        .args(["asset", package.to_str().unwrap(), "--view", "references"])
         .output()
         .unwrap();
-    std::fs::remove_dir_all(&root).unwrap();
 
     assert!(
         output.status.success(),
@@ -249,7 +249,27 @@ fn asset_with_inherent_partial_status_still_exits_zero() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_ne!(report["status"], "complete");
+    assert_eq!(report["status"], "partial", "{report}");
+
+    // A file version past the highest known layout is out of scope, not partial:
+    // UE itself stops reading such a package, so no report is produced.
+    let future = root.join("Future.uasset");
+    write_future_package(&future);
+    let output = bin()
+        .args(["asset", future.to_str().unwrap(), "--view", "summary"])
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let failure: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(failure["status"], "error");
+    assert!(
+        failure["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("newer than this parser understands")),
+        "{failure}"
+    );
 }
 
 #[test]
@@ -461,6 +481,20 @@ fn push_fstring(bytes: &mut Vec<u8>, value: &str) {
 }
 
 fn minimal_package() -> Vec<u8> {
+    build_minimal_package(0)
+}
+
+/// A package that parses cleanly but whose soft-object-path table cannot be read,
+/// which `analyze` reports as a `reference_tables` gap. That is inherent partial
+/// evidence, distinct from a package this tool refuses outright.
+fn broken_soft_path_table_package() -> Vec<u8> {
+    build_minimal_package(1)
+}
+
+/// `soft_object_path_count` is the only knob: a non-zero count with a zero offset
+/// is exactly the shape UE never writes, so the table read fails while every other
+/// summary field stays valid.
+fn build_minimal_package(soft_object_path_count: i32) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_u32(&mut bytes, 0x9E2A_83C1);
     push_i32(&mut bytes, -8);
@@ -473,7 +507,11 @@ fn minimal_package() -> Vec<u8> {
     push_i32(&mut bytes, 0);
     push_fstring(&mut bytes, "TestPkg");
     push_u32(&mut bytes, 0x8000_0000);
-    for _ in 0..23 {
+    push_i32(&mut bytes, 0); // name_count
+    push_i32(&mut bytes, 0); // name_offset
+    push_i32(&mut bytes, soft_object_path_count);
+    push_i32(&mut bytes, 0); // soft_object_paths_offset
+    for _ in 0..19 {
         push_i32(&mut bytes, 0);
     }
     push_u16(&mut bytes, 5);
