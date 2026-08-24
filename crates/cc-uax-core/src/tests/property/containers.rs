@@ -75,11 +75,13 @@ fn legacy_struct_keyed_map(names: &NameMap, payload: &[u8]) -> Vec<u8> {
 }
 
 // Below PROPERTY_TAG_COMPLETE_TYPE_NAME a container tag records only the element's
-// property type, never the UScriptStruct behind `StructProperty`, which UE
-// resolves from its reflection registry. That payload is undecodable by design, so
-// it must be classified as its own limitation rather than as a decoder failure.
+// property type, never the UScriptStruct behind `StructProperty`. `TArray` still
+// carries an inner tag in its payload, but `FSetProperty::SerializeItem` and
+// `FMapProperty::SerializeItem` write none, so a set element or map key/value
+// struct really is undecodable by design and must be classified as its own
+// limitation rather than as a decoder failure.
 #[test]
-fn a_legacy_container_without_an_inner_struct_name_is_its_own_limitation() {
+fn a_legacy_map_without_an_inner_struct_name_is_its_own_limitation() {
     let names = NameMap {
         names: vec![
             "VariableToScriptVariable".to_string(), // 0
@@ -118,7 +120,7 @@ fn a_legacy_container_without_an_inner_struct_name_is_its_own_limitation() {
     assert_eq!(value["status"].as_str(), Some("opaque"));
     let reason = value["reason"].as_str().unwrap();
     assert!(
-        reason.contains("does not record the inner struct name"),
+        reason.contains("does not record a set/map element struct name"),
         "{reason}"
     );
     // The generic fallback code would read as a decoder defect; this one does not.
@@ -140,12 +142,9 @@ fn a_legacy_container_without_an_inner_struct_name_is_its_own_limitation() {
     );
 }
 
-// The missing inner struct name only blocks structs with a custom serializer. A
-// struct that serializes as tagged properties is self-describing on disk, so a
-// legacy array of them must still decode rather than becoming opaque.
-#[test]
-fn a_legacy_array_of_tagged_structs_still_decodes_without_an_inner_struct_name() {
-    let names = NameMap {
+/// Name table shared by the legacy struct-array tests below.
+fn legacy_struct_array_names() -> NameMap {
+    NameMap {
         names: vec![
             "Points".to_string(),         // 0
             "ArrayProperty".to_string(),  // 1
@@ -153,49 +152,196 @@ fn a_legacy_array_of_tagged_structs_still_decodes_without_an_inner_struct_name()
             "None".to_string(),           // 3
             "Weight".to_string(),         // 4
             "IntProperty".to_string(),    // 5
+            "MyPoint".to_string(),        // 6
+            "Guid".to_string(),           // 7
         ],
-    };
-    // One element: a struct written as tagged properties (Weight=7) plus its None
-    // terminator, which is exactly how UE serializes a struct with no serializer.
-    let mut payload = Vec::new();
-    push_i32(&mut payload, 1); // element count
-    push_raw_name(&mut payload, 4); // Weight
-    push_raw_name(&mut payload, 5); // IntProperty
-    push_i32(&mut payload, 4); // size
-    push_i32(&mut payload, 0); // array index
-    payload.push(0); // HasPropertyGuid
-    push_i32(&mut payload, 7); // value
-    push_raw_name(&mut payload, 3); // None (ends the struct)
+    }
+}
 
-    let mut d = Vec::new();
-    push_raw_name(&mut d, 0); // Points
-    push_raw_name(&mut d, 1); // ArrayProperty
-    push_i32(&mut d, payload.len() as i32);
-    push_i32(&mut d, 0); // array index
-    push_raw_name(&mut d, 2); // inner type: "StructProperty", no struct name
-    d.push(0); // HasPropertyGuid
-    d.extend_from_slice(&payload);
-    push_raw_name(&mut d, 3); // None terminator
+/// The inner `FPropertyTag` that `FArrayProperty::SerializeItem` writes between a
+/// struct array's element count and its elements. It is a complete legacy tag, so
+/// it repeats the array's own name and carries the element struct name plus a
+/// struct GUID (`ue4 >= STRUCT_GUID_IN_PROPERTY_TAG`).
+fn push_inner_array_struct_tag(v: &mut Vec<u8>, struct_name_idx: i32, size: i32, ue5: i32) {
+    push_legacy_tag_header(v, 0, 2, size); // name "Points", type "StructProperty"
+    push_raw_name(v, struct_name_idx);
+    push_guid(v, 0, 0, 0, 0); // StructGuid
+    push_legacy_tag_tail(v, ue5);
+}
 
-    let ctx = ParseCtx {
-        names: &names,
+fn legacy_struct_array_ctx(names: &NameMap, file_version_ue5: i32) -> ParseCtx<'_> {
+    ParseCtx {
+        names,
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
-        file_version_ue5: crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
-            - 1,
-    };
+        file_version_ue5,
+    }
+}
+
+/// Wraps `payload` as one legacy `ArrayProperty(StructProperty)` tag plus a None
+/// terminator.
+fn legacy_struct_array_property(payload: &[u8], ue5: i32) -> Vec<u8> {
+    let mut d = Vec::new();
+    push_legacy_tag_header(&mut d, 0, 1, payload.len() as i32); // Points, ArrayProperty
+    push_raw_name(&mut d, 2); // inner type: "StructProperty", no struct name
+    push_legacy_tag_tail(&mut d, ue5);
+    d.extend_from_slice(payload);
+    push_raw_name(&mut d, 3); // None terminator
+    d
+}
+
+// The element struct name is on disk after all: below
+// PROPERTY_TAG_COMPLETE_TYPE_NAME, `FArrayProperty::SerializeItem` writes a full
+// inner FPropertyTag after the element count (PropertyArray.cpp). Reading it is
+// what makes a legacy array of structs decodable, so a UE5.0-5.3 array must
+// surface the struct name rather than becoming an opaque region.
+#[test]
+fn a_legacy_struct_array_recovers_its_element_struct_name_from_the_inner_tag() {
+    let names = legacy_struct_array_names();
+    let ue5 = crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME - 1;
+
+    // One element: a struct written as tagged properties (Weight=7) plus its None
+    // terminator, which is how UE serializes a struct with no custom serializer.
+    let mut element = Vec::new();
+    push_legacy_tag_header(&mut element, 4, 5, 4); // Weight, IntProperty
+    push_legacy_tag_tail(&mut element, ue5);
+    push_i32(&mut element, 7);
+    push_raw_name(&mut element, 3); // None (ends the struct)
+
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 1); // element count
+    push_inner_array_struct_tag(&mut payload, 6, element.len() as i32, ue5);
+    payload.extend_from_slice(&element);
+    let d = legacy_struct_array_property(&payload, ue5);
+
+    let ctx = legacy_struct_array_ctx(&names, ue5);
     let mut r = Reader::new(&d);
     let parse =
         crate::property::parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
 
     assert_eq!(parse.entries.len(), 1, "{:#?}", parse.entries);
-    let element = &parse.entries[0].value[0];
-    assert_eq!(element["properties"][0]["name"].as_str(), Some("Weight"));
-    assert_eq!(element["properties"][0]["value"].as_i64(), Some(7));
+    let decoded = &parse.entries[0].value[0];
+    assert_eq!(decoded["@struct"].as_str(), Some("MyPoint"));
+    assert_eq!(decoded["properties"][0]["name"].as_str(), Some("Weight"));
+    assert_eq!(decoded["properties"][0]["value"].as_i64(), Some(7));
     assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    assert_eq!(parse.decoded_end, Some(d.len() as u64));
+}
+
+// The recovered struct name also selects a native decoder, so a legacy array of
+// structs with a custom serializer decodes structurally instead of staying opaque.
+#[test]
+fn a_legacy_struct_array_decodes_native_elements_via_the_inner_tag() {
+    let names = legacy_struct_array_names();
+    let ue5 = crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME - 1;
+
+    let mut element = Vec::new();
+    push_guid(
+        &mut element,
+        0x1111_1111,
+        0x2222_2222,
+        0x3333_3333,
+        0x4444_4444,
+    );
+
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 1);
+    push_inner_array_struct_tag(&mut payload, 7, element.len() as i32, ue5); // "Guid"
+    payload.extend_from_slice(&element);
+    let d = legacy_struct_array_property(&payload, ue5);
+
+    let ctx = legacy_struct_array_ctx(&names, ue5);
+    let mut r = Reader::new(&d);
+    let parse =
+        crate::property::parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert_eq!(parse.entries.len(), 1, "{:#?}", parse.entries);
+    assert_eq!(
+        parse.entries[0].value[0].as_str(),
+        Some("11111111222222223333333344444444")
+    );
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+}
+
+// At PROPERTY_TAG_COMPLETE_TYPE_NAME the struct name moves into the container
+// tag's type tree and UE stops writing the inner tag, so reading one would
+// consume element bytes. Threshold and threshold-1 must disagree about the layout.
+#[test]
+fn a_complete_type_name_struct_array_has_no_inner_tag() {
+    let names = legacy_struct_array_names();
+    let ue5 = crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME;
+
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 1); // element count
+    push_guid(&mut payload, 0xAAAA_AAAA, 0, 0, 0); // element, no inner tag
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Points
+    push_raw_name(&mut d, 1); // ArrayProperty
+    push_i32(&mut d, 1); // one type parameter
+    push_raw_name(&mut d, 2); // StructProperty
+    push_i32(&mut d, 1); // one type parameter
+    push_raw_name(&mut d, 7); // Guid
+    push_i32(&mut d, 0);
+    push_i32(&mut d, payload.len() as i32);
+    d.push(0); // flags
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 3); // None
+
+    let ctx = legacy_struct_array_ctx(&names, ue5);
+    let mut r = Reader::new(&d);
+    let parse =
+        crate::property::parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert_eq!(parse.entries.len(), 1, "{:#?}", parse.entries);
+    assert_eq!(
+        parse.entries[0].value[0].as_str(),
+        Some("AAAAAAAA000000000000000000000000")
+    );
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+}
+
+// A truncated inner tag must fail the property rather than guess a struct name,
+// and the loop must still resynchronise on the tag's declared size so the
+// following property decodes.
+#[test]
+fn a_truncated_inner_array_tag_falls_back_without_desyncing() {
+    let names = legacy_struct_array_names();
+    let ue5 = crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME - 1;
+
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 1); // element count
+    push_raw_name(&mut payload, 0); // inner tag name, then nothing else
+
+    let mut d = legacy_struct_array_property(&payload, ue5);
+    // Replace the trailing None with a second property, then the terminator.
+    d.truncate(d.len() - 8);
+    push_legacy_tag_header(&mut d, 4, 5, 4); // Weight, IntProperty
+    push_legacy_tag_tail(&mut d, ue5);
+    push_i32(&mut d, 42);
+    push_raw_name(&mut d, 3); // None
+
+    let ctx = legacy_struct_array_ctx(&names, ue5);
+    let mut r = Reader::new(&d);
+    let parse =
+        crate::property::parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert_eq!(parse.entries.len(), 2, "{:#?}", parse.entries);
+    assert!(parse.entries[0].value["@unparsed"].is_string());
+    assert!(
+        parse
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_fallback"),
+        "{:#?}",
+        parse.diagnostics
+    );
+    // Resynchronised: the next property still decodes at the right offset.
+    assert_eq!(parse.entries[1].name, "Weight");
+    assert_eq!(parse.entries[1].value.as_i64(), Some(42));
 }
 
 #[test]

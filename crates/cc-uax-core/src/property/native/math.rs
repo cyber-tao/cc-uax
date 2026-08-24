@@ -74,13 +74,14 @@ pub(super) fn parse_math_struct(
             "r": r.read_f32()?, "g": r.read_f32()?, "b": r.read_f32()?, "a": r.read_f32()?
         }),
         "DateTime" | "Timespan" => json!(r.read_i64()?),
-        "Transform" => {
-            json!({
-                "rotation": vec4(r, lwc)?,
-                "translation": vec3(r, lwc)?,
-                "scale3d": vec3(r, lwc)?
-            })
-        }
+        // `Transform` deliberately has no arm. Alone among the core math types,
+        // FTransform's USTRUCT is *not* `immutable` (NoExportTypes.h, UE5.0-5.8)
+        // and TTransformStructOpsTypeTraits keeps `WithSerializer` commented out,
+        // so UScriptStruct::SerializeItem falls through to
+        // SerializeTaggedProperties: a StructProperty(Transform) payload is a
+        // tagged Rotation/Translation/Scale3D block, not three packed vectors.
+        // The explicit `FTransform3f`/`FTransform3d` variants *are* immutable and
+        // so keep their binary layout.
         "Transform3f" => {
             let rot = json!({
                 "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()?, "w": r.read_f32()?
@@ -88,6 +89,19 @@ pub(super) fn parse_math_struct(
             let trans = json!({ "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()? });
             let scale = json!({ "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()? });
             json!({ "rotation": rot, "translation": trans, "scale3d": scale })
+        }
+        "Transform3d" => {
+            json!({
+                "rotation": json!({
+                    "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()?, "w": r.read_f64()?
+                }),
+                "translation": json!({
+                    "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()?
+                }),
+                "scale3d": json!({
+                    "x": r.read_f64()?, "y": r.read_f64()?, "z": r.read_f64()?
+                })
+            })
         }
         "Box" => {
             json!({

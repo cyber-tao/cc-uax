@@ -46,6 +46,10 @@ pub struct PropertyParse {
     pub entries: Vec<PropertyEntry>,
     pub diagnostics: Vec<Diagnostic>,
     pub status: PropertyParseStatus,
+    /// Highest offset the tag loop consumed as evidence, or `None` when nothing
+    /// was consumed. A failed parse leaves this at the last completed property
+    /// so the caller never counts a leftover cursor as decoded bytes.
+    pub decoded_end: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -131,6 +135,7 @@ pub fn parse_object_properties_report(
                         .with_offset(r.pos()),
                     ],
                     status: PropertyParseStatus::FailedAfterEntries,
+                    decoded_end: None,
                 };
             }
         };
@@ -147,6 +152,7 @@ pub fn parse_object_properties_report(
                         .with_offset(r.pos()),
                     ],
                     status: PropertyParseStatus::FailedAfterEntries,
+                    decoded_end: None,
                 };
             }
             // Overridable serialization rewrites array/map layout into Removed/

@@ -2,6 +2,10 @@ use anyhow::{Result, bail};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
+/// Serialized size of an `FName` reference (name index + number). Counts and
+/// windows are checked against this before a name is read.
+pub const RAW_NAME_BYTES: u64 = 8;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Guid(pub [u32; 4]);
 
@@ -149,8 +153,65 @@ impl<'a> Reader<'a> {
         })
     }
 
+    /// Fails unless `bytes` more bytes fit inside `end`.
+    ///
+    /// Decoders working inside a bounded window (an export payload, a declared
+    /// tagged-property range, a property value) must check every read against
+    /// that window rather than against the end of the file, or a variable-length
+    /// field near the boundary silently reads unrelated bytes.
+    pub fn ensure_within(&self, end: u64, bytes: u64, what: &str) -> Result<()> {
+        let pos = self.pos();
+        if pos.saturating_add(bytes) > end {
+            bail!("{what} at byte {pos} needs {bytes} byte(s) but the window ends at {end}");
+        }
+        Ok(())
+    }
+
+    pub fn read_u8_within(&mut self, end: u64, what: &str) -> Result<u8> {
+        self.ensure_within(end, 1, what)?;
+        self.read_u8()
+    }
+
+    pub fn read_i32_within(&mut self, end: u64, what: &str) -> Result<i32> {
+        self.ensure_within(end, 4, what)?;
+        self.read_i32()
+    }
+
+    pub fn read_bool32_within(&mut self, end: u64, what: &str) -> Result<bool> {
+        Ok(self.read_i32_within(end, what)? != 0)
+    }
+
+    pub fn read_guid_within(&mut self, end: u64, what: &str) -> Result<Guid> {
+        self.ensure_within(end, 16, what)?;
+        self.read_guid()
+    }
+
+    pub fn read_raw_name_within(&mut self, end: u64, what: &str) -> Result<RawName> {
+        self.ensure_within(end, RAW_NAME_BYTES, what)?;
+        self.read_raw_name()
+    }
+
+    /// An `FString` whose length prefix *and* payload must both fit inside `end`.
+    /// A negative length counts UTF-16 code units, so the payload is twice as long.
+    pub fn read_fstring_within(&mut self, end: u64, what: &str) -> Result<String> {
+        self.ensure_within(end, 4, what)?;
+        let len = self.read_i32()?;
+        let payload = if len >= 0 {
+            len as u64
+        } else {
+            (len.unsigned_abs() as u64).saturating_mul(2)
+        };
+        self.ensure_within(end, payload, what)?;
+        let value = self.read_fstring_of_length(len)?;
+        Ok(value)
+    }
+
     pub fn read_fstring(&mut self) -> Result<String> {
         let len = self.read_i32()?;
+        self.read_fstring_of_length(len)
+    }
+
+    fn read_fstring_of_length(&mut self, len: i32) -> Result<String> {
         if len == 0 {
             return Ok(String::new());
         }

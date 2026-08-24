@@ -75,6 +75,12 @@ pub(crate) fn is_tagged_fallback_struct(name: &str) -> bool {
             | "PCGAttributePropertyInputSelector"
             | "PCGAttributePropertyOutputNoSourceSelector"
             | "PCGAttributePropertyOutputSelector"
+            // FTransform is the one core math type whose USTRUCT is not
+            // `immutable` and whose TTransformStructOpsTypeTraits leaves
+            // `WithSerializer` commented out (UE5.0-5.8), so UE writes a tagged
+            // Rotation/Translation/Scale3D block. FTransform3f/FTransform3d are
+            // immutable and keep their binary layout.
+            | "Transform"
     )
 }
 

@@ -510,3 +510,105 @@ fn skipped_serialize_property_is_marked_and_parsing_continues() {
     assert_eq!(entries[1].name, "After");
     assert_eq!(entries[1].value.as_i64(), Some(99));
 }
+
+// A tag header is variable length, so leaving room for its leading FName is not
+// enough. When the rest of the header would cross `end_limit` the parser must
+// stop inside the window instead of reading the next export's bytes, and must not
+// count the over-read as decoded evidence.
+#[test]
+fn a_tag_header_crossing_the_window_end_does_not_read_past_it() {
+    let names = NameMap {
+        names: vec![
+            "First".to_string(),       // 0
+            "IntProperty".to_string(), // 1
+            "None".to_string(),        // 2
+            "Straddler".to_string(),   // 3
+        ],
+    };
+    let mut d = Vec::new();
+    push_legacy_tag_header(&mut d, 0, 1, 4); // First, IntProperty
+    push_legacy_tag_tail(&mut d, 0);
+    push_i32(&mut d, 5);
+    let window_end = d.len() as u64 + 8; // room for a name, not for a whole header
+    push_raw_name(&mut d, 3); // Straddler: only its name fits
+    push_raw_name(&mut d, 1); // header continues past the window
+    push_i32(&mut d, 4);
+    push_i32(&mut d, 0);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: 0,
+    };
+    let mut r = Reader::new(&d);
+    let parse = parse_properties_report(&mut r, &ctx, window_end, "/properties");
+
+    assert_eq!(parse.entries.len(), 1, "{:#?}", parse.entries);
+    assert_eq!(parse.entries[0].name, "First");
+    assert_eq!(parse.status, PropertyParseStatus::FailedAfterEntries);
+    assert!(
+        parse
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_tag_parse_failed"),
+        "{:#?}",
+        parse.diagnostics
+    );
+    // Only the first property counts as decoded; the straddling header does not.
+    assert_eq!(parse.decoded_end, Some(window_end - 8));
+    assert!(
+        r.pos() <= window_end,
+        "reader ran past the window to {}",
+        r.pos()
+    );
+}
+
+// A value whose declared size runs past the window is a failure, and the bytes it
+// claimed must not be reported as decoded.
+#[test]
+fn a_value_overrunning_the_window_does_not_count_as_decoded() {
+    let names = NameMap {
+        names: vec![
+            "First".to_string(),       // 0
+            "IntProperty".to_string(), // 1
+            "None".to_string(),        // 2
+            "TooBig".to_string(),      // 3
+        ],
+    };
+    let mut d = Vec::new();
+    push_legacy_tag_header(&mut d, 0, 1, 4);
+    push_legacy_tag_tail(&mut d, 0);
+    push_i32(&mut d, 5);
+    let after_first = d.len() as u64;
+    push_legacy_tag_header(&mut d, 3, 1, 4096); // declared size exceeds the window
+    push_legacy_tag_tail(&mut d, 0);
+    push_i32(&mut d, 0);
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: 0,
+    };
+    let mut r = Reader::new(&d);
+    let parse = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert_eq!(parse.entries.len(), 1, "{:#?}", parse.entries);
+    assert_eq!(parse.status, PropertyParseStatus::FailedAfterEntries);
+    assert!(
+        parse
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_overruns_window"),
+        "{:#?}",
+        parse.diagnostics
+    );
+    assert_eq!(parse.decoded_end, Some(after_first));
+}

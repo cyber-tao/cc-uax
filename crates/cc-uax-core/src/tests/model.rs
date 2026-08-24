@@ -37,7 +37,8 @@ fn typename_rejects_excessive_nesting() {
     bytes.extend_from_slice(&0_i32.to_le_bytes());
     bytes.extend_from_slice(&0_i32.to_le_bytes());
 
-    let err = TypeName::parse(&mut Reader::new(&bytes), &names).unwrap_err();
+    let end = bytes.len() as u64;
+    let err = TypeName::parse(&mut Reader::new(&bytes), &names, end).unwrap_err();
     assert!(err.to_string().contains("nesting exceeds"));
 }
 

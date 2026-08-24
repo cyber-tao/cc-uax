@@ -182,6 +182,10 @@ impl Package {
                     .summary
                     .custom_version(custom::UE5_RELEASE_STREAM_OBJECT_VERSION)
                     .unwrap_or(-1),
+                editor_version: self
+                    .summary
+                    .custom_version(custom::EDITOR_OBJECT_VERSION)
+                    .unwrap_or(-1),
             },
             file_version_ue4: self.summary.file_version_ue4,
             file_version_ue5: self.summary.file_version_ue5,

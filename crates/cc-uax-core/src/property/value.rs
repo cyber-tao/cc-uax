@@ -1,4 +1,5 @@
 use super::native::{is_tagged_fallback_struct, parse_native_struct};
+use super::tag::read_inner_array_struct_name;
 use super::text::parse_text;
 use super::{
     ParseCtx, TypeName, ensure_within_value, entries_to_values, parse_properties, validate_count,
@@ -6,7 +7,7 @@ use super::{
 use crate::name::NameMap;
 use crate::reader::Reader;
 use crate::structured_value::{Value, json};
-use crate::version::ue5;
+use crate::version::{ue4, ue5};
 use anyhow::{Result, bail};
 
 pub(crate) fn parse_value(
@@ -99,7 +100,7 @@ pub(crate) fn parse_value(
             let inner = ty
                 .param(0)
                 .ok_or_else(|| anyhow::anyhow!("ArrayProperty missing element type"))?;
-            parse_collection(r, inner, ctx, prefer_native, value_end)?
+            parse_array(r, inner, ctx, prefer_native, value_end)?
         }
         "SetProperty" => {
             let inner = ty
@@ -136,6 +137,42 @@ fn has_enum_param(ty: &TypeName) -> bool {
         .unwrap_or(false)
 }
 
+/// `TArray` payload: element count, then — below
+/// [`ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME`] and for a struct element — the inner
+/// `FPropertyTag` UE writes to name the element struct, then the elements
+/// (`FArrayProperty::SerializeItem`). The container's own tag records only the
+/// element's *property* type, so that inner tag is the only place the
+/// `UScriptStruct` name appears on disk.
+fn parse_array(
+    r: &mut Reader,
+    inner: &TypeName,
+    ctx: &ParseCtx,
+    prefer_native: bool,
+    value_end: u64,
+) -> Result<Value> {
+    let count = r.read_i32()?;
+    let remaining_in_value = value_end.saturating_sub(r.pos());
+    validate_count(count, remaining_in_value, 1, "collection element")?;
+    let named_inner = if inner_array_tag_is_serialized(ctx, inner) {
+        let struct_name = read_inner_array_struct_name(r, ctx, value_end)?;
+        Some(TypeName::struct_of(struct_name))
+    } else {
+        None
+    };
+    let inner = named_inner.as_ref().unwrap_or(inner);
+    read_elements(r, inner, ctx, prefer_native, value_end, count)
+}
+
+/// Whether `FArrayProperty::SerializeItem` wrote an inner `FPropertyTag` for this
+/// element type. From [`ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME`] on, the struct name
+/// lives in the container tag's type tree instead and no inner tag is written.
+fn inner_array_tag_is_serialized(ctx: &ParseCtx, inner: &TypeName) -> bool {
+    ctx.file_version_ue5 < ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME
+        && ctx.file_version_ue4 >= ue4::INNER_ARRAY_TAG_INFO
+        && inner.name == "StructProperty"
+        && inner.params.is_empty()
+}
+
 fn parse_collection(
     r: &mut Reader,
     inner: &TypeName,
@@ -146,6 +183,17 @@ fn parse_collection(
     let count = r.read_i32()?;
     let remaining_in_value = value_end.saturating_sub(r.pos());
     validate_count(count, remaining_in_value, 1, "collection element")?;
+    read_elements(r, inner, ctx, prefer_native, value_end, count)
+}
+
+fn read_elements(
+    r: &mut Reader,
+    inner: &TypeName,
+    ctx: &ParseCtx,
+    prefer_native: bool,
+    value_end: u64,
+    count: i32,
+) -> Result<Value> {
     let mut arr = Vec::with_capacity(count as usize);
     for _ in 0..count {
         arr.push(parse_value(r, inner, ctx, prefer_native, value_end)?);

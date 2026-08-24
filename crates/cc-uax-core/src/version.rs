@@ -71,6 +71,7 @@ pub struct SerializationPolicy {
     pub fortnite_release_version: i32,
     pub property_bag_version: i32,
     pub ue5_release_stream_version: i32,
+    pub editor_version: i32,
 }
 
 impl Default for SerializationPolicy {
@@ -83,6 +84,7 @@ impl Default for SerializationPolicy {
             fortnite_release_version: -1,
             property_bag_version: -1,
             ue5_release_stream_version: -1,
+            editor_version: -1,
         }
     }
 }
@@ -111,6 +113,14 @@ pub mod custom {
     /// FFrameworkObjectVersion, which gates the EdGraph pin field layout.
     pub const FRAMEWORK_OBJECT_VERSION: Guid =
         Guid([0xCFFC_743F, 0x43B0_4480, 0x9391_14DF, 0x171D_2073]);
+    /// FEditorObjectVersion, which gates the package MetaData root map.
+    pub const EDITOR_OBJECT_VERSION: Guid =
+        Guid([0xE4B0_68ED, 0xF494_42E9, 0xA231_DA0B, 0x2E46_BB41]);
+
+    /// FEditorObjectVersion::RootMetaDataSupport — from this version on
+    /// `UMetaData::Serialize` writes a package-level root map after the
+    /// per-object map.
+    pub const EDITOR_ROOT_META_DATA_SUPPORT: i32 = 3;
 
     pub const EDGRAPH_PIN_SOURCE_INDEX: i32 = 50;
     /// FFrameworkObjectVersion::PinsStoreFName — pin names serialize as FName

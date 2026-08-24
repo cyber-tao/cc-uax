@@ -2715,3 +2715,84 @@ fn native_struct_niagara_data_channel_variable_alias_decodes() {
     assert_eq!(entries[0].value["name"].as_str(), Some("Color"));
     assert!(entries[0].value.get("@unparsed").is_none());
 }
+
+// FTransform is the one core math struct UE does not serialize in binary form:
+// its USTRUCT is not `immutable` and TTransformStructOpsTypeTraits leaves
+// `WithSerializer` commented out in every UE5.0-5.8 branch, so UE writes a tagged
+// Rotation/Translation/Scale3D block. Reading it as three packed vectors yields
+// denormal garbage and desynchronises whatever follows.
+#[test]
+fn transform_struct_is_decoded_as_tagged_properties_not_packed_vectors() {
+    let names = NameMap {
+        names: vec![
+            "Value".to_string(),          // 0
+            "StructProperty".to_string(), // 1
+            "Transform".to_string(),      // 2
+            "None".to_string(),           // 3
+            "Translation".to_string(),    // 4
+            "Vector".to_string(),         // 5
+        ],
+    };
+
+    // A tagged FTransform carrying just Translation, as UE would write it.
+    let mut value = Vec::new();
+    push_raw_name(&mut value, 4); // Translation
+    push_raw_name(&mut value, 1); // StructProperty
+    push_i32(&mut value, 1); // one type parameter
+    push_raw_name(&mut value, 5); // Vector
+    push_i32(&mut value, 0);
+    push_i32(&mut value, 24); // three doubles
+    value.push(0x08); // HasBinaryOrNativeSerialize
+    push_f64(&mut value, 1.0);
+    push_f64(&mut value, 2.0);
+    push_f64(&mut value, 3.0);
+    push_raw_name(&mut value, 3); // None ends the struct
+
+    let parse = parse_test_native_struct(&names, 2, 3, &value, SerializationPolicy::default());
+
+    assert_eq!(parse.entries.len(), 1, "{:#?}", parse.entries);
+    let decoded = &parse.entries[0].value;
+    assert_eq!(decoded["@struct"].as_str(), Some("Transform"));
+    assert_eq!(
+        decoded["properties"][0]["name"].as_str(),
+        Some("Translation")
+    );
+    assert_eq!(decoded["properties"][0]["value"]["z"].as_f64(), Some(3.0));
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+}
+
+// The explicit float/double variants *are* immutable, so they keep the packed
+// binary layout and must not be moved onto the tagged path with FTransform.
+#[test]
+fn explicit_transform_variants_keep_their_binary_layout() {
+    let names = NameMap {
+        names: vec![
+            "Value".to_string(),          // 0
+            "StructProperty".to_string(), // 1
+            "Transform3f".to_string(),    // 2
+            "None".to_string(),           // 3
+            "Transform3d".to_string(),    // 4
+        ],
+    };
+
+    let mut single = Vec::new();
+    for x in 0..10 {
+        push_f32(&mut single, x as f32);
+    }
+    let parse = parse_test_native_struct(&names, 2, 3, &single, SerializationPolicy::default());
+    assert_eq!(parse.entries.len(), 1, "{:#?}", parse.entries);
+    assert_eq!(parse.entries[0].value["rotation"]["x"].as_f64(), Some(0.0));
+    assert_eq!(parse.entries[0].value["scale3d"]["z"].as_f64(), Some(9.0));
+
+    let mut double = Vec::new();
+    for x in 0..10 {
+        push_f64(&mut double, x as f64);
+    }
+    let parse = parse_test_native_struct(&names, 4, 3, &double, SerializationPolicy::default());
+    assert_eq!(parse.entries.len(), 1, "{:#?}", parse.entries);
+    assert_eq!(
+        parse.entries[0].value["translation"]["x"].as_f64(),
+        Some(4.0)
+    );
+    assert_eq!(parse.entries[0].value["scale3d"]["z"].as_f64(), Some(9.0));
+}

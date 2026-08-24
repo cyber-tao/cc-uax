@@ -6,7 +6,7 @@
 use crate::name::NameMap;
 use crate::object::{ObjectExport, ObjectImport};
 use crate::property::read_soft_object_path;
-use crate::reader::Reader;
+use crate::reader::{RAW_NAME_BYTES, Reader};
 use crate::structured_value::{Value, json};
 use crate::summary::PackageFileSummary;
 use crate::version::ue5;
@@ -15,8 +15,6 @@ use anyhow::Result;
 /// Maximum outer-chain depth when resolving a full object name; guards against
 /// cyclic outer references in malformed packages.
 const MAX_RESOLVE_DEPTH: u32 = 64;
-/// An on-disk `FName` reference: 4-byte name-table index + 4-byte number.
-const RAW_NAME_BYTES: u64 = 8;
 /// The `int32` length that precedes every `FString` payload.
 const FSTRING_LENGTH_BYTES: u64 = 4;
 
@@ -246,7 +244,7 @@ pub(crate) fn parse_soft_package_references(
             Some(format!("soft package reference table seek failed: {err:#}")),
         );
     }
-    if (count as u64).saturating_mul(8) > r.remaining() {
+    if (count as u64).saturating_mul(RAW_NAME_BYTES) > r.remaining() {
         return (
             out,
             Some(format!(

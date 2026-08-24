@@ -5,15 +5,15 @@ use super::{
 };
 use crate::diagnostic::Diagnostic;
 use crate::name::NameMap;
-use crate::reader::Reader;
+use crate::reader::{RAW_NAME_BYTES, Reader};
 use crate::structured_value::{Value, json};
 use crate::version::{ue4, ue5};
 use anyhow::{Result, bail};
 
 const MAX_TYPE_NAME_DEPTH: usize = 64;
-/// `known_opaque` reason for a container element whose struct name the legacy
-/// `FPropertyTag` layout never wrote (see [`has_unnamed_inner_struct`]).
-const MISSING_INNER_STRUCT_NAME_REASON: &str = "the legacy property tag does not record the inner struct name, so the container payload cannot be decoded without a reflection registry";
+/// `known_opaque` reason for a set element or map key/value whose struct name the
+/// legacy `FPropertyTag` layout never wrote (see [`has_unnamed_inner_struct`]).
+const MISSING_INNER_STRUCT_NAME_REASON: &str = "the legacy property tag does not record a set/map element struct name, and unlike TArray the payload carries no inner tag, so the element cannot be decoded without a reflection registry";
 
 // FPropertyTag flag bits (EPropertyTagFlags).
 const TAG_FLAG_HAS_ARRAY_INDEX: u8 = 0x01;
@@ -30,19 +30,58 @@ pub struct TypeName {
 }
 
 /// True when a container element inside `ty` is typed only as `StructProperty`,
-/// with no `UScriptStruct` name.
+/// with no `UScriptStruct` name, *and* the payload carries no inner tag to
+/// recover it from.
 ///
 /// The legacy `FPropertyTag` layout (below
 /// [`ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME`]) records only a container element's
-/// *property* type and leaves the struct behind it to UE's reflection registry.
-/// Structs that serialize as tagged properties still decode from the bytes alone;
-/// those with a custom serializer cannot, and that is a limit of the on-disk
-/// format rather than a decoder defect, so it is reported as its own kind of gap.
+/// *property* type. `FArrayProperty::SerializeItem` compensates by writing a full
+/// inner `FPropertyTag` into the payload, so array elements stay decodable — see
+/// [`read_inner_array_struct_name`]. `FSetProperty::SerializeItem` and
+/// `FMapProperty::SerializeItem` write no such tag, so a set element or map
+/// key/value struct really is recoverable only from UE's reflection registry.
 fn has_unnamed_inner_struct(ty: &TypeName) -> bool {
+    let element_struct_name_is_in_payload = ty.name == "ArrayProperty";
     ty.params.iter().any(|param| {
-        (param.name == "StructProperty" && param.params.is_empty())
+        (!element_struct_name_is_in_payload
+            && param.name == "StructProperty"
+            && param.params.is_empty())
             || has_unnamed_inner_struct(param)
     })
+}
+
+/// Read the inner `FPropertyTag` that `FArrayProperty::SerializeItem` writes
+/// between a struct array's element count and its elements, and return the
+/// element's `UScriptStruct` name.
+///
+/// UE writes this tag whenever the archive predates
+/// [`ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME`], is at least
+/// [`ue4::INNER_ARRAY_TAG_INFO`], and the inner property is a struct
+/// (PropertyArray.cpp). It is written unconditionally, before the zero-element
+/// early-out, and it carries the struct name the container's own tag never
+/// records.
+pub(super) fn read_inner_array_struct_name(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    end_limit: u64,
+) -> Result<String> {
+    let name = ctx
+        .names
+        .resolve_raw(r.read_raw_name_within(end_limit, "inner array tag name")?);
+    if name == "None" || name.is_empty() {
+        bail!("inner array property tag is a None terminator");
+    }
+    let tag = read_legacy_property_tag(r, ctx, end_limit, name)?;
+    if tag.type_name.name != "StructProperty" {
+        bail!(
+            "inner array property tag declares {} rather than StructProperty",
+            tag.type_name.name
+        );
+    }
+    match tag.type_name.param(0) {
+        Some(param) if !param.name.is_empty() && param.name != "None" => Ok(param.name.clone()),
+        _ => bail!("inner array property tag carries no struct name"),
+    }
 }
 
 fn fallback_code(unnamed_inner_struct: bool) -> &'static str {
@@ -81,13 +120,19 @@ impl TypeName {
         TypeName { name, params }
     }
 
-    pub fn parse(r: &mut Reader, names: &NameMap) -> Result<Self> {
+    /// A `StructProperty` carrying a resolved `UScriptStruct` name, shaped the same
+    /// way a complete type name would carry it.
+    pub(super) fn struct_of(struct_name: String) -> Self {
+        Self::with_params("StructProperty".to_string(), vec![Self::leaf(struct_name)])
+    }
+
+    pub fn parse(r: &mut Reader, names: &NameMap, end_limit: u64) -> Result<Self> {
         let mut flat: Vec<(String, i32)> = Vec::new();
         let mut remaining: i64 = 1;
         let mut guard = 0usize;
         while remaining > 0 {
-            let name = names.resolve_raw(r.read_raw_name()?);
-            let inner = r.read_i32()?;
+            let name = names.resolve_raw(r.read_raw_name_within(end_limit, "type name node")?);
+            let inner = r.read_i32_within(end_limit, "type name parameter count")?;
             if !(0..=4096).contains(&inner) {
                 bail!("type name inner parameter count out of range: {inner}");
             }
@@ -156,6 +201,10 @@ pub(crate) fn parse_properties_report(
     let mut entries = Vec::new();
     let mut diagnostics = Vec::new();
     let mut status = PropertyParseStatus::Complete;
+    // Highest offset this loop actually consumed as evidence. It only advances
+    // past a completed tag/value pair or the `None` terminator, so a failed parse
+    // never donates its leftover cursor to the export's decoded byte total.
+    let mut decoded_end = None;
     let mut guard = 0usize;
     loop {
         guard += 1;
@@ -171,7 +220,7 @@ pub(crate) fn parse_properties_report(
             );
             break;
         }
-        if r.pos() + 8 > end_limit {
+        if r.pos().saturating_add(RAW_NAME_BYTES) > end_limit {
             status = if entries.is_empty() {
                 if r.pos() >= end_limit {
                     PropertyParseStatus::Empty
@@ -200,6 +249,8 @@ pub(crate) fn parse_properties_report(
                 if entries.is_empty() {
                     status = PropertyParseStatus::Empty;
                 }
+                // The terminator is consumed evidence: the block closed here.
+                decoded_end = Some(r.pos());
                 break;
             }
             Err(err) => {
@@ -351,17 +402,7 @@ pub(crate) fn parse_properties_report(
             }
         };
 
-        if r.seek(aligned).is_err() {
-            entries.push(PropertyEntry {
-                name: tag.name,
-                type_str: tag.type_name.display(),
-                array_index: tag.array_index,
-                value,
-                guid: tag.guid,
-            });
-            break;
-        }
-
+        let resynced = r.seek(aligned).is_ok();
         entries.push(PropertyEntry {
             name: tag.name,
             type_str: tag.type_name.display(),
@@ -369,11 +410,16 @@ pub(crate) fn parse_properties_report(
             value,
             guid: tag.guid,
         });
+        if !resynced {
+            break;
+        }
+        decoded_end = Some(aligned);
     }
     PropertyParse {
         entries,
         diagnostics,
         status,
+        decoded_end,
     }
 }
 
@@ -382,34 +428,39 @@ fn read_property_tag(
     ctx: &ParseCtx,
     end_limit: u64,
 ) -> Result<Option<PropertyTag>> {
-    let name_raw = r.read_raw_name()?;
+    let name_raw = r.read_raw_name_within(end_limit, "tag name")?;
     let name = ctx.names.resolve_raw(name_raw);
     if name == "None" || name.is_empty() {
         return Ok(None);
     }
     if ctx.file_version_ue5 >= ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME {
-        read_complete_property_tag(r, ctx, name).map(Some)
+        read_complete_property_tag(r, ctx, end_limit, name).map(Some)
     } else {
         read_legacy_property_tag(r, ctx, end_limit, name).map(Some)
     }
 }
 
-fn read_complete_property_tag(r: &mut Reader, ctx: &ParseCtx, name: String) -> Result<PropertyTag> {
-    let type_name = TypeName::parse(r, ctx.names)?;
-    let size = r.read_i32()?;
-    let flags = r.read_u8()?;
+fn read_complete_property_tag(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    end_limit: u64,
+    name: String,
+) -> Result<PropertyTag> {
+    let type_name = TypeName::parse(r, ctx.names, end_limit)?;
+    let size = r.read_i32_within(end_limit, "tag size")?;
+    let flags = r.read_u8_within(end_limit, "tag flags")?;
     let array_index = if flags & TAG_FLAG_HAS_ARRAY_INDEX != 0 {
-        r.read_i32()?
+        r.read_i32_within(end_limit, "tag array index")?
     } else {
         0
     };
     let guid = if flags & TAG_FLAG_HAS_PROPERTY_GUID != 0 {
-        Some(r.read_guid()?.to_hex())
+        Some(r.read_guid_within(end_limit, "tag property guid")?.to_hex())
     } else {
         None
     };
     if flags & TAG_FLAG_HAS_PROPERTY_EXTENSIONS != 0 {
-        parse_extensions(r)?;
+        parse_extensions(r, end_limit)?;
     }
     Ok(PropertyTag {
         name,
@@ -426,19 +477,21 @@ fn read_complete_property_tag(r: &mut Reader, ctx: &ParseCtx, name: String) -> R
 fn read_legacy_property_tag(
     r: &mut Reader,
     ctx: &ParseCtx,
-    _end_limit: u64,
+    end_limit: u64,
     name: String,
 ) -> Result<PropertyTag> {
-    let property_type = ctx.names.resolve_raw(r.read_raw_name()?);
-    let size = r.read_i32()?;
-    let array_index = r.read_i32()?;
-    let (type_name, bool_val) = read_legacy_type_name(r, ctx, &property_type)?;
+    let property_type = ctx
+        .names
+        .resolve_raw(r.read_raw_name_within(end_limit, "tag type")?);
+    let size = r.read_i32_within(end_limit, "tag size")?;
+    let array_index = r.read_i32_within(end_limit, "tag array index")?;
+    let (type_name, bool_val) = read_legacy_type_name(r, ctx, end_limit, &property_type)?;
     // FPropertyTag stores HasPropertyGuid as uint8 (PropertyTag.h), not a
     // 4-byte FArchive::SerializeBool. Reading it as bool32 desyncs every
     // following tag on UE5.0–5.4 packages (FileVersionUE5 < 1012).
     let guid = if ctx.file_version_ue4 >= ue4::PROPERTY_GUID_IN_PROPERTY_TAG {
-        if r.read_u8()? != 0 {
-            Some(r.read_guid()?.to_hex())
+        if r.read_u8_within(end_limit, "tag has property guid")? != 0 {
+            Some(r.read_guid_within(end_limit, "tag property guid")?.to_hex())
         } else {
             None
         }
@@ -446,7 +499,7 @@ fn read_legacy_property_tag(
         None
     };
     if ctx.file_version_ue5 >= ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION {
-        parse_extensions(r)?;
+        parse_extensions(r, end_limit)?;
     }
     Ok(PropertyTag {
         name,
@@ -463,23 +516,29 @@ fn read_legacy_property_tag(
 fn read_legacy_type_name(
     r: &mut Reader,
     ctx: &ParseCtx,
+    end_limit: u64,
     property_type: &str,
 ) -> Result<(TypeName, bool)> {
+    let name = |r: &mut Reader, field: &str| -> Result<String> {
+        Ok(ctx
+            .names
+            .resolve_raw(r.read_raw_name_within(end_limit, field)?))
+    };
     let ty = match property_type {
         "StructProperty" => {
-            let struct_name = ctx.names.resolve_raw(r.read_raw_name()?);
+            let struct_name = name(r, "tag struct name")?;
             if ctx.file_version_ue4 >= ue4::STRUCT_GUID_IN_PROPERTY_TAG {
-                let _struct_guid = r.read_guid()?;
+                let _struct_guid = r.read_guid_within(end_limit, "tag struct guid")?;
             }
             TypeName::with_params(property_type.to_string(), vec![TypeName::leaf(struct_name)])
         }
         "BoolProperty" => {
             // FPropertyTag::BoolVal is uint8 on disk (PropertyTag.h, UE5.0–5.8).
-            let bool_val = r.read_u8()? != 0;
+            let bool_val = r.read_u8_within(end_limit, "tag bool value")? != 0;
             return Ok((TypeName::leaf(property_type.to_string()), bool_val));
         }
         "ByteProperty" => {
-            let enum_name = ctx.names.resolve_raw(r.read_raw_name()?);
+            let enum_name = name(r, "tag enum name")?;
             let params = if enum_name.is_empty() || enum_name == "None" {
                 Vec::new()
             } else {
@@ -488,7 +547,7 @@ fn read_legacy_type_name(
             TypeName::with_params(property_type.to_string(), params)
         }
         "EnumProperty" => {
-            let enum_name = ctx.names.resolve_raw(r.read_raw_name()?);
+            let enum_name = name(r, "tag enum name")?;
             TypeName::with_params(
                 property_type.to_string(),
                 vec![
@@ -499,23 +558,23 @@ fn read_legacy_type_name(
         }
         "ArrayProperty" => {
             let inner = if ctx.file_version_ue4 >= ue4::INNER_ARRAY_TAG_INFO {
-                ctx.names.resolve_raw(r.read_raw_name()?)
+                name(r, "tag array inner type")?
             } else {
                 "None".to_string()
             };
             TypeName::with_params(property_type.to_string(), vec![TypeName::leaf(inner)])
         }
         "OptionalProperty" => {
-            let inner = ctx.names.resolve_raw(r.read_raw_name()?);
+            let inner = name(r, "tag optional inner type")?;
             TypeName::with_params(property_type.to_string(), vec![TypeName::leaf(inner)])
         }
         "SetProperty" if ctx.file_version_ue4 >= ue4::PROPERTY_TAG_SET_MAP_SUPPORT => {
-            let inner = ctx.names.resolve_raw(r.read_raw_name()?);
+            let inner = name(r, "tag set element type")?;
             TypeName::with_params(property_type.to_string(), vec![TypeName::leaf(inner)])
         }
         "MapProperty" if ctx.file_version_ue4 >= ue4::PROPERTY_TAG_SET_MAP_SUPPORT => {
-            let key = ctx.names.resolve_raw(r.read_raw_name()?);
-            let value = ctx.names.resolve_raw(r.read_raw_name()?);
+            let key = name(r, "tag map key type")?;
+            let value = name(r, "tag map value type")?;
             TypeName::with_params(
                 property_type.to_string(),
                 vec![TypeName::leaf(key), TypeName::leaf(value)],
@@ -526,7 +585,7 @@ fn read_legacy_type_name(
     Ok((ty, false))
 }
 
-fn parse_extensions(r: &mut Reader) -> Result<()> {
+fn parse_extensions(r: &mut Reader, end_limit: u64) -> Result<()> {
     // FPropertyTag::SerializePropertyExtensions in a binary archive writes the uint8
     // extension flags directly (SA_ATTRIBUTE has no presence prefix; the 4-byte
     // presence bool exists only for text archives via SA_OPTIONAL_ATTRIBUTE). If
@@ -536,13 +595,13 @@ fn parse_extensions(r: &mut Reader) -> Result<()> {
     // If HasExternalsObjects (0x04) is set (UE5.8+, CPF_ExperimentalExternalObjects),
     // a trailing bExperimentalExternalObjects bool32 follows.
     const HAS_EXTERNAL_OBJECTS_BIT: u8 = 0x04;
-    let ext = r.read_u8()?;
+    let ext = r.read_u8_within(end_limit, "tag extension flags")?;
     if ext & OVERRIDABLE_SERIALIZATION_BIT != 0 {
-        let _override_operation = r.read_u8()?;
-        let _experimental = r.read_bool32()?;
+        let _override_operation = r.read_u8_within(end_limit, "tag override operation")?;
+        let _experimental = r.read_bool32_within(end_limit, "tag overridable logic flag")?;
     }
     if ext & HAS_EXTERNAL_OBJECTS_BIT != 0 {
-        let _external_objects = r.read_bool32()?;
+        let _external_objects = r.read_bool32_within(end_limit, "tag external objects flag")?;
     }
     Ok(())
 }
