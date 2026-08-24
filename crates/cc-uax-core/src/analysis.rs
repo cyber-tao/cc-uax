@@ -94,6 +94,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
     let pcg_adapter = build_pcg_graphs(if wants_logic { &exports } else { &[] });
     let state_tree_adapter = build_state_tree_graphs(if wants_logic { &exports } else { &[] });
     known_opaque.extend(pcg_adapter.known_opaque.iter().cloned());
+    known_opaque.extend(state_tree_adapter.known_opaque.iter().cloned());
     dedupe_known_opaque(&mut known_opaque);
     let mut diagnostics = report
         .diagnostics
@@ -561,6 +562,9 @@ impl StateTreeCoverage {
         self.graphs_decoded < adapter.graph_exports_total
             || self.states_decoded < adapter.state_exports_total
             || adapter.states_incomplete > 0
+            // StateTree parameters and node bindings live in PropertyBags, so an
+            // opaque bag is missing semantics, exactly as it is for PCG.
+            || !adapter.known_opaque.is_empty()
             || adapter
                 .graphs
                 .iter()
@@ -575,24 +579,31 @@ fn compute_state_tree_coverage(adapter: &state_tree::StateTreeAdapterResult) -> 
         .filter(|graph| graph.editor_data_index.is_some())
         .count();
     let states_decoded = adapter.graphs.iter().map(|graph| graph.states.len()).sum();
-    let tasks_decoded = adapter
-        .graphs
-        .iter()
-        .flat_map(|graph| &graph.states)
-        .map(|state| state.tasks.len())
+    let states = || adapter.graphs.iter().flat_map(|graph| &graph.states);
+    // Tree-wide evaluators/global tasks and per-state single tasks are logic too;
+    // counting only `Tasks` reported a tree as having fewer nodes than it has.
+    let tasks_decoded = states()
+        .map(|state| state.tasks.len() + usize::from(state.single_task.is_some()))
+        .sum::<usize>()
+        + adapter
+            .graphs
+            .iter()
+            .map(|graph| graph.evaluators.len() + graph.global_tasks.len())
+            .sum::<usize>();
+    // Transition conditions were decoded but never counted, so a tree with only
+    // transition-level conditions reported zero.
+    let conditions_decoded = states()
+        .map(|state| {
+            state.enter_conditions.len()
+                + state.considerations.len()
+                + state
+                    .transitions
+                    .iter()
+                    .map(|transition| transition.conditions.len())
+                    .sum::<usize>()
+        })
         .sum::<usize>();
-    let conditions_decoded = adapter
-        .graphs
-        .iter()
-        .flat_map(|graph| &graph.states)
-        .map(|state| state.enter_conditions.len())
-        .sum::<usize>();
-    let transitions_decoded = adapter
-        .graphs
-        .iter()
-        .flat_map(|graph| &graph.states)
-        .map(|state| state.transitions.len())
-        .sum::<usize>();
+    let transitions_decoded = states().map(|state| state.transitions.len()).sum::<usize>();
     StateTreeCoverage {
         graphs_decoded,
         states_decoded,
@@ -853,11 +864,12 @@ fn build_capabilities(
             },
             detail: state_tree_partial.then(|| {
                 format!(
-                    "{}/{} graphs and {}/{} editor states decoded",
+                    "{}/{} graphs and {}/{} editor states decoded, {} opaque PropertyBag region(s)",
                     state_tree_coverage.graphs_decoded,
                     state_tree_adapter.graph_exports_total,
                     state_tree_coverage.states_decoded,
-                    state_tree_adapter.state_exports_total
+                    state_tree_adapter.state_exports_total,
+                    state_tree_adapter.known_opaque.len()
                 )
             }),
         });

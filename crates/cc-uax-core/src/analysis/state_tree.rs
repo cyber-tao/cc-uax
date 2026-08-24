@@ -1,11 +1,11 @@
 use super::typed::{
-    array, boolean, float, nested_properties, nested_property, object, object_ref_index,
-    object_ref_indices, object_ref_path, property, string,
+    array, boolean, collect_property_bag_gaps, float, nested_properties, nested_property, object,
+    object_ref_index, object_ref_indices, object_ref_path, property, resolved_object_refs, string,
 };
 use crate::graph_models::{
     StateTreeCondition, StateTreeGraph, StateTreeState, StateTreeTask, StateTreeTransition,
 };
-use crate::model::{AssetExport, AssetProperty, DecodedValue, PropertyDecodeStatus};
+use crate::model::{AssetExport, AssetProperty, DecodedValue, KnownOpaque, PropertyDecodeStatus};
 use std::collections::{BTreeMap, BTreeSet};
 
 const STATE_TREE_CLASS: &str = "/Script/StateTreeModule.StateTree";
@@ -17,6 +17,10 @@ pub(crate) struct StateTreeAdapterResult {
     pub(crate) state_exports_total: usize,
     pub(crate) states_incomplete: usize,
     pub(crate) graphs: Vec<StateTreeGraph>,
+    /// PropertyBag payloads that stayed opaque. StateTree carries its parameters
+    /// and node bindings in bags, so these are missing semantics and must block
+    /// the capability the same way PCG's do.
+    pub(crate) known_opaque: Vec<KnownOpaque>,
 }
 
 pub(crate) fn build_state_tree_graphs(exports: &[AssetExport]) -> StateTreeAdapterResult {
@@ -51,11 +55,18 @@ pub(crate) fn build_state_tree_graphs(exports: &[AssetExport]) -> StateTreeAdapt
         .collect::<Vec<_>>();
     graphs.sort_by_key(|graph| graph.index);
 
+    let known_opaque = if graph_exports.is_empty() {
+        Vec::new()
+    } else {
+        collect_property_bag_gaps(exports)
+    };
+
     StateTreeAdapterResult {
         graph_exports_total: graph_exports.len(),
         state_exports_total,
         states_incomplete,
         graphs,
+        known_opaque,
     }
 }
 
@@ -74,9 +85,25 @@ fn build_graph(
     }
 
     let roots_value = editor_data.and_then(|export| property(export, "SubTrees"));
-    let expected_roots = roots_value.and_then(array).map_or(0, <[DecodedValue]>::len);
-    let root_state_indices = roots_value.map(object_ref_indices).unwrap_or_default();
-    unresolved_state_references += expected_roots.saturating_sub(root_state_indices.len());
+    let (root_state_indices, dropped_roots) = roots_value
+        .map(resolved_object_refs)
+        .unwrap_or_else(|| (Vec::new(), 0));
+    unresolved_state_references += dropped_roots;
+
+    // Tree-wide logic lives on the editor data, not on any state: without these a
+    // report described a StateTree as having no global behaviour at all.
+    let evaluators = editor_data
+        .and_then(|export| property(export, "Evaluators"))
+        .map(build_node_list)
+        .unwrap_or_default();
+    let global_tasks = editor_data
+        .and_then(|export| property(export, "GlobalTasks"))
+        .map(build_node_list)
+        .unwrap_or_default();
+    let root_parameters = editor_data
+        .and_then(|export| property(export, "RootParameterPropertyBag"))
+        .map(nested_properties)
+        .unwrap_or_default();
 
     let mut states = editor_data_index.map_or_else(Vec::new, |editor_index| {
         exports
@@ -110,6 +137,7 @@ fn build_graph(
             .iter()
             .filter(|index| !state_indices.contains(index))
             .count();
+        unresolved_state_references += state.dropped_child_references;
     }
 
     StateTreeGraph {
@@ -118,9 +146,16 @@ fn build_graph(
         full_name: graph.full_name.clone(),
         editor_data_index,
         root_state_indices,
+        evaluators,
+        global_tasks,
+        root_parameters,
         states,
         unresolved_state_references,
     }
+}
+
+fn build_node_list(value: &DecodedValue) -> Vec<StateTreeTask> {
+    array(value).into_iter().flatten().map(build_task).collect()
 }
 
 fn is_descendant_of(
@@ -155,6 +190,8 @@ fn build_state(state: &AssetExport) -> StateTreeState {
         child_indices: property(state, "Children")
             .map(object_ref_indices)
             .unwrap_or_default(),
+        dropped_child_references: property(state, "Children")
+            .map_or(0, |value| resolved_object_refs(value).1),
         state_type: property(state, "Type").and_then(string).map(str::to_owned),
         selection_behavior: property(state, "SelectionBehavior")
             .and_then(string)
@@ -166,7 +203,18 @@ fn build_state(state: &AssetExport) -> StateTreeState {
             .flatten()
             .map(build_task)
             .collect(),
+        // A state configured with the single-task layout leaves `Tasks` empty, so
+        // reading only `Tasks` reported a state that does nothing.
+        single_task: property(state, "SingleTask")
+            .filter(|value| nested_property(value, "Node").is_some())
+            .map(build_task),
         enter_conditions: property(state, "EnterConditions")
+            .and_then(array)
+            .into_iter()
+            .flatten()
+            .map(build_condition)
+            .collect(),
+        considerations: property(state, "Considerations")
             .and_then(array)
             .into_iter()
             .flatten()
@@ -426,6 +474,133 @@ mod tests {
         assert_eq!(transition.target_name.as_deref(), Some("Root"));
         assert_eq!(transition.conditions.len(), 1);
         assert_eq!(transition.delay_seconds, Some(0.25));
+    }
+
+    // UStateTreeEditorData carries the tree-wide Evaluators and GlobalTasks and
+    // UStateTreeState carries SingleTask and Considerations. Reading only `Tasks`,
+    // `EnterConditions` and `Transitions` described a tree with global logic and a
+    // single-task state as doing nothing at all.
+    #[test]
+    fn tree_wide_and_single_task_logic_is_decoded() {
+        let node = |name: &str| {
+            editor_node(
+                "/Script/StateTreeModule.StateTreeDelayTask",
+                name,
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "bTaskEnabled",
+            )
+        };
+        let exports = vec![
+            export(
+                1,
+                "Tree",
+                STATE_TREE_CLASS,
+                0,
+                vec![prop("EditorData", object_ref(2, "Tree.EditorData"))],
+            ),
+            export(
+                2,
+                "EditorData",
+                STATE_TREE_EDITOR_DATA_CLASS,
+                1,
+                vec![
+                    prop("SubTrees", refs(&[(3, "Tree.EditorData.Root")])),
+                    prop("Evaluators", DecodedValue::Array(vec![node("Eval")])),
+                    prop("GlobalTasks", DecodedValue::Array(vec![node("Global")])),
+                ],
+            ),
+            export(
+                3,
+                "State_0",
+                STATE_TREE_STATE_CLASS,
+                2,
+                vec![
+                    prop("Name", text_value("Root")),
+                    prop("SingleTask", node("Only")),
+                    prop(
+                        "Considerations",
+                        DecodedValue::Array(vec![editor_node(
+                            "/Script/StateTreeModule.StateTreeConsideration",
+                            "Utility",
+                            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+                            "bConditionEnabled",
+                        )]),
+                    ),
+                ],
+            ),
+        ];
+
+        let result = build_state_tree_graphs(&exports);
+        let graph = &result.graphs[0];
+        assert_eq!(graph.evaluators.len(), 1);
+        assert_eq!(graph.evaluators[0].name.as_deref(), Some("Eval"));
+        assert_eq!(graph.global_tasks.len(), 1);
+        assert_eq!(graph.global_tasks[0].name.as_deref(), Some("Global"));
+
+        let state = &graph.states[0];
+        assert!(state.tasks.is_empty());
+        assert_eq!(
+            state
+                .single_task
+                .as_ref()
+                .and_then(|task| task.name.clone()),
+            Some("Only".to_string())
+        );
+        assert_eq!(state.considerations.len(), 1);
+        assert_eq!(graph.unresolved_state_references, 0);
+    }
+
+    // A `Children` entry that resolves to nothing is lost evidence, not a shorter
+    // list: dropping it silently let a truncated array report zero unresolved
+    // references, which RigVM already counted correctly.
+    #[test]
+    fn unresolvable_child_references_are_counted() {
+        let exports = vec![
+            export(
+                1,
+                "Tree",
+                STATE_TREE_CLASS,
+                0,
+                vec![prop("EditorData", object_ref(2, "Tree.EditorData"))],
+            ),
+            export(
+                2,
+                "EditorData",
+                STATE_TREE_EDITOR_DATA_CLASS,
+                1,
+                vec![prop("SubTrees", refs(&[(3, "Tree.EditorData.Root")]))],
+            ),
+            export(
+                3,
+                "State_0",
+                STATE_TREE_STATE_CLASS,
+                2,
+                vec![
+                    prop("Name", text_value("Root")),
+                    // Two entries, only one of which is a usable export index.
+                    prop(
+                        "Children",
+                        DecodedValue::Array(vec![
+                            object_ref(4, "Tree.EditorData.Root.Child"),
+                            DecodedValue::Null,
+                        ]),
+                    ),
+                ],
+            ),
+            export(
+                4,
+                "State_1",
+                STATE_TREE_STATE_CLASS,
+                3,
+                vec![prop("Name", text_value("Child"))],
+            ),
+        ];
+
+        let result = build_state_tree_graphs(&exports);
+        let graph = &result.graphs[0];
+        assert_eq!(graph.states[0].child_indices, vec![4]);
+        assert_eq!(graph.states[0].dropped_child_references, 1);
+        assert_eq!(graph.unresolved_state_references, 1);
     }
 
     #[test]

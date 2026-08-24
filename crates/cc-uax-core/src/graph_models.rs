@@ -77,6 +77,19 @@ pub struct StateTreeGraph {
     pub editor_data_index: Option<i32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub root_state_indices: Vec<i32>,
+    /// `UStateTreeEditorData::Evaluators`: tree-wide evaluators that run before
+    /// any state's tasks. Omitting them lost the only evidence of global logic.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evaluators: Vec<StateTreeTask>,
+    /// `UStateTreeEditorData::GlobalTasks`: tasks active for the whole tree rather
+    /// than one state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub global_tasks: Vec<StateTreeTask>,
+    /// `UStateTreeEditorData::RootParameterPropertyBag`, the tree's public
+    /// parameters. Present as decoded properties, or absent when the bag stayed
+    /// opaque.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub root_parameters: Vec<AssetProperty>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub states: Vec<StateTreeState>,
     #[serde(default, skip_serializing_if = "crate::model::is_zero_usize")]
@@ -95,6 +108,10 @@ pub struct StateTreeState {
     pub parent_index: Option<i32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub child_indices: Vec<i32>,
+    /// `Children` entries that did not resolve to an export index. Counted so a
+    /// truncated child array cannot look the same as a short one.
+    #[serde(default, skip_serializing_if = "crate::model::is_zero_usize")]
+    pub dropped_child_references: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -103,8 +120,16 @@ pub struct StateTreeState {
     pub enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tasks: Vec<StateTreeTask>,
+    /// `UStateTreeState::SingleTask`. A state configured with the single-task
+    /// layout leaves `tasks` empty, so reading only `Tasks` reported a state that
+    /// does nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub single_task: Option<StateTreeTask>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enter_conditions: Vec<StateTreeCondition>,
+    /// `UStateTreeState::Considerations`, the utility-selection nodes (UE5.5+).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub considerations: Vec<StateTreeCondition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transitions: Vec<StateTreeTransition>,
 }

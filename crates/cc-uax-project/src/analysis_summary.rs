@@ -83,7 +83,19 @@ pub struct StateTreeGraphSummary {
     pub full_name: String,
     pub states: usize,
     pub tasks: usize,
+    /// Per-state `SingleTask` nodes, counted apart from `Tasks` because a state
+    /// using that layout has an empty `Tasks` array.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub single_tasks: usize,
+    /// Tree-wide `UStateTreeEditorData::Evaluators`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub evaluators: usize,
+    /// Tree-wide `UStateTreeEditorData::GlobalTasks`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub global_tasks: usize,
     pub enter_conditions: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub considerations: usize,
     pub transitions: usize,
     pub transition_conditions: usize,
     pub child_links: usize,
@@ -318,10 +330,22 @@ impl StateTreeGraphSummary {
             full_name: graph.full_name.clone(),
             states: graph.states.len(),
             tasks: graph.states.iter().map(|state| state.tasks.len()).sum(),
+            single_tasks: graph
+                .states
+                .iter()
+                .filter(|state| state.single_task.is_some())
+                .count(),
+            evaluators: graph.evaluators.len(),
+            global_tasks: graph.global_tasks.len(),
             enter_conditions: graph
                 .states
                 .iter()
                 .map(|state| state.enter_conditions.len())
+                .sum(),
+            considerations: graph
+                .states
+                .iter()
+                .map(|state| state.considerations.len())
                 .sum(),
             transitions: graph
                 .states

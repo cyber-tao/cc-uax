@@ -1,16 +1,15 @@
 use super::typed::{
-    array, integer, nested_property, object, object_ref_index, object_ref_indices, object_ref_path,
-    property, string, text,
+    array, collect_property_bag_gaps, integer, nested_property, object_ref_index,
+    object_ref_indices, object_ref_path, property, string, text,
 };
 use crate::graph_models::{PcgEdge, PcgGraph, PcgNode, PcgPin, PinDirection};
-use crate::model::{AssetExport, DecodedValue, KnownOpaque, KnownOpaqueKind, OpaqueByteRange};
+use crate::model::{AssetExport, DecodedValue, KnownOpaque};
 use std::collections::{BTreeMap, BTreeSet};
 
 const PCG_GRAPH_CLASS: &str = "/Script/PCG.PCGGraph";
 const PCG_NODE_CLASS: &str = "/Script/PCG.PCGNode";
 const PCG_PIN_CLASS: &str = "/Script/PCG.PCGPin";
 const PCG_EDGE_CLASS: &str = "/Script/PCG.PCGEdge";
-const PROPERTY_BAG_TYPE: &str = "InstancedPropertyBag";
 
 pub(crate) struct PcgAdapterResult {
     pub(crate) graph_exports_total: usize,
@@ -253,113 +252,6 @@ fn build_pin(
         edge_indices,
         missing_edges,
     )
-}
-
-fn collect_property_bag_gaps(exports: &[AssetExport]) -> Vec<KnownOpaque> {
-    let mut opaque = Vec::new();
-    let mut seen_paths = BTreeSet::new();
-    for export in exports {
-        for property in &export.properties {
-            let path = format!(
-                "/exports/{}/properties/{}",
-                export.index,
-                json_pointer_segment(&property.name)
-            );
-            if property.type_name.contains(PROPERTY_BAG_TYPE)
-                && has_serialized_payload(&property.value)
-            {
-                push_property_bag_gap(&path, &property.value, &mut seen_paths, &mut opaque);
-            }
-            collect_nested_property_bags(&property.value, &path, &mut seen_paths, &mut opaque);
-        }
-    }
-    opaque
-}
-
-fn collect_nested_property_bags(
-    value: &DecodedValue,
-    parent_path: &str,
-    seen_paths: &mut BTreeSet<String>,
-    opaque: &mut Vec<KnownOpaque>,
-) {
-    match value {
-        DecodedValue::Array(values) => {
-            for value in values {
-                collect_nested_property_bags(value, parent_path, seen_paths, opaque);
-            }
-        }
-        DecodedValue::Object(values) => {
-            let nested_name = values.get("name").and_then(string);
-            let nested_type = values.get("type").and_then(string);
-            let nested_value = values.get("value");
-            if let (Some(name), Some(type_name), Some(value)) =
-                (nested_name, nested_type, nested_value)
-                && type_name.contains(PROPERTY_BAG_TYPE)
-                && has_serialized_payload(value)
-            {
-                let path = format!("{parent_path}/{}", json_pointer_segment(name));
-                push_property_bag_gap(&path, value, seen_paths, opaque);
-                return;
-            }
-            for value in values.values() {
-                collect_nested_property_bags(value, parent_path, seen_paths, opaque);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn has_serialized_payload(value: &DecodedValue) -> bool {
-    object(value)
-        .and_then(|value| value.get("serialized_data"))
-        .and_then(object)
-        .and_then(|value| value.get("size"))
-        .and_then(integer)
-        .is_some_and(|size| size > 0)
-}
-
-fn push_property_bag_gap(
-    path: &str,
-    value: &DecodedValue,
-    seen_paths: &mut BTreeSet<String>,
-    opaque: &mut Vec<KnownOpaque>,
-) {
-    if !seen_paths.insert(path.to_owned()) {
-        return;
-    }
-    opaque.push(KnownOpaque {
-        path: path.to_owned(),
-        kind: KnownOpaqueKind::PropertyValue,
-        type_name: Some(PROPERTY_BAG_TYPE.to_owned()),
-        reason: "registry-dependent PropertyBag serialized_data is retained as opaque".to_owned(),
-        byte_range: serialized_payload_range(value),
-    });
-}
-
-fn serialized_payload_range(value: &DecodedValue) -> Option<OpaqueByteRange> {
-    let payload = object(value)
-        .and_then(|value| value.get("serialized_data"))
-        .and_then(object)?;
-    let start = payload.get("start").and_then(integer)?;
-    let end = payload.get("end").and_then(integer)?;
-    let size = payload.get("size").and_then(integer)?;
-    if start < 0 || end < start || size < 0 || end - start != size {
-        return None;
-    }
-    Some(OpaqueByteRange {
-        start: start as u64,
-        end: end as u64,
-        size: size as u64,
-        preview: payload
-            .get("preview")
-            .and_then(string)
-            .unwrap_or_default()
-            .to_owned(),
-    })
-}
-
-fn json_pointer_segment(value: &str) -> String {
-    value.replace('~', "~0").replace('/', "~1")
 }
 
 #[cfg(test)]
