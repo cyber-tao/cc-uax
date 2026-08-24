@@ -3,8 +3,8 @@ use crate::entry_points::load_project_entry_points;
 use crate::{
     Adjacency, AssetAnalysisSummary, AssetKind, AssetOwnership, AssetRecord, CachePathPolicy,
     ExternalPackageKind, MountTable, ProjectAnalysisSummary, ProjectEntryPoints, ProjectIndex,
-    ProjectLayout, ProjectReachability, ProjectReachabilityRoot, ScanDiagnostic, ScanFailure,
-    ScanFailureStage, ScanStats, package_path_from_relative, strip_asset_extension,
+    ProjectLayout, ProjectReachability, ProjectReachabilityRoot, RootResolution, ScanDiagnostic,
+    ScanFailure, ScanFailureStage, ScanStats, package_path_from_relative, strip_asset_extension,
 };
 use cc_uax_core::{AnalysisStatus, AssetAnalysis, AssetView, DecodedValue, PackageView};
 use serde::{Deserialize, Serialize};
@@ -498,7 +498,7 @@ fn build_project_reachability(
     failed_assets: usize,
     canonical: &HashMap<String, String>,
 ) -> ProjectReachability {
-    let configured_roots = configured_roots(entry_points, canonical);
+    let configured_roots = configured_roots(entry_points, assets, canonical);
     let mut reachable_runtime_packages = BTreeSet::new();
     let mut ownership_closure_members = BTreeSet::new();
     let mut queue = configured_roots
@@ -571,15 +571,51 @@ fn build_project_reachability(
 
 fn configured_roots(
     entry_points: &ProjectEntryPoints,
+    assets: &BTreeMap<String, AssetRecord>,
     canonical: &HashMap<String, String>,
 ) -> Vec<ProjectReachabilityRoot> {
     let mut roots = Vec::new();
     for reference in entry_points.defaults.values() {
-        roots.push(reachability_root(None, reference, canonical));
+        roots.push(reachability_root(None, reference, assets, canonical));
     }
     for (platform, references) in &entry_points.platforms {
         for reference in references.values() {
-            roots.push(reachability_root(Some(platform), reference, canonical));
+            roots.push(reachability_root(
+                Some(platform),
+                reference,
+                assets,
+                canonical,
+            ));
+        }
+    }
+    // Cook roots are what a build actually ships, so they are roots in their own
+    // right. `GameDefaultMap` is frequently a developer map, which left the real
+    // shipped maps looking unreachable.
+    for reference in &entry_points.cook_roots {
+        roots.push(reachability_root(None, reference, assets, canonical));
+    }
+    for reference in &entry_points.cook_directories {
+        let prefix = format!("{}/", reference.package_path.trim_end_matches('/'));
+        let mut matched = false;
+        for package in assets.keys() {
+            if package
+                .to_ascii_lowercase()
+                .starts_with(&prefix.to_ascii_lowercase())
+            {
+                matched = true;
+                roots.push(ProjectReachabilityRoot {
+                    key: reference.key.clone(),
+                    platform: None,
+                    source: reference.source.clone(),
+                    object_path: reference.object_path.clone(),
+                    package_path: package.clone(),
+                    resolved_package: Some(package.clone()),
+                    resolution: RootResolution::Indexed,
+                });
+            }
+        }
+        if !matched {
+            roots.push(reachability_root(None, reference, assets, canonical));
         }
     }
     roots
@@ -588,15 +624,25 @@ fn configured_roots(
 fn reachability_root(
     platform: Option<&String>,
     reference: &crate::ConfigReference,
+    assets: &BTreeMap<String, AssetRecord>,
     canonical: &HashMap<String, String>,
 ) -> ProjectReachabilityRoot {
+    let resolved_package = canonical_package(canonical, &reference.package_path);
+    // `canonical` also holds every reference *target*, including packages under no
+    // scanned mount, so a resolved name alone never proved the root exists here.
+    let resolution = match &resolved_package {
+        Some(package) if assets.contains_key(package) => RootResolution::Indexed,
+        Some(_) => RootResolution::ReferencedOnly,
+        None => RootResolution::Unresolved,
+    };
     ProjectReachabilityRoot {
         key: reference.key.clone(),
         platform: platform.cloned(),
         source: reference.source.clone(),
         object_path: reference.object_path.clone(),
         package_path: reference.package_path.clone(),
-        resolved_package: canonical_package(canonical, &reference.package_path),
+        resolved_package,
+        resolution,
     }
 }
 

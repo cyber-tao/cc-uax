@@ -48,41 +48,33 @@ pub struct MountTable {
 }
 
 impl MountTable {
+    /// `/Game` plus every plugin content root Unreal would mount.
+    ///
+    /// Leaving plugin roots out made their packages invisible to inventory,
+    /// adjacency and reachability, and asking users to add them by hand is worse
+    /// than doing it here: the mount name is the `.uplugin` base name, which
+    /// routinely differs from the directory name, so a hand-written `--mount`
+    /// silently invents package paths the project does not contain.
     pub fn default_for(layout: &ProjectLayout) -> Self {
-        Self {
-            mounts: vec![MountSpec {
-                package_root: "/Game".to_string(),
-                disk_root: layout.content_root().to_path_buf(),
-            }],
+        let mut mounts = vec![MountSpec {
+            package_root: "/Game".to_string(),
+            disk_root: layout.content_root().to_path_buf(),
+        }];
+        for plugin in layout.plugin_content_roots() {
+            mounts.push(MountSpec {
+                package_root: plugin.package_root,
+                disk_root: plugin.content_dir,
+            });
         }
+        Self { mounts }
     }
 
     pub fn parse(layout: &ProjectLayout, value: &str) -> Result<Self, MountTableError> {
         let mut mounts = Vec::new();
         for raw in value.split(',') {
-            let token = raw.trim();
-            if token.is_empty() {
-                continue;
+            if let Some(spec) = parse_mount_token(layout, raw)? {
+                mounts.push(spec);
             }
-            let (package_root, disk_path) = match token.split_once('=') {
-                Some((package_root, disk_path)) if !disk_path.trim().is_empty() => {
-                    (package_root, layout.project_root().join(disk_path.trim()))
-                }
-                Some((_, _)) => {
-                    return Err(MountTableError::Invalid(format!(
-                        "mount disk path is empty in '{token}'"
-                    )));
-                }
-                None if token.eq_ignore_ascii_case("/Game") => {
-                    (token, layout.content_root().to_path_buf())
-                }
-                None => {
-                    return Err(MountTableError::Invalid(format!(
-                        "mount '{token}' needs a project-relative disk path, for example /Plugin=Plugins/X/Content"
-                    )));
-                }
-            };
-            mounts.push(MountSpec::new(package_root, disk_path)?);
         }
         if mounts.is_empty() {
             return Err(MountTableError::Invalid(
@@ -92,11 +84,26 @@ impl MountTable {
         Ok(Self { mounts })
     }
 
-    pub fn new(mounts: Vec<MountSpec>) -> Result<Self, MountTableError> {
-        if mounts.is_empty() {
-            return Err(MountTableError::Invalid(
-                "mount table must contain at least one mapping".to_string(),
-            ));
+    /// The default mounts with `requested` applied on top.
+    ///
+    /// Explicit mounts add to the auto-discovered set rather than replacing it,
+    /// because a user naming one plugin root should not silently drop `/Game` or
+    /// the project's other plugins. A request for a root that already exists
+    /// replaces it, which is how a caller redirects a mount deliberately.
+    pub fn resolve(layout: &ProjectLayout, requested: &[String]) -> Result<Self, MountTableError> {
+        let mut mounts = Self::default_for(layout).mounts;
+        for raw in requested.iter().flat_map(|value| value.split(',')) {
+            let Some(spec) = parse_mount_token(layout, raw)? else {
+                continue;
+            };
+            match mounts.iter_mut().find(|existing| {
+                existing
+                    .package_root
+                    .eq_ignore_ascii_case(&spec.package_root)
+            }) {
+                Some(existing) => *existing = spec,
+                None => mounts.push(spec),
+            }
         }
         Ok(Self { mounts })
     }
@@ -147,6 +154,34 @@ impl std::error::Error for MountTableError {
             Self::Invalid(_) => None,
         }
     }
+}
+
+/// One `PACKAGE_ROOT=RELATIVE_DIR` token, or `None` when the token is blank.
+fn parse_mount_token(
+    layout: &ProjectLayout,
+    raw: &str,
+) -> Result<Option<MountSpec>, MountTableError> {
+    let token = raw.trim();
+    if token.is_empty() {
+        return Ok(None);
+    }
+    let (package_root, disk_path) = match token.split_once('=') {
+        Some((package_root, disk_path)) if !disk_path.trim().is_empty() => {
+            (package_root, layout.project_root().join(disk_path.trim()))
+        }
+        Some((_, _)) => {
+            return Err(MountTableError::Invalid(format!(
+                "mount disk path is empty in '{token}'"
+            )));
+        }
+        None if token.eq_ignore_ascii_case("/Game") => (token, layout.content_root().to_path_buf()),
+        None => {
+            return Err(MountTableError::Invalid(format!(
+                "mount '{token}' needs a project-relative disk path, for example /Plugin=Plugins/X/Content"
+            )));
+        }
+    };
+    MountSpec::new(package_root, disk_path).map(Some)
 }
 
 fn normalize_package_root(value: &str) -> Result<String, MountTableError> {

@@ -10,6 +10,20 @@ pub struct ProjectLayout {
     project_file: Option<PathBuf>,
 }
 
+/// A plugin content root as Unreal would mount it.
+///
+/// `FPluginManager` mounts `/{PluginName}/` where `PluginName` is the `.uplugin`
+/// file's base name, *not* its directory name (`PluginManager.cpp`). Three of the
+/// nine plugins in the reference corpus disagree on those two — `MetaXR` ships
+/// `OculusXR.uplugin`, `LEJson` ships `LowEntryJson.uplugin`, `UAssetBrower5.3`
+/// ships `UAssetBrowser.uplugin` — so guessing from the directory name produces
+/// package paths that do not exist in the project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginContentRoot {
+    pub package_root: String,
+    pub content_dir: PathBuf,
+}
+
 impl ProjectLayout {
     pub fn discover(path: impl AsRef<Path>) -> Result<Self, ProjectLayoutError> {
         let input = canonicalize(path.as_ref(), "input path")?;
@@ -121,6 +135,25 @@ impl ProjectLayout {
         self.project_file.as_deref()
     }
 
+    /// Plugin content roots under `Plugins/`, mounted the way Unreal mounts them.
+    ///
+    /// Without these, plugin packages are invisible to inventory, adjacency,
+    /// reachability and World Partition ownership even though the project loads
+    /// them: the reference corpus hides 254, 109 and 60 assets plus four maps
+    /// behind them. A plugin directory with no `Content` is skipped, since it
+    /// cannot contribute packages.
+    pub fn plugin_content_roots(&self) -> Vec<PluginContentRoot> {
+        let mut roots = Vec::new();
+        let plugins_dir = self.project_root.join("Plugins");
+        if !plugins_dir.is_dir() {
+            return roots;
+        }
+        collect_plugin_roots(&plugins_dir, &mut roots, 0);
+        roots.sort_by(|left, right| left.package_root.cmp(&right.package_root));
+        roots.dedup_by(|left, right| left.package_root == right.package_root);
+        roots
+    }
+
     fn discover_from_ancestor(path: &Path) -> Result<Self, ProjectLayoutError> {
         for ancestor in path.ancestors() {
             if file_name_eq(ancestor, "Content") {
@@ -187,6 +220,51 @@ impl std::error::Error for ProjectLayoutError {
             Self::Io { source, .. } => Some(source),
             Self::Invalid(_) => None,
         }
+    }
+}
+
+/// Plugins nest (`Plugins/NVIDIA/DLSS/DLSS.uplugin` in the reference corpus), so
+/// the walk recurses, but a plugin never contains another plugin's content root
+/// so it stops descending once it finds a `.uplugin`.
+fn collect_plugin_roots(dir: &Path, roots: &mut Vec<PluginContentRoot>, depth: u32) {
+    const MAX_PLUGIN_NESTING: u32 = 8;
+    if depth > MAX_PLUGIN_NESTING {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut subdirs = Vec::new();
+    let mut plugin_name = None;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            subdirs.push(path);
+        } else if has_extension(&path, "uplugin") {
+            let name = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .map(str::to_owned);
+            // Deterministic when a directory somehow holds two descriptors.
+            plugin_name = match (plugin_name, name) {
+                (Some(current), Some(candidate)) if candidate < current => Some(candidate),
+                (Some(current), _) => Some(current),
+                (None, candidate) => candidate,
+            };
+        }
+    }
+    if let Some(name) = plugin_name {
+        if let Some(content_dir) = subdirs.iter().find(|path| file_name_eq(path, "Content")) {
+            roots.push(PluginContentRoot {
+                package_root: format!("/{name}"),
+                content_dir: content_dir.clone(),
+            });
+        }
+        return;
+    }
+    subdirs.sort_by_key(|path| normalized_path(path));
+    for subdir in subdirs {
+        collect_plugin_roots(&subdir, roots, depth + 1);
     }
 }
 

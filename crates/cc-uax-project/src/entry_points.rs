@@ -6,6 +6,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 const GAME_MAPS_SETTINGS_SECTION: &str = "/Script/EngineSettings.GameMapsSettings";
+/// Where the packaging settings that define what actually ships live.
+const PACKAGING_SETTINGS_SECTION: &str = "/Script/UnrealEd.ProjectPackagingSettings";
 /// How UE writes a null object reference in an `.ini` value.
 const NULL_OBJECT_REFERENCE: &str = "None";
 const ENTRY_POINT_KEYS: [&str; 7] = [
@@ -17,6 +19,11 @@ const ENTRY_POINT_KEYS: [&str; 7] = [
     "GlobalDefaultGameMode",
     "GlobalDefaultServerGameMode",
 ];
+/// `+MapsToCook=(FilePath="/Game/...")`: the maps a build actually ships.
+const MAPS_TO_COOK_KEY: &str = "MapsToCook";
+/// `+DirectoriesToAlwaysCook=(Path="/Game/...")`: a package-path prefix that
+/// ships whether or not anything references it.
+const DIRECTORIES_TO_COOK_KEY: &str = "DirectoriesToAlwaysCook";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigReference {
@@ -30,6 +37,16 @@ pub struct ConfigReference {
 pub struct ProjectEntryPoints {
     pub defaults: BTreeMap<String, ConfigReference>,
     pub platforms: BTreeMap<String, BTreeMap<String, ConfigReference>>,
+    /// Packages a build ships regardless of what references them, from
+    /// `ProjectPackagingSettings`. These are the project's real content roots:
+    /// `GameDefaultMap` is often a developer map, and without the cook list the
+    /// maps that actually ship look unreachable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cook_roots: Vec<ConfigReference>,
+    /// Package-path prefixes from `+DirectoriesToAlwaysCook`. Every indexed
+    /// package under one of these ships.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cook_directories: Vec<ConfigReference>,
 }
 
 impl ProjectEntryPoints {
@@ -54,12 +71,13 @@ pub(crate) fn load_project_entry_points(
 ) -> (ProjectEntryPoints, Vec<ScanDiagnostic>) {
     let mut diagnostics = Vec::new();
     let mut defaults = BTreeMap::new();
+    let mut cook = CookRoots::default();
     let config_root = layout.project_root().join("Config");
 
     for name in ["DefaultEngine.ini", "DefaultGame.ini"] {
         let path = config_root.join(name);
         let source = format!("Config/{name}");
-        apply_if_regular_file(&path, &source, &mut defaults, &mut diagnostics);
+        apply_if_regular_file(&path, &source, &mut defaults, &mut cook, &mut diagnostics);
     }
 
     let platform_directories = discover_platform_directories(&config_root, &mut diagnostics);
@@ -71,13 +89,16 @@ pub(crate) fn load_project_entry_points(
         candidates.insert("DefaultGame.ini".to_string());
         candidates.insert(format!("{platform}Engine.ini"));
         candidates.insert(format!("{platform}Game.ini"));
-        let mut found = false;
         for name in candidates {
             let path = directory.join(&name);
             let source = format!("Config/{platform}/{name}");
-            found |= apply_if_regular_file(&path, &source, &mut effective, &mut diagnostics);
+            apply_if_regular_file(&path, &source, &mut effective, &mut cook, &mut diagnostics);
         }
-        if found {
+        // Only record a platform when its config actually changes an entry point.
+        // Most `Config/<Platform>/` directories hold packaging or SDK settings
+        // only; treating their mere existence as an override reported platform
+        // overrides that do not exist and listed every default root three times.
+        if effective != defaults {
             platforms.insert(platform, effective);
         }
     }
@@ -86,9 +107,19 @@ pub(crate) fn load_project_entry_points(
         ProjectEntryPoints {
             defaults,
             platforms,
+            cook_roots: cook.maps.into_values().collect(),
+            cook_directories: cook.directories.into_values().collect(),
         },
         diagnostics,
     )
+}
+
+/// Cook roots keyed by package path so a value repeated across ini layers is
+/// recorded once.
+#[derive(Debug, Default)]
+struct CookRoots {
+    maps: BTreeMap<String, ConfigReference>,
+    directories: BTreeMap<String, ConfigReference>,
 }
 
 fn discover_platform_directories(
@@ -170,17 +201,18 @@ fn apply_if_regular_file(
     path: &Path,
     source: &str,
     references: &mut BTreeMap<String, ConfigReference>,
+    cook: &mut CookRoots,
     diagnostics: &mut Vec<ScanDiagnostic>,
-) -> bool {
+) {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
         Err(error) => {
             diagnostics.push(config_warning(
                 source,
                 format!("could not inspect config source: {error}"),
             ));
-            return true;
+            return;
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -188,16 +220,16 @@ fn apply_if_regular_file(
             source,
             "config source is not a regular project file",
         ));
-        return true;
+        return;
     }
-    apply_config_file(path, source, references, diagnostics);
-    true
+    apply_config_file(path, source, references, cook, diagnostics);
 }
 
 fn apply_config_file(
     path: &Path,
     source: &str,
     references: &mut BTreeMap<String, ConfigReference>,
+    cook: &mut CookRoots,
     diagnostics: &mut Vec<ScanDiagnostic>,
 ) {
     let file = match File::open(path) {
@@ -210,7 +242,7 @@ fn apply_config_file(
             return;
         }
     };
-    let mut in_entry_point_section = false;
+    let mut section = Section::Other;
     for (line_index, line) in BufReader::new(file).lines().enumerate() {
         let line = match line {
             Ok(line) => line,
@@ -229,16 +261,26 @@ fn apply_config_file(
         if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
             continue;
         }
-        if let Some(section) = parse_section(trimmed) {
-            in_entry_point_section = section.eq_ignore_ascii_case(GAME_MAPS_SETTINGS_SECTION);
-            continue;
-        }
-        if !in_entry_point_section {
+        if let Some(name) = parse_section(trimmed) {
+            section = if name.eq_ignore_ascii_case(GAME_MAPS_SETTINGS_SECTION) {
+                Section::GameMaps
+            } else if name.eq_ignore_ascii_case(PACKAGING_SETTINGS_SECTION) {
+                Section::Packaging
+            } else {
+                Section::Other
+            };
             continue;
         }
         let Some((raw_key, raw_value)) = trimmed.split_once('=') else {
             continue;
         };
+        if section == Section::Packaging {
+            apply_cook_entry(raw_key.trim(), raw_value, source, cook);
+            continue;
+        }
+        if section != Section::GameMaps {
+            continue;
+        }
         let Some(key) = canonical_entry_point_key(raw_key.trim()) else {
             continue;
         };
@@ -277,10 +319,75 @@ fn apply_config_file(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Section {
+    GameMaps,
+    Packaging,
+    Other,
+}
+
 fn parse_section(line: &str) -> Option<&str> {
     line.strip_prefix('[')
         .and_then(|section| section.strip_suffix(']'))
         .map(str::trim)
+}
+
+/// `+MapsToCook=(FilePath="/Game/Maps/M")` and
+/// `+DirectoriesToAlwaysCook=(Path="/Game/Dir")`.
+///
+/// Array keys carry a `+`/`-` prefix. UE treats `-` as a removal, so a removed
+/// entry drops the recorded root rather than adding one.
+fn apply_cook_entry(raw_key: &str, raw_value: &str, source: &str, cook: &mut CookRoots) {
+    let (remove, key) = match raw_key.strip_prefix('-') {
+        Some(rest) => (true, rest.trim()),
+        None => (false, raw_key.trim_start_matches('+').trim()),
+    };
+    let (target, field) = if key.eq_ignore_ascii_case(MAPS_TO_COOK_KEY) {
+        (&mut cook.maps, "FilePath")
+    } else if key.eq_ignore_ascii_case(DIRECTORIES_TO_COOK_KEY) {
+        (&mut cook.directories, "Path")
+    } else {
+        return;
+    };
+    let Some(package_path) = struct_field(raw_value, field) else {
+        return;
+    };
+    if !is_valid_package_path(&package_path) {
+        return;
+    }
+    if remove {
+        target.remove(&package_path);
+        return;
+    }
+    target.insert(
+        package_path.clone(),
+        ConfigReference {
+            key: key.to_string(),
+            source: source.to_string(),
+            object_path: package_path.clone(),
+            package_path,
+        },
+    );
+}
+
+/// Pulls one `Field="value"` out of an ini struct literal like
+/// `(FilePath="/Game/Maps/M")`.
+fn struct_field(value: &str, field: &str) -> Option<String> {
+    let inner = value
+        .trim()
+        .strip_prefix('(')?
+        .trim_end()
+        .strip_suffix(')')?;
+    for part in inner.split(',') {
+        let Some((name, raw)) = part.split_once('=') else {
+            continue;
+        };
+        if name.trim().eq_ignore_ascii_case(field) {
+            let value = strip_matching_quotes(raw.trim()).trim();
+            return (!value.is_empty()).then(|| value.to_string());
+        }
+    }
+    None
 }
 
 fn canonical_entry_point_key(key: &str) -> Option<&'static str> {

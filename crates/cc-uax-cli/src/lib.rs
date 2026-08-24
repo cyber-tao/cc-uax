@@ -119,26 +119,7 @@ fn analyze_project(args: &ProjectArgs) -> Result<(ProjectReport, bool)> {
 }
 
 fn project_mounts(layout: &ProjectLayout, requested: &[String]) -> Result<MountTable> {
-    if requested.is_empty() {
-        return Ok(MountTable::default_for(layout));
-    }
-    let explicit_game = requested.iter().any(|mount| {
-        mount
-            .split_once('=')
-            .map(|(root, _)| root.trim().eq_ignore_ascii_case("/Game"))
-            .unwrap_or_else(|| mount.trim().eq_ignore_ascii_case("/Game"))
-    });
-    let mut spec = String::new();
-    if !explicit_game {
-        spec.push_str("/Game");
-    }
-    for mount in requested {
-        if !spec.is_empty() {
-            spec.push(',');
-        }
-        spec.push_str(mount);
-    }
-    MountTable::parse(layout, &spec).context("invalid --mount mapping")
+    MountTable::resolve(layout, requested).context("invalid --mount mapping")
 }
 
 fn cache_policy(args: &ProjectArgs) -> CachePathPolicy {

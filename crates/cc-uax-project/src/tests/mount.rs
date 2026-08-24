@@ -58,6 +58,75 @@ fn scans_game_plugin_and_engine_mounts_once() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// FPluginManager mounts /{.uplugin base name}/, which routinely differs from the
+// plugin's directory name. Leaving these unmounted made plugin packages invisible
+// to inventory, adjacency and reachability; guessing the name from the directory
+// would invent package paths the project does not contain.
+#[test]
+fn plugin_content_roots_mount_under_their_uplugin_name() {
+    let root = temp_project("plugin_mounts");
+    // Directory name and descriptor name disagree, as they do in real projects.
+    let renamed = root.join("Plugins/MetaXR");
+    std::fs::create_dir_all(renamed.join("Content")).unwrap();
+    std::fs::write(renamed.join("OculusXR.uplugin"), "{}").unwrap();
+    std::fs::write(renamed.join("Content/Rig.uasset"), minimal_package()).unwrap();
+    // Plugins nest, and a code-only plugin has no content root to mount.
+    let nested = root.join("Plugins/NVIDIA/DLSS");
+    std::fs::create_dir_all(nested.join("Content")).unwrap();
+    std::fs::write(nested.join("DLSS.uplugin"), "{}").unwrap();
+    std::fs::write(nested.join("Content/Cfg.uasset"), minimal_package()).unwrap();
+    let code_only = root.join("Plugins/CodeTool");
+    std::fs::create_dir_all(code_only.join("Source")).unwrap();
+    std::fs::write(code_only.join("CodeTool.uplugin"), "{}").unwrap();
+    std::fs::write(root.join("Content/GameAsset.uasset"), minimal_package()).unwrap();
+
+    let layout = ProjectLayout::discover(&root).unwrap();
+    let mounts = MountTable::default_for(&layout);
+    let roots = mounts
+        .mounts()
+        .iter()
+        .map(|mount| mount.package_root())
+        .collect::<Vec<_>>();
+    assert_eq!(roots, vec!["/Game", "/DLSS", "/OculusXR"]);
+
+    let index = ProjectScanner::with_mounts(layout, mounts)
+        .scan(no_cache())
+        .unwrap();
+    assert_eq!(index.stats.discovered, 3);
+    assert!(index.asset("/OculusXR/Rig").is_some());
+    assert!(index.asset("/DLSS/Cfg").is_some());
+    assert!(index.asset("/MetaXR/Rig").is_none());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// An explicit --mount names one root; it must not silently drop /Game or the
+// project's other plugins, and naming an existing root redirects it.
+#[test]
+fn explicit_mounts_augment_the_discovered_defaults() {
+    let root = temp_project("mount_merge");
+    let plugin = root.join("Plugins/Extra");
+    std::fs::create_dir_all(plugin.join("Content")).unwrap();
+    std::fs::write(plugin.join("Extra.uplugin"), "{}").unwrap();
+    std::fs::write(plugin.join("Content/P.uasset"), minimal_package()).unwrap();
+    let other = root.join("Other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("O.uasset"), minimal_package()).unwrap();
+    std::fs::write(root.join("Content/G.uasset"), minimal_package()).unwrap();
+
+    let layout = ProjectLayout::discover(&root).unwrap();
+    let mounts = MountTable::resolve(&layout, &["/Other=Other".to_string()]).unwrap();
+    let index = ProjectScanner::with_mounts(layout, mounts)
+        .scan(no_cache())
+        .unwrap();
+
+    assert!(index.asset("/Game/G").is_some());
+    assert!(index.asset("/Extra/P").is_some());
+    assert!(index.asset("/Other/O").is_some());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn duplicate_disk_root_is_a_structured_mount_failure() {
     let root = temp_project("duplicate_mount_root");

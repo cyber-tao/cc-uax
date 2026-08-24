@@ -114,6 +114,159 @@ fn later_default_files_and_platform_files_override_without_cross_platform_leakag
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// A `Config/<Platform>/` directory usually holds packaging or SDK settings only.
+// Treating its existence as a platform override reported overrides that do not
+// exist and listed every default root once per such directory.
+#[test]
+fn a_platform_config_without_entry_points_is_not_an_override() {
+    let root = temp_project("entry_points_platform_noise");
+    std::fs::create_dir_all(root.join("Config/Android")).unwrap();
+    std::fs::write(
+        root.join("Config/DefaultEngine.ini"),
+        "[/Script/EngineSettings.GameMapsSettings]\n\
+         GameDefaultMap=/Game/Maps/Start.Start\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Config/Android/AndroidGame.ini"),
+        "[/Script/AndroidRuntimeSettings.AndroidRuntimeSettings]\n\
+         PackageName=com.example.game\n",
+    )
+    .unwrap();
+
+    let index = scan(&root);
+    assert!(
+        index.entry_points.platforms.is_empty(),
+        "{:#?}",
+        index.entry_points.platforms
+    );
+    assert_eq!(index.reachability.configured_roots.len(), 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// The cook list is what a build actually ships. GameDefaultMap is frequently a
+// developer map, so without these the real shipped maps looked unreachable.
+#[test]
+fn packaging_cook_roots_become_configured_roots() {
+    let root = temp_project("entry_points_cook");
+    std::fs::create_dir_all(root.join("Config")).unwrap();
+    std::fs::write(
+        root.join("Content/Dev.uasset"),
+        super::common::minimal_package(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Content/Shipped.uasset"),
+        super::common::minimal_package(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("Content/Extra")).unwrap();
+    std::fs::write(
+        root.join("Content/Extra/Always.uasset"),
+        super::common::minimal_package(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Config/DefaultEngine.ini"),
+        "[/Script/EngineSettings.GameMapsSettings]\n\
+         GameDefaultMap=/Game/Dev.Dev\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Config/DefaultGame.ini"),
+        "[/Script/UnrealEd.ProjectPackagingSettings]\n\
+         +MapsToCook=(FilePath=\"/Game/Shipped\")\n\
+         +MapsToCook=(FilePath=\"/Game/Removed\")\n\
+         -MapsToCook=(FilePath=\"/Game/Removed\")\n\
+         +DirectoriesToAlwaysCook=(Path=\"/Game/Extra\")\n",
+    )
+    .unwrap();
+
+    let index = scan(&root);
+    let roots = &index.reachability.configured_roots;
+    let resolved = |package: &str| {
+        roots
+            .iter()
+            .find(|root| root.package_path == package)
+            .unwrap_or_else(|| panic!("missing root {package}: {roots:#?}"))
+    };
+    assert_eq!(resolved("/Game/Shipped").key, "MapsToCook");
+    assert_eq!(
+        resolved("/Game/Shipped").resolution,
+        crate::RootResolution::Indexed
+    );
+    // A `-MapsToCook` line removes the entry rather than adding a second one.
+    assert!(
+        roots
+            .iter()
+            .all(|root| root.package_path != "/Game/Removed")
+    );
+    // A cook directory expands to the indexed packages beneath it.
+    assert_eq!(
+        resolved("/Game/Extra/Always").key,
+        "DirectoriesToAlwaysCook"
+    );
+    assert!(
+        index
+            .reachability
+            .reachable_runtime_packages
+            .contains("/Game/Extra/Always")
+    );
+    assert!(index.reachability.unreachable_project_assets.is_empty());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// `resolved_package` alone never proved a root exists in the scan: the canonical
+// map is seeded from reference targets too, so an unmounted /Engine or /Script
+// path resolved to a name and looked as real as an indexed asset.
+#[test]
+fn root_resolution_separates_indexed_assets_from_names_only() {
+    let root = temp_project("entry_points_resolution");
+    std::fs::create_dir_all(root.join("Config")).unwrap();
+    std::fs::write(
+        root.join("Content/Start.uasset"),
+        super::common::package_with_soft_refs(&["/Engine/Maps/Entry"]),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Config/DefaultEngine.ini"),
+        "[/Script/EngineSettings.GameMapsSettings]\n\
+         GameDefaultMap=/Game/Start.Start\n\
+         ServerDefaultMap=/Engine/Maps/Entry.Entry\n\
+         GameInstanceClass=/Script/Engine.GameInstance\n",
+    )
+    .unwrap();
+
+    let index = scan(&root);
+    let root_for = |key: &str| {
+        index
+            .reachability
+            .configured_roots
+            .iter()
+            .find(|root| root.key == key)
+            .unwrap_or_else(|| panic!("missing {key}"))
+    };
+    assert_eq!(
+        root_for("GameDefaultMap").resolution,
+        crate::RootResolution::Indexed
+    );
+    // Referenced by a scanned asset but outside every mount, so never parsed.
+    assert_eq!(
+        root_for("ServerDefaultMap").resolution,
+        crate::RootResolution::ReferencedOnly
+    );
+    // Nothing in the scan knows this name at all.
+    assert_eq!(
+        root_for("GameInstanceClass").resolution,
+        crate::RootResolution::Unresolved
+    );
+    assert_eq!(root_for("GameInstanceClass").resolved_package, None);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // `TransitionMap=` and `GlobalDefaultServerGameMode=None` are how stock UE
 // project configs spell "no object". They are not invalid paths, so they must not
 // produce a diagnostic: any non-cache diagnostic forces the project report to

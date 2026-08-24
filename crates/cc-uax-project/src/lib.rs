@@ -13,11 +13,11 @@ pub use analysis_summary::{
 };
 pub use cache::{CachePathError, CachePathPolicy};
 pub use entry_points::{ConfigReference, ProjectEntryPoints};
-pub use layout::{ProjectLayout, ProjectLayoutError};
+pub use layout::{PluginContentRoot, ProjectLayout, ProjectLayoutError};
 pub use model::{
     Adjacency, AssetKind, AssetOwnership, AssetRecord, ExternalPackageKind, ProjectIndex,
-    ProjectReachability, ProjectReachabilityRoot, ScanDiagnostic, ScanDiagnosticSeverity,
-    ScanFailure, ScanFailureStage, ScanStats,
+    ProjectReachability, ProjectReachabilityRoot, RootResolution, ScanDiagnostic,
+    ScanDiagnosticSeverity, ScanFailure, ScanFailureStage, ScanStats,
 };
 pub use mount::{
     MountSpec, MountTable, MountTableError, package_path_from_relative, strip_asset_extension,

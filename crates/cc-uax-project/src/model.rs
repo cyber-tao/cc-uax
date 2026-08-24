@@ -74,6 +74,25 @@ pub struct ProjectReachabilityRoot {
     pub package_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_package: Option<String>,
+    pub resolution: RootResolution,
+}
+
+/// Whether a configured root exists in this scan.
+///
+/// `resolved_package` alone never answered that: the canonical map is seeded from
+/// every reference target too, so a root pointing at an unmounted package
+/// (`/Engine/Maps/Entry`, `/Script/Engine`) resolved to a name and looked as real
+/// as an indexed asset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootResolution {
+    /// The root is an asset this scan indexed.
+    Indexed,
+    /// The name is referenced by scanned assets but lies outside every mount, so
+    /// it was never parsed. Common for `/Engine` and `/Script` paths.
+    ReferencedOnly,
+    /// Nothing in the scan knows this name.
+    Unresolved,
 }
 
 impl AssetRecord {
