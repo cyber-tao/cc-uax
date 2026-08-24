@@ -169,6 +169,14 @@ pub struct KnownOpaqueGroup {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetAnalysisSummary {
     pub status: AnalysisStatus,
+    /// `FileVersionUE5` of the package, or `None` when it was never parsed.
+    ///
+    /// Without this the project report said nothing about which UE versions a
+    /// scan actually covered, even though the version gates are what the decoders
+    /// branch on and the corpus harness treats that distribution as its key
+    /// acceptance signal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_version_ue5: Option<i32>,
     /// Why this mapped package carries no decoded evidence at all: it is a real
     /// package that the parser deliberately does not target (see
     /// `cc_uax_core::PackageRejection::OutOfScope`). Absent for parsed packages,
@@ -199,6 +207,8 @@ impl AssetAnalysisSummary {
     pub(crate) fn unsupported(reason: impl Into<String>) -> Self {
         Self {
             status: AnalysisStatus::Unsupported,
+            // Nothing was parsed, so there is no version to report.
+            file_version_ue5: None,
             unsupported_reason: Some(reason.into()),
             coverage: ParseCoverage::default(),
             capabilities: Vec::new(),
@@ -214,6 +224,7 @@ impl AssetAnalysisSummary {
     pub(crate) fn from_analysis(analysis: &AssetAnalysis) -> Self {
         Self {
             status: analysis.status,
+            file_version_ue5: Some(analysis.summary.file_version_ue5),
             unsupported_reason: None,
             coverage: analysis.coverage.clone(),
             capabilities: analysis
@@ -435,6 +446,13 @@ pub struct ProjectAnalysisSummary {
     pub partial_assets: usize,
     pub unsupported_assets: usize,
     pub scan_failures: usize,
+    /// How many parsed packages carried each `FileVersionUE5`, keyed by version.
+    ///
+    /// This is the only statement of which version gates a scan actually
+    /// exercised; a report covering one version says nothing about the others,
+    /// however complete it looks.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub file_versions: BTreeMap<i32, usize>,
     pub coverage: ParseCoverage,
 }
 
@@ -450,6 +468,7 @@ impl ProjectAnalysisSummary {
             partial_assets: 0,
             unsupported_assets: 0,
             scan_failures,
+            file_versions: BTreeMap::new(),
             coverage: ParseCoverage::default(),
         };
         for summary in summaries {
@@ -458,6 +477,9 @@ impl ProjectAnalysisSummary {
                 AnalysisStatus::Complete => aggregate.complete_assets += 1,
                 AnalysisStatus::Partial => aggregate.partial_assets += 1,
                 AnalysisStatus::Unsupported => aggregate.unsupported_assets += 1,
+            }
+            if let Some(version) = summary.file_version_ue5 {
+                *aggregate.file_versions.entry(version).or_default() += 1;
             }
             aggregate.coverage += &summary.coverage;
         }

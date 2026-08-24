@@ -18,8 +18,12 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-/// Headroom reserved for the injected `output` block so the final document still
-/// fits the caller's byte budget after the block is added.
+/// Headroom reserved for the `output` block once elision has begun, when the
+/// block is carrying one entry per tier and its final size is not yet known.
+///
+/// Before any elision the block is measured exactly instead: charging this
+/// reserve up front made every budget behave as if it were 512 bytes smaller, so
+/// a report that already fit still lost detail and was labelled truncated.
 const OUTPUT_BLOCK_RESERVE: usize = 512;
 
 /// A named elision tier: a label plus the transform it applies to the report.
@@ -44,8 +48,23 @@ pub(crate) fn render_within_budget<T: Serialize>(
         return render(&root, compact);
     }
 
-    let target = budget.saturating_sub(OUTPUT_BLOCK_RESERVE);
     let mut elided: Vec<Value> = Vec::new();
+    // Nothing to elide when the whole report plus its (then empty) `output` block
+    // already fits. Charging the flat reserve here made every budget behave as if
+    // it were 512 bytes smaller, so a report that fit comfortably still lost
+    // property values and pins and was labelled truncated.
+    if measure(&root, compact) <= elision_target(budget, compact, &elided) {
+        insert_output_block(&mut root, false, budget, 0, &elided);
+        let emitted = measure(&root, compact);
+        insert_output_block(&mut root, false, budget, emitted, &elided);
+        return render(&root, compact);
+    }
+
+    // Past this point elision is happening, so the block will carry entries and a
+    // fixed reserve is both simpler and stable: recomputing the target between
+    // tiers lets a larger budget skip an early tier and then lose more to a later
+    // one, which is not monotonic in the budget.
+    let target = budget.saturating_sub(OUTPUT_BLOCK_RESERVE);
     let detail_steps: [ElisionTier; 3] = [
         ("property_values", tier_property_values),
         ("pins", tier_pins),
@@ -94,6 +113,24 @@ pub(crate) fn render_within_budget<T: Serialize>(
     let emitted = measure(&root, compact);
     insert_output_block(&mut root, truncated, budget, emitted, &elided);
     render(&root, compact)
+}
+
+/// How large the report may be before the `output` block is appended.
+///
+/// Measured from the block that will actually be written, since its size depends
+/// on how many tiers have run and on whether the render is compact or pretty.
+fn elision_target(budget: usize, compact: bool, elided: &[Value]) -> usize {
+    let mut probe = json!({});
+    insert_output_block(&mut probe, true, budget, budget, elided);
+    let measured = measure(&probe, compact);
+    // The probe is `{ "output": … }`, so subtracting the wrapping braces leaves
+    // what appending the block costs a real document.
+    let block = if measured == usize::MAX {
+        OUTPUT_BLOCK_RESERVE
+    } else {
+        measured.saturating_sub(2)
+    };
+    budget.saturating_sub(block)
 }
 
 fn insert_output_block(
@@ -436,6 +473,42 @@ mod tests {
                 .iter()
                 .any(|entry| entry["section"] == "property_values")
         );
+    }
+
+    // A report that fits must be emitted whole. Reserving a flat 512 bytes for the
+    // `output` block made every budget behave as if it were 512 smaller, so a
+    // caller asking for a budget the report already met still lost its property
+    // values and pins and was told the output was truncated.
+    #[test]
+    fn a_report_that_fits_is_not_elided() {
+        let report = json!({
+            "schema_version": 1,
+            "status": "complete",
+            "summary": { "package_name": "Small" },
+            "coverage": { "exports_total": 1 },
+            "exports": [
+                {
+                    "index": 1,
+                    "name": "Node",
+                    "properties": [
+                        { "name": "Health", "type_name": "IntProperty", "value": 42 }
+                    ],
+                    "pins": [ { "name": "Exec" } ]
+                }
+            ],
+        });
+        let full = serde_json::to_string(&report).unwrap().len();
+        // Inside the old 512-byte hole: comfortably under budget, yet the flat
+        // reserve would have pushed it over the elision target.
+        let budget = full + 200;
+        let text = render_within_budget(&report, budget, true).unwrap();
+
+        assert!(text.len() <= budget, "emitted {} of {budget}", text.len());
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["output"]["truncated"], false);
+        assert!(parsed["output"]["elided"].as_array().unwrap().is_empty());
+        assert_eq!(parsed["exports"][0]["properties"][0]["value"], 42);
+        assert_eq!(parsed["exports"][0]["pins"][0]["name"], "Exec");
     }
 
     #[test]
