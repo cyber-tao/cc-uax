@@ -9,11 +9,13 @@ Use `cc-uax` as the binary-evidence source. Treat its structured graph, referenc
 
 When analyzing a cc-uax checkout that is under active development, run the checkout binary with `cargo run -p cc-uax-cli -- ...` or an explicit `target/release/cc-uax` path so results do not come from an older installed binary on `PATH`.
 
-Scope the result to versioned, uncooked UE5.0–5.8 editor packages (`FileVersionUE5` 1000–1018). That range is real-corpus-verified and may be `status=complete` when evidence is complete. Report cooked, unversioned, UE4, unsupported, missing, or corrupt inputs as limitations instead of guessing.
+Scope the result to versioned, uncooked UE5.0–5.8 editor packages (`FileVersionUE5` 1000–1018). That range is real-corpus-verified and may be `status=complete` when evidence is complete. Anything outside it — cooked, unversioned, UE4, or a file version newer than the parser knows — is rejected rather than guessed at: `cc-uax asset` exits `1` with an error document, while `cc-uax project` records it in `inventory` as `unsupported`. Report missing or corrupt inputs as limitations instead of guessing.
+
+A project report also carries the `FileVersionUE5` of each package and an aggregate `analysis.file_versions` histogram. Cite it: one project routinely spans several versions, and a conclusion drawn from a scan that only exercised one version says nothing about the others.
 
 ## Establish the project report
 
-1. Locate the `.uproject` or `Content` directory and any plugin content roots. If several `.uproject` files share one Content tree, pass one file path explicitly; a directory scan still fails when more than one `.uproject` is present.
+1. Locate the `.uproject` or `Content` directory. If several `.uproject` files share one Content tree, pass one file path explicitly; a directory scan still fails when more than one `.uproject` is present. Plugin content roots under `Plugins/` are mounted automatically under their `.uplugin` name — read `mounts` in the report rather than assuming a plugin's directory name.
 2. Read the project report's config-derived `entry_points` first. Inspect raw `Config/DefaultEngine.ini`, `DefaultGame.ini`, or platform overrides only when a reported diagnostic or missing key requires it; do not copy unrelated config values into the analysis.
 3. Run exactly one project scan for the investigation:
 
@@ -21,7 +23,7 @@ Scope the result to versioned, uncooked UE5.0–5.8 editor packages (`FileVersio
 cc-uax project "<PROJECT_OR_CONTENT_DIR>" --output "<REPORT.json>"
 ```
 
-Add each nonstandard content root with `--mount <PACKAGE_PREFIX=RELATIVE_DIR>`. Use `--focus <PACKAGE_OR_GLOB>` to attach full typed analyses for selected packages while retaining the single project inventory and reference graph. Both flags are repeatable.
+Add content roots outside `Plugins/` with `--mount <PACKAGE_PREFIX=RELATIVE_DIR>`; it adds to the discovered mounts rather than replacing them. Use `--focus <PACKAGE_OR_GLOB>` to attach full typed analyses for selected packages while retaining the single project inventory and reference graph. Both flags are repeatable.
 
 Keep strict mode enabled: it exits nonzero only for hard scan failures, while inherent partial or unsupported evidence keeps a truthful non-complete `status` and exits zero. A UE4, cooked, or otherwise out-of-scope package is `unsupported` evidence in the inventory, not a failure. Use `--allow-partial` only when the user explicitly accepts hard failures with a zero exit, and carry every failure and non-complete status into the conclusion. See [references/report-contract.md](references/report-contract.md) for the exact exit-code contract.
 
@@ -42,7 +44,7 @@ Start with the report's generated `reachability.configured_roots` and `reachabil
 5. Use the native adapter that owns the source of truth:
    - K2/EdGraph for Blueprint and Niagara editor graphs.
    - RigVM model/links for Control Rig; do not double-count editor mirror graphs.
-   - StateTree states, tasks, conditions, and transitions.
+   - StateTree states, tasks, conditions, and transitions — including per-state `single_task` and `considerations`, and the tree-wide `evaluators`, `global_tasks` and `root_parameters`, which is where global behaviour lives.
    - PCG nodes, pins, and edges.
 6. Request a focused asset view when the project report lacks needed detail:
 
@@ -89,7 +91,8 @@ Summarize gameplay, resource use, and architecture alongside:
 
 - indexed, analyzed, complete, partial, unsupported, and failed package counts;
 - adapter-specific node/pin/edge/state/link counts;
-- opaque capability types and byte ranges;
+- opaque capability types and byte ranges, separating expected class-owned bulk payloads from `unattributed_tail_bytes`, which is the figure that indicates a decoding gap;
+- the `FileVersionUE5` distribution the scan covered;
 - excluded mounts or filters;
 - every evidence gap that could change the conclusion.
 

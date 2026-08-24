@@ -21,7 +21,7 @@ Most of an Unreal project lives in binary `.uasset` and `.umap` packages. Source
 
 `cc-uax` turns supported UE5 editor packages into typed, evidence-bearing reports. It can analyze one asset or build a project-wide index without loading Unreal Editor.
 
-> Scope: versioned, uncooked UE5.0–5.8 editor packages (`FileVersionUE5` 1000–1018). That range is real-corpus-verified and may be `status=complete` when evidence is complete. Cooked/unversioned packages and UE4 packages are unsupported.
+> Scope: versioned, uncooked UE5.0–5.8 editor packages (`FileVersionUE5` 1000–1018). That range is real-corpus-verified and may be `status=complete` when evidence is complete. Anything outside it is out of scope and rejected rather than guessed at: below 1000 (UE4 and older), above 1018 (a layout this parser has not seen), and cooked or unversioned packages. `cc-uax project` still indexes those as `unsupported` evidence.
 
 ## What it provides
 
@@ -113,6 +113,10 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
 # Add explicit package mounts
 cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 ```
+
+The default mounts are `/Game` plus every plugin content root under `Plugins/`, mounted the way Unreal mounts them: `/{name}` from the `.uplugin` file's base name, which is often not the plugin's directory name. Without them, plugin packages are invisible to inventory, adjacency, and reachability. Use `--mount` to add other content roots or redirect one of these.
+
+Configured roots come from `GameMapsSettings` and from the `ProjectPackagingSettings` cook lists (`+MapsToCook`, `+DirectoriesToAlwaysCook`) — `GameDefaultMap` is frequently a developer map, while the cook list is what a build actually ships.
 
 Project analysis is **strict by default**. A mapped asset that cannot be read, indexed, or parsed produces a structured failure and exit code `2`. A package this tool deliberately does not target — a UE4 package, or a cooked, unversioned, UE3, big-endian or package-compressed one — is not a failure: it is indexed as `unsupported` evidence and the run still exits `0`. `--allow-partial` downgrades a hard scan failure to a zero exit while preserving the real status, failures, and reduced coverage in the report. Exit `1` means no report could be produced at all (unreadable asset, undiscoverable project, malformed `--mount`, failed write).
 
@@ -239,16 +243,17 @@ A pattern that matches nothing is a hard failure (exit `2`) and is recorded unde
 
 ### 7. Include plugin or extra content
 
-The default mount is `/Game` → the project's `Content` directory. Add every other content root you need; otherwise those packages are invisible to inventory, adjacency, and reachability.
+Plugin content under `Plugins/` is mounted for you, as `/{name}` taken from each `.uplugin` file's base name. That name is often not the directory name — a `MetaXR` folder shipping `OculusXR.uplugin` mounts as `/OculusXR` — so check `mounts` in the report rather than guessing.
+
+Add `--mount` for content roots outside `Plugins/`, or to redirect one of the discovered roots:
 
 ```powershell
 cc-uax project D:/Games/MyGame `
-  --mount "/MyPlugin=Plugins/MyPlugin/Content" `
-  --mount "/Another=Plugins/Another/Content" `
+  --mount "/Extra=ExtraContent" `
   --output project-report.json
 ```
 
-The path after `=` is project-relative. A malformed `--mount` exits `1` and produces no report.
+The path after `=` is project-relative, and an explicit mount is added to the discovered set (naming an existing root replaces just that one). A malformed `--mount` exits `1` and produces no report.
 
 ### 8. Keep a report inside a context window
 
@@ -265,9 +270,12 @@ cc-uax asset Content/Blueprints/BP_Player.uasset --view logic --max-output-bytes
 |---|---|---|
 | `status=complete`, exit `0` | Requested evidence decoded | Use the graphs / references as-is |
 | `status=partial`, exit `0` | Usable report with a named gap (`known_opaque`, a failed region, …) | Keep the gap in the conclusion; do not invent the missing path |
-| `status=unsupported`, exit `0` | Cooked / UE4 / otherwise out of scope, or a requested capability cannot be derived | Treat as a limitation, not a crash |
+| `status=unsupported`, exit `0` (`project`) | Every scanned package is out of scope | Treat as a limitation, not a crash |
+| exit `1` (`asset`) on a cooked / UE4 / out-of-range package | The parser deliberately does not target it, so there is no report | Scan the project instead: the same package is indexed as `unsupported` evidence |
 | exit `2` (`project`) | Hard scan failure: unreadable mapped asset, in-scan mount/cache error, or `--focus` miss | Read `failures`; optionally rerun with `--allow-partial` |
 | exit `1` | No report at all | Fix the path, `--mount` syntax, or output location |
+
+An out-of-scope package is not a `status=unsupported` asset report: `cc-uax asset` cannot produce a report for one and exits `1` with an error document, while `cc-uax project` records it in `inventory` as `unsupported` with a reason and still exits `0`.
 
 `--allow-partial` only changes the exit code. It does not rewrite `status`, `failures`, or coverage.
 
@@ -309,7 +317,7 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
 
 ```jsonc
 {
-  "schema_version": 5,
+  "schema_version": /* see report-contract.md */,
   "status": "complete",
   "view": "full",
   "summary": { /* package name, file/custom versions, engine version, table counts, … */ },
@@ -328,7 +336,7 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
 
 ```jsonc
 {
-  "schema_version": 6,
+  "schema_version": /* see report-contract.md */,
   "status": "complete",
   "layout": {}, "mounts": [], "entry_points": {},
   "reachability": {

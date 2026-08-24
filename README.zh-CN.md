@@ -21,7 +21,7 @@ Unreal 项目的大量逻辑和数据位于二进制 `.uasset`、`.umap` 包中�
 
 `cc-uax` 将受支持的 UE5 编辑器包转换为带类型和证据的报告。它既能分析单个资产，也能在不启动 Unreal Editor 的情况下建立项目级索引。
 
-> 支持范围：有版本信息、未 Cook 的 UE5.0–5.8 编辑器包（`FileVersionUE5` 1000–1018）。该范围已经过真实语料验证，证据完整时可以为 `status=complete`。Cooked/无版本包及 UE4 包明确不支持。
+> 支持范围：有版本信息、未 Cook 的 UE5.0–5.8 编辑器包（`FileVersionUE5` 1000–1018）。该范围已经过真实语料验证，证据完整时可以为 `status=complete`。范围之外的包会被直接拒绝而不是猜着解析：低于 1000（UE4 及更早）、高于 1018（本解析器未见过的布局）、以及 cooked/无版本包。`cc-uax project` 仍会把它们记为 `unsupported` 证据。
 
 ## 能力
 
@@ -113,6 +113,10 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
 # 添加显式 package mount
 cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 ```
+
+默认挂载是 `/Game` 加上 `Plugins/` 下每一个插件的 content root，挂载名与 Unreal 一致：取自 `.uplugin` 文件的基名，而这个名字常常不等于插件目录名。没有它们，插件里的包对 inventory、邻接和可达性完全不可见。`--mount` 用于追加其他 content root，或重定向其中一个。
+
+Configured root 同时来自 `GameMapsSettings` 和 `ProjectPackagingSettings` 的 cook 列表（`+MapsToCook`、`+DirectoriesToAlwaysCook`）——`GameDefaultMap` 经常是开发者地图，而 cook 列表才是真正会打包发布的内容。
 
 项目分析默认采用 **strict** 模式。任何已映射资产读取、索引或解析失败都会生成结构化 failure 并以退出码 `2` 结束。本工具按设计不处理的包——UE4 包，以及 cooked、unversioned、UE3、大端或使用包级压缩的包——不算失败：它们会作为 `unsupported` 证据进入 inventory，进程仍以 `0` 退出。`--allow-partial` 只是把 hard scan failure 降级为零退出，不会粉饰报告；真实 status、失败项和降低后的 coverage 都会保留。退出码 `1` 表示根本没能产出报告（资产不可读、项目无法发现、`--mount` 语法错误、写出失败）。
 
@@ -239,16 +243,17 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/BP_Player.uasset"
 
 ### 7. 纳入插件或其他 Content
 
-默认 mount 是 `/Game` → 项目的 `Content` 目录。其他内容根必须显式加上，否则 inventory、邻接和 reachability 都看不见它们。
+`Plugins/` 下的插件 content 会自动挂载，挂载名 `/{name}` 取自各自 `.uplugin` 文件的基名。这个名字常常不是目录名——目录叫 `MetaXR` 但内含 `OculusXR.uplugin` 时挂载为 `/OculusXR`——所以请看报告里的 `mounts`，不要猜。
+
+`Plugins/` 之外的内容根，或需要重定向某个已发现的根时，用 `--mount`：
 
 ```powershell
 cc-uax project D:/Games/MyGame `
-  --mount "/MyPlugin=Plugins/MyPlugin/Content" `
-  --mount "/Another=Plugins/Another/Content" `
+  --mount "/Extra=ExtraContent" `
   --output project-report.json
 ```
 
-`=` 后面的路径相对项目根。`--mount` 语法错误会以退出码 `1` 结束，且不会产出报告。
+`=` 后面的路径相对项目根；显式 mount 是在自动发现的集合上追加（指定同名根时只替换那一个）。`--mount` 语法错误会以退出码 `1` 结束，且不会产出报告。
 
 ### 8. 把报告限制在上下文窗口内
 
@@ -265,9 +270,12 @@ cc-uax asset Content/Blueprints/BP_Player.uasset --view logic --max-output-bytes
 |---|---|---|
 | `status=complete`，退出码 `0` | 请求的证据已解码 | 直接使用图 / 引用 |
 | `status=partial`，退出码 `0` | 报告可用，但有具名缺口（`known_opaque`、某区域失败等） | 结论里保留缺口，不要补造缺失路径 |
-| `status=unsupported`，退出码 `0` | Cooked / UE4 / 超出范围，或请求的能力无法从该包导出 | 当作限制，不是崩溃 |
+| `status=unsupported`，退出码 `0`（`project`） | 扫描到的每个包都超出支持范围 | 当作限制，不是崩溃 |
+| 对 cooked / UE4 / 超范围包执行 `asset` 时退出码 `1` | 本工具按设计不处理它，因此没有报告 | 改扫整个项目：同一个包会作为 `unsupported` 证据进入 inventory |
 | 退出码 `2`（`project`） | Hard scan failure：已映射资产不可读、扫描中的 mount/cache 错误，或 `--focus` 未命中 | 读 `failures`；必要时加 `--allow-partial` 重跑 |
 | 退出码 `1` | 根本没有报告 | 检查路径、`--mount` 语法或输出位置 |
+
+超出支持范围的包不会产出 `status=unsupported` 的资产报告：`cc-uax asset` 无法为它生成报告，会以退出码 `1` 输出 error 文档；而 `cc-uax project` 会把它记入 `inventory` 并标为 `unsupported` 附带原因，进程仍以 `0` 退出。
 
 `--allow-partial` 只改退出码，不会改写 `status`、`failures` 或 coverage。
 
@@ -309,7 +317,7 @@ cargo run -p cc-uax-cli --release --locked -- asset Content/Blueprints/BP_Player
 
 ```jsonc
 {
-  "schema_version": 5,
+  "schema_version": /* see report-contract.md */,
   "status": "complete",
   "view": "full",
   "summary": { /* 包名、文件版本与 custom version、引擎版本、各表计数…… */ },
@@ -328,7 +336,7 @@ cargo run -p cc-uax-cli --release --locked -- asset Content/Blueprints/BP_Player
 
 ```jsonc
 {
-  "schema_version": 6,
+  "schema_version": /* see report-contract.md */,
   "status": "complete",
   "layout": {}, "mounts": [], "entry_points": {},
   "reachability": {
