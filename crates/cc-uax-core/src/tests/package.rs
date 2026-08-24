@@ -3,8 +3,8 @@ use crate::analysis::analyze_package;
 use crate::name::NameMap;
 use crate::reader::Reader;
 use crate::{
-    AnalysisDiagnostic, AssetView, DiagnosticSeverity, KnownOpaqueKind, Package, PackageRejection,
-    PackageView, PropertyDecodeStatus,
+    AnalysisDiagnostic, AnalysisStatus, AssetView, CapabilityKind, DiagnosticSeverity,
+    KnownOpaqueKind, Package, PackageRejection, PackageView, PropertyDecodeStatus,
 };
 
 fn diagnostic_with_code<'a>(
@@ -704,7 +704,34 @@ fn non_tagged_property_payload_is_reported_as_status() {
         Some(PropertyDecodeStatus::NonTaggedPayload)
     );
     assert!(analysis.exports[0].properties.is_empty());
-    assert!(analysis.diagnostics.is_empty());
+
+    // This outcome counts against tagged-property coverage, so it has to say so.
+    // A report that is `partial` with an empty `diagnostics` array tells a
+    // consumer nothing about which export is missing or why.
+    assert_eq!(analysis.status, AnalysisStatus::Partial);
+    let diagnostic = diagnostic_with_code(&analysis.diagnostics, "export_payload_not_tagged");
+    assert_eq!(diagnostic.path, "/exports/0/properties");
+    assert_eq!(diagnostic.offset, Some(0));
+    assert_eq!(analysis.coverage.property_exports_total, 1);
+    assert_eq!(analysis.coverage.property_exports_complete, 0);
+    assert_eq!(analysis.coverage.property_exports_not_tagged, 1);
+    assert_eq!(analysis.coverage.property_exports_failed, 0);
+
+    // The capability names the gap; that string is the only place a consumer can
+    // read what is missing, so it must survive into the report.
+    let capability = analysis
+        .capabilities
+        .iter()
+        .find(|capability| capability.kind == CapabilityKind::TaggedProperties)
+        .expect("tagged property capability");
+    assert_eq!(capability.status, AnalysisStatus::Partial);
+    assert!(
+        capability
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("not a tagged payload")),
+        "{capability:#?}"
+    );
 }
 
 #[test]

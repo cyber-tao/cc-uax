@@ -43,6 +43,29 @@ pub(super) fn decode_properties_for_export(
     } = parsed;
     export.property_status = Some(status);
     diagnostics.extend(prop_diags);
+    // A non-tagged payload is the one incomplete outcome the tag loop reaches
+    // without saying anything: it decodes nothing and leaves the whole window
+    // opaque, yet it still counts against tagged-property coverage. Without this
+    // the report can be `partial` with an empty `diagnostics` array, which tells a
+    // consumer nothing about which export is missing or why.
+    if status == PropertyParseStatus::NonTaggedPayload {
+        diagnostics.push(
+            Diagnostic::warning(
+                "export_payload_not_tagged",
+                &prop_path,
+                format!(
+                    "export payload does not start with a tagged property block; the declared range [{start}, {end}) is retained as opaque evidence"
+                ),
+            )
+            .with_offset(start)
+            .with_context(json!({
+                "class": class_full,
+                "declared_property_range": window.has_declared_property_range,
+                "range_start": start,
+                "range_end": end,
+            })),
+        );
+    }
 
     if let Some(member) = distill_member(&entries) {
         export.member = Some(member);

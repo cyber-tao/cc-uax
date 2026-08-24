@@ -20,6 +20,11 @@ fn is_zero_u64(value: &u64) -> bool {
 pub struct CapabilitySummary {
     pub kind: CapabilityKind,
     pub status: AnalysisStatus,
+    /// Why the capability is not complete. This is the only field that names the
+    /// gap, so dropping it left a project report saying an asset was partial
+    /// without saying what was missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -235,6 +240,7 @@ impl CapabilitySummary {
         Self {
             kind: capability.kind,
             status: capability.status,
+            detail: capability.detail.clone(),
         }
     }
 }

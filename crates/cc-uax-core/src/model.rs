@@ -93,6 +93,16 @@ pub struct ParseCoverage {
     pub property_exports_total: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub property_exports_complete: usize,
+    /// Exports whose payload is not a tagged-property block at all, so nothing was
+    /// decoded and the whole declared range stays opaque. Distinct from
+    /// [`Self::property_exports_failed`]: this is a payload shape the decoder does
+    /// not model, not a tagged block that broke.
+    #[serde(skip_serializing_if = "is_zero_usize")]
+    pub property_exports_not_tagged: usize,
+    /// Exports whose tagged-property block started decoding and then failed, so
+    /// the properties before the failure are evidence and the rest is opaque.
+    #[serde(skip_serializing_if = "is_zero_usize")]
+    pub property_exports_failed: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub properties_decoded: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
@@ -177,6 +187,8 @@ impl AddAssign<&ParseCoverage> for ParseCoverage {
             exports_analyzed,
             property_exports_total,
             property_exports_complete,
+            property_exports_not_tagged,
+            property_exports_failed,
             properties_decoded,
             graph_nodes_total,
             graph_nodes_decoded,
@@ -221,6 +233,12 @@ impl AddAssign<&ParseCoverage> for ParseCoverage {
         self.property_exports_complete = self
             .property_exports_complete
             .saturating_add(*property_exports_complete);
+        self.property_exports_not_tagged = self
+            .property_exports_not_tagged
+            .saturating_add(*property_exports_not_tagged);
+        self.property_exports_failed = self
+            .property_exports_failed
+            .saturating_add(*property_exports_failed);
         self.properties_decoded = self.properties_decoded.saturating_add(*properties_decoded);
         self.graph_nodes_total = self.graph_nodes_total.saturating_add(*graph_nodes_total);
         self.graph_nodes_decoded = self

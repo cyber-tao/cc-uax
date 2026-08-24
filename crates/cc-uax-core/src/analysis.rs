@@ -186,6 +186,8 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         exports_analyzed: report.exports.len(),
         property_exports_total: property_coverage.exports_total,
         property_exports_complete: property_coverage.exports_complete,
+        property_exports_not_tagged: property_coverage.exports_not_tagged,
+        property_exports_failed: property_coverage.exports_failed,
         properties_decoded: property_coverage.properties_decoded,
         graph_nodes_total: graph_coverage.nodes_total,
         graph_nodes_decoded: graph_coverage.nodes_decoded,
@@ -410,6 +412,8 @@ fn is_control_rig_editor_graph(class_full: &str) -> bool {
 struct PropertyCoverage {
     exports_total: usize,
     exports_complete: usize,
+    exports_not_tagged: usize,
+    exports_failed: usize,
     properties_decoded: usize,
 }
 
@@ -424,42 +428,35 @@ fn compute_property_coverage(
     package: &Package,
     wants_properties: bool,
 ) -> PropertyCoverage {
+    let mut coverage = PropertyCoverage {
+        exports_total: 0,
+        exports_complete: 0,
+        exports_not_tagged: 0,
+        exports_failed: 0,
+        properties_decoded: 0,
+    };
     if !wants_properties {
-        return PropertyCoverage {
-            exports_total: 0,
-            exports_complete: 0,
-            properties_decoded: 0,
-        };
+        return coverage;
     }
-    let exports_total = report
-        .exports
-        .iter()
-        .zip(&package.exports)
-        .filter(|(export, raw)| raw.serial_size > 0 && !is_rigvm_link_class(&export.identity.class))
-        .count();
-    let exports_complete = report
-        .exports
-        .iter()
-        .zip(&package.exports)
-        .filter(|(export, raw)| {
-            raw.serial_size > 0
-                && !is_rigvm_link_class(&export.identity.class)
-                && matches!(
-                    export.property_status,
-                    Some(PropertyParseStatus::Complete | PropertyParseStatus::Empty)
-                )
-        })
-        .count();
-    let properties_decoded = report
-        .exports
-        .iter()
-        .map(|export| export.properties.as_ref().map_or(0, Vec::len))
-        .sum();
-    PropertyCoverage {
-        exports_total,
-        exports_complete,
-        properties_decoded,
+    for (export, raw) in report.exports.iter().zip(&package.exports) {
+        coverage.properties_decoded += export.properties.as_ref().map_or(0, Vec::len);
+        if raw.serial_size <= 0 || is_rigvm_link_class(&export.identity.class) {
+            continue;
+        }
+        coverage.exports_total += 1;
+        // The two incomplete outcomes are different evidence: a payload the
+        // decoder does not model at all versus a tagged block that broke
+        // partway. Collapsing them hides which one a report is reporting.
+        match export.property_status {
+            Some(PropertyParseStatus::Complete | PropertyParseStatus::Empty) => {
+                coverage.exports_complete += 1;
+            }
+            Some(PropertyParseStatus::NonTaggedPayload) => coverage.exports_not_tagged += 1,
+            Some(PropertyParseStatus::FailedAfterEntries) => coverage.exports_failed += 1,
+            None => {}
+        }
     }
+    coverage
 }
 
 struct PcgCoverage {
@@ -692,8 +689,11 @@ fn build_capabilities(
             },
             detail: property_partial.then(|| {
                 format!(
-                    "{}/{} non-empty exports have complete tagged-property coverage",
-                    property_coverage.exports_complete, property_coverage.exports_total
+                    "{}/{} non-empty exports have complete tagged-property coverage ({} not a tagged payload, {} failed partway)",
+                    property_coverage.exports_complete,
+                    property_coverage.exports_total,
+                    property_coverage.exports_not_tagged,
+                    property_coverage.exports_failed
                 )
             }),
         });
