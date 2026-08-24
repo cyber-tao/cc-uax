@@ -30,6 +30,10 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test
         run: cargo test --workspace --locked
+      # The release profile is what users install, and it is one of the four
+      # commands CLAUDE.md and the README tell contributors to run.
+      - name: Release build
+        run: cargo build --workspace --release --locked
       - name: Check shell syntax
         run: |
           bash -n install.sh
@@ -41,14 +45,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: swatinem/rust-cache@v2
+      # Run the same gates as Linux: path handling, case sensitivity and line
+      # endings differ enough that a lint or format regression can land here
+      # without Linux noticing.
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test
         run: cargo test --workspace --locked
       - name: Parse PowerShell scripts with Windows PowerShell 5.1
         shell: powershell
         run: |
           $errors = @()
-          @('install.ps1', 'dev-install.ps1') | ForEach-Object {
+          # corpus-acceptance.ps1 is the only validation gate that is not a
+          # workspace member, so nothing else would catch a syntax error in it.
+          @('install.ps1', 'dev-install.ps1', 'tools/corpus-acceptance.ps1') | ForEach-Object {
             $tokens = $null
             $parseErrors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile(
@@ -59,6 +74,18 @@ jobs:
             if ($parseErrors) { $errors += $parseErrors }
           }
           if ($errors) { $errors | Format-List; exit 1 }
+
+  macos:
+    name: macOS stable
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      # Releases ship darwin archives, so the platform needs at least one
+      # build-and-test signal before a tag is cut.
+      - name: Test
+        run: cargo test --workspace --locked
 
   msrv:
     name: Rust 1.88 MSRV

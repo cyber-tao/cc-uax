@@ -150,6 +150,64 @@ fn package_accepts_ue50_file_versions() {
     }
 }
 
+// Every FileVersionUE5 in the supported range must parse, including the ones no
+// real corpus asset happens to carry. The reference corpora cover 1004, 1007-1009
+// and 1013-1018; without this the summary field order for 1000-1003, 1010-1012 is
+// asserted by nothing at all, and 1010 (script offsets), 1011 (tag extensions) and
+// 1012 (complete type names) are three of the most consequential gates there are.
+#[test]
+fn every_supported_file_version_parses() {
+    use crate::version::{SUPPORTED_FILE_VERSION_FLOOR, ue5};
+
+    for fv in SUPPORTED_FILE_VERSION_FLOOR..=ue5::HIGHEST {
+        // Engine version only has to be plausible; the summary layout is gated on
+        // FileVersionUE5 except for the import PackageName field, covered elsewhere.
+        let filtered = build_minimal_package_with_version(fv, 5, 8);
+        let package = Package::parse(&filtered)
+            .unwrap_or_else(|err| panic!("FileVersionUE5 {fv} failed to parse: {err:#}"));
+        assert_eq!(package.summary.file_version_ue5, fv);
+
+        // Editor packages are not FilterEditorOnly, which adds the localization id
+        // and PersistentGuid to the same header.
+        let editor = build_minimal_editor_package_with_version(fv, 5, 8);
+        let package = Package::parse(&editor).unwrap_or_else(|err| {
+            panic!("unfiltered FileVersionUE5 {fv} failed to parse: {err:#}")
+        });
+        assert_eq!(package.summary.file_version_ue5, fv);
+    }
+}
+
+// Threshold and threshold-1 for the gates that change the summary layout. A field
+// read on the wrong side of one of these shifts every later offset, so each pair
+// has to disagree about the header size in the expected direction.
+#[test]
+fn summary_layout_gates_change_the_header_at_their_threshold() {
+    use crate::version::ue5;
+
+    for (threshold, label) in [
+        (ue5::NAMES_REFERENCED_FROM_EXPORT_DATA, "names referenced"),
+        (ue5::PAYLOAD_TOC, "payload toc"),
+        (ue5::DATA_RESOURCES, "data resources"),
+        (ue5::ADD_SOFTOBJECTPATH_LIST, "soft object path list"),
+        (ue5::METADATA_SERIALIZATION_OFFSET, "metadata offset"),
+        (ue5::VERSE_CELLS, "verse cells"),
+        (ue5::PACKAGE_SAVED_HASH, "saved hash"),
+        (ue5::IMPORT_TYPE_HIERARCHIES, "import type hierarchies"),
+    ] {
+        let below = build_minimal_package_with_version(threshold - 1, 5, 8);
+        let at = build_minimal_package_with_version(threshold, 5, 8);
+        assert!(
+            at.len() > below.len(),
+            "{label} gate at {threshold} did not add header fields"
+        );
+        for (data, fv) in [(&below, threshold - 1), (&at, threshold)] {
+            let package = Package::parse(data)
+                .unwrap_or_else(|err| panic!("{label} at {fv} failed to parse: {err:#}"));
+            assert_eq!(package.summary.file_version_ue5, fv);
+        }
+    }
+}
+
 #[test]
 fn unfiltered_editor_package_parses_localization_and_persistent_guid() {
     for (fv, major, minor, legacy) in [(1008, 5, 1, -8), (1017, 5, 6, -9), (1018, 5, 8, -9)] {

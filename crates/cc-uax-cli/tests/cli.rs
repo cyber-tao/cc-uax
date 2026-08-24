@@ -150,6 +150,124 @@ fn asset_summary_uses_the_new_subcommand_and_typed_schema() {
     assert_eq!(report["summary"]["package_name"], "TestPkg");
 }
 
+// `--view` restricts what is decoded, not just what is rendered, so each view has
+// to be exercised through the binary rather than only at the core boundary.
+#[test]
+fn each_asset_view_renders_its_own_sections() {
+    let root = temp_dir("views");
+    let package = root.join("Test.uasset");
+    write_package(&package);
+    let file = package.to_str().unwrap().to_string();
+
+    let view = |name: &str| -> serde_json::Value {
+        let output = bin()
+            .args(["asset", &file, "--view", name])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "view {name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+
+    for name in ["summary", "logic", "properties", "references", "full"] {
+        let report = view(name);
+        assert_eq!(report["view"], name);
+        assert_eq!(report["schema_version"], asset_schema());
+        assert!(
+            report["summary"]["package_name"] == "TestPkg",
+            "view {name}"
+        );
+    }
+    // Only `full` carries export byte placement; the focused views omit it.
+    assert!(view("full")["summary"].is_object());
+    assert!(view("summary").get("exports").is_none());
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+// The documented glob rules, exercised through the binary: `*` stays inside one
+// path segment, `**` crosses separators, matching is case-insensitive, and an
+// asset/object suffix is stripped.
+#[test]
+fn focus_glob_rules_hold_through_the_binary() {
+    let root = temp_dir("focusglob");
+    let content = root.join("Content");
+    write_package(&content.join("Blueprints/BP_Top.uasset"));
+    write_package(&content.join("Blueprints/Nested/BP_Deep.uasset"));
+    write_package(&content.join("Maps/L_Main.umap"));
+    let project = root.to_str().unwrap().to_string();
+
+    let focused = |pattern: &str| -> Vec<String> {
+        let output = bin()
+            .args(["project", &project, "--no-cache", "--focus", pattern])
+            .output()
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let mut keys = report["focused"]
+            .as_object()
+            .map(|map| map.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        keys.sort();
+        keys
+    };
+
+    // `*` matches within one segment only.
+    assert_eq!(focused("/Game/Blueprints/*"), ["/Game/Blueprints/BP_Top"]);
+    // `**` crosses separators.
+    assert_eq!(
+        focused("/Game/Blueprints/**"),
+        ["/Game/Blueprints/BP_Top", "/Game/Blueprints/Nested/BP_Deep"]
+    );
+    // Case-insensitive, and a `.uasset` suffix is stripped.
+    assert_eq!(
+        focused("/game/blueprints/bp_top.uasset"),
+        ["/Game/Blueprints/BP_Top"]
+    );
+    // `.umap` too, and an object suffix after the package name.
+    assert_eq!(focused("/Game/Maps/L_Main.umap"), ["/Game/Maps/L_Main"]);
+    assert_eq!(focused("/Game/Maps/L_Main.L_Main"), ["/Game/Maps/L_Main"]);
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+// A malformed command line is not a scan result. Exit 2 is reserved for a project
+// hard scan failure that still wrote a report, so a usage error must not be
+// mistaken for one, and it must never leave a stale `--output` behind.
+#[test]
+fn a_usage_error_is_not_a_scan_failure() {
+    let root = temp_dir("usage");
+    let out = root.join("stale.json");
+    std::fs::write(&out, b"{\"status\":\"complete\"}").unwrap();
+
+    let output = bin()
+        .args([
+            "asset",
+            "--view",
+            "not-a-view",
+            "missing.uasset",
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "usage errors must not share the project hard-failure code"
+    );
+    // No report was produced, so nothing should have been written.
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap().trim(),
+        "{\"status\":\"complete\"}"
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 #[test]
 fn strict_project_scan_emits_a_partial_report_and_fails() {
     let root = temp_dir("strict");
@@ -170,7 +288,10 @@ fn strict_project_scan_emits_a_partial_report_and_fails() {
     assert_eq!(report["layout"]["content_root"], "Content");
     assert_eq!(report["mounts"][0]["package_root"], "/Game");
     assert_eq!(report["mounts"][0]["relative_path"], "Content");
-    assert!(report.get("project_file").is_none());
+    // `project_file` lives under `layout`, and this temp project has no
+    // `.uproject`. Asserting the top level was tautological: nothing ever puts a
+    // `project_file` key there.
+    assert!(report["layout"].get("project_file").is_none());
     assert_eq!(report["reachability"]["failed_assets"], 1);
     assert!(
         report["reachability"]["isolated_project_assets"]
