@@ -6,7 +6,7 @@
 use crate::name::NameMap;
 use crate::object::{ObjectExport, ObjectImport};
 use crate::property::read_soft_object_path;
-use crate::reader::{FSTRING_LENGTH_BYTES, RAW_NAME_BYTES, Reader};
+use crate::reader::{FSTRING_LENGTH_BYTES, RAW_NAME_BYTES, Reader, seek_to_table};
 use crate::structured_value::{Value, json};
 use crate::summary::PackageFileSummary;
 use crate::version::ue5;
@@ -145,36 +145,19 @@ fn parse_soft_object_path_table(
     file_version_ue5: i32,
 ) -> (Vec<Value>, Option<String>) {
     let mut out = Vec::new();
-    if count < 0 {
-        return (
-            out,
-            Some(format!("soft object path count out of range: {count}")),
-        );
-    }
-    if count == 0 {
-        return (out, None);
-    }
-    if offset <= 0 {
-        return (
-            out,
-            Some(format!(
-                "soft object path table offset must be positive when count is {count}"
-            )),
-        );
-    }
-    if let Err(err) = r.seek(offset as u64) {
-        return (
-            out,
-            Some(format!("soft object path table seek failed: {err:#}")),
-        );
-    }
-    // Reject a declared count that cannot fit in the remaining file before
-    // allocating for it, the same way every other header table does.
-    if (count as u64).saturating_mul(soft_object_path_min_bytes(file_version_ue5)) > r.remaining() {
-        return (
-            out,
-            Some(format!("soft object path count out of range: {count}")),
-        );
+    // Same guard as every other header table, but a failure here is reported to
+    // the caller rather than aborting the parse: a package with an unreadable
+    // soft-path table still yields usable name/import/export evidence.
+    match seek_to_table(
+        r,
+        "soft object path table",
+        offset,
+        count,
+        soft_object_path_min_bytes(file_version_ue5),
+    ) {
+        Ok(true) => {}
+        Ok(false) => return (out, None),
+        Err(err) => return (out, Some(format!("{err:#}"))),
     }
     out.reserve(count as usize);
     for i in 0..count {
@@ -217,39 +200,18 @@ pub(crate) fn parse_soft_package_references(
     count: i32,
 ) -> (Vec<String>, Option<String>) {
     let mut out = Vec::new();
-    if count < 0 {
-        return (
-            out,
-            Some(format!(
-                "soft package reference count out of range: {count}"
-            )),
-        );
+    match seek_to_table(
+        r,
+        "soft package reference table",
+        offset,
+        count,
+        RAW_NAME_BYTES,
+    ) {
+        Ok(true) => {}
+        Ok(false) => return (out, None),
+        Err(err) => return (out, Some(format!("{err:#}"))),
     }
-    if count == 0 {
-        return (out, None);
-    }
-    if offset <= 0 {
-        return (
-            out,
-            Some(format!(
-                "soft package reference table offset must be positive when count is {count}"
-            )),
-        );
-    }
-    if let Err(err) = r.seek(offset as u64) {
-        return (
-            out,
-            Some(format!("soft package reference table seek failed: {err:#}")),
-        );
-    }
-    if (count as u64).saturating_mul(RAW_NAME_BYTES) > r.remaining() {
-        return (
-            out,
-            Some(format!(
-                "soft package reference count out of range: {count}"
-            )),
-        );
-    }
+    out.reserve(count as usize);
     for i in 0..count {
         match r.read_raw_name() {
             Ok(raw) => out.push(names.resolve_raw(raw)),

@@ -172,7 +172,7 @@ fn name_map_rejects_negative_count() {
         .err()
         .unwrap()
         .to_string();
-    assert!(error.contains("name count out of range"));
+    assert!(error.contains("name table count out of range"));
 }
 
 #[test]
@@ -512,7 +512,7 @@ fn soft_object_path_count_beyond_the_file_is_rejected_before_reading() {
         if should_fail {
             let error = error.unwrap_or_else(|| panic!("{label}: expected a structured error"));
             assert!(
-                error.contains("soft object path count out of range"),
+                error.contains("soft object path table count out of range"),
                 "{label}: {error}"
             );
             assert!(

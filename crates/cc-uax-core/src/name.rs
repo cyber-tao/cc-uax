@@ -1,6 +1,10 @@
-use crate::reader::{RawName, Reader};
+use crate::reader::{FSTRING_LENGTH_BYTES, RawName, Reader, seek_to_table};
 use crate::version::ue4;
-use anyhow::{Result, bail};
+use anyhow::Result;
+
+/// `FNameEntrySerialized` writes `uint16 DummyHashes[2]` after the string
+/// (`UnrealNames.cpp`).
+const NAME_HASH_BYTES: u64 = 4;
 
 pub struct NameMap {
     pub names: Vec<String>,
@@ -8,28 +12,17 @@ pub struct NameMap {
 
 impl NameMap {
     pub fn parse(reader: &mut Reader, offset: i32, count: i32, ue4_version: i32) -> Result<Self> {
-        if count < 0 {
-            bail!("name count out of range: {count}");
-        }
-        if count == 0 {
-            return Ok(NameMap { names: Vec::new() });
-        }
-        if offset <= 0 {
-            bail!("name table offset must be positive when name count is {count}");
-        }
-
-        reader.seek(offset as u64)?;
         let has_hashes = ue4_version >= ue4::NAME_HASHES_SERIALIZED;
-        let min_entry_bytes = if has_hashes { 8u64 } else { 4u64 };
-        if (count as u64).saturating_mul(min_entry_bytes) > reader.remaining() {
-            bail!("name table count out of range: {count}");
+        let min_entry_bytes = FSTRING_LENGTH_BYTES + if has_hashes { NAME_HASH_BYTES } else { 0 };
+        if !seek_to_table(reader, "name table", offset, count, min_entry_bytes)? {
+            return Ok(NameMap { names: Vec::new() });
         }
 
         let mut names = Vec::with_capacity(count as usize);
         for _ in 0..count {
             let s = reader.read_fstring()?;
             if has_hashes {
-                reader.skip(4)?;
+                reader.skip(NAME_HASH_BYTES)?;
             }
             names.push(s);
         }

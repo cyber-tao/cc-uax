@@ -49,7 +49,10 @@ pub(super) fn decode_pins_for_export(
 
     let editable_pin_class = is_editable_pin_class(class_full);
     let framework_version = framework_pin_version(&package.summary);
-    let candidates = pin_parse_contexts(package, *pin_ctx);
+    // One layout only. Missing custom-version GUIDs already resolve to -1
+    // (legacy) in PinSerCtx, and probing alternatives would let a wrong-but-longer
+    // consume win over the correct one.
+    let candidates = [*pin_ctx];
     let mut best = None;
     let mut best_pos = pin_start;
     let mut failures = Vec::new();
@@ -184,12 +187,6 @@ pub(super) fn decode_pins_for_export(
             })),
         );
     }
-}
-
-fn pin_parse_contexts(_package: &Package, primary: PinSerCtx) -> Vec<PinSerCtx> {
-    // Missing custom-version GUIDs already resolve to -1 (legacy) in PinSerCtx.
-    // Do not probe inverted layouts: a wrong-but-longer consume would win.
-    vec![primary]
 }
 
 pub(crate) fn is_graph_node_class(class_full: &str) -> bool {

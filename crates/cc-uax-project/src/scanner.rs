@@ -45,14 +45,6 @@ impl ProjectScanner {
         Self { layout, mounts }
     }
 
-    pub fn layout(&self) -> &ProjectLayout {
-        &self.layout
-    }
-
-    pub fn mounts(&self) -> &MountTable {
-        &self.mounts
-    }
-
     pub fn scan(&self, options: ScanOptions) -> Result<ProjectIndex, ProjectScanError> {
         let mut failures = Vec::new();
         let (entry_points, mut diagnostics) = load_project_entry_points(&self.layout);

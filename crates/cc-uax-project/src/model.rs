@@ -263,22 +263,6 @@ impl ProjectIndex {
         )
     }
 
-    pub fn effective_forward_references(&self, package_path: &str) -> Option<BTreeSet<String>> {
-        let closure = self.closure_for(package_path)?;
-        let mut references = BTreeSet::new();
-        for member in &closure {
-            if let Some(member_references) = self.forward.get(member) {
-                references.extend(member_references.iter().cloned());
-            }
-        }
-        references.retain(|reference| {
-            !closure
-                .iter()
-                .any(|member| member.eq_ignore_ascii_case(reference))
-        });
-        Some(references)
-    }
-
     pub(crate) fn canonical_package(&self, package_path: &str) -> Option<&str> {
         self.canonical_lookup
             .get(&package_path.to_ascii_lowercase())

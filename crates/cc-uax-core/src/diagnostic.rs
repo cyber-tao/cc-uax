@@ -62,17 +62,10 @@ impl Diagnostic {
         Self::new(Severity::Warning, code, path, message)
     }
 
-    // `Info` is part of the serialized diagnostic-severity contract
-    // (`DiagnosticSeverity::Info` and the project `info` counter), but no core
-    // decoder currently emits it. Kept as the sanctioned Info constructor.
-    #[allow(dead_code)]
-    pub fn info(
-        code: impl Into<String>,
-        path: impl Into<String>,
-        message: impl Into<String>,
-    ) -> Self {
-        Self::new(Severity::Info, code, path, message)
-    }
+    // No `info` constructor: `Severity::Info` stays part of the serialized
+    // contract (`DiagnosticSeverity::Info` and the project `info` counter) but no
+    // core decoder emits it, and `Diagnostic::new` already covers the case if one
+    // ever does.
 
     pub fn with_offset(mut self, offset: u64) -> Self {
         self.offset = Some(offset);

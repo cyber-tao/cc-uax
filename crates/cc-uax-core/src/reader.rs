@@ -10,6 +10,40 @@ pub const RAW_NAME_BYTES: u64 = 8;
 /// smallest number of bytes an `FString` array entry can occupy.
 pub const FSTRING_LENGTH_BYTES: u64 = 4;
 
+/// Validates a header-declared table and seeks to it, or reports why it cannot be
+/// read.
+///
+/// Every summary table repeats the same checks in the same order, and the two that
+/// grew their own copies (`CompressedChunks`, `AdditionalPackagesToCook`) are
+/// exactly the two that ended up with weaker guards. `Ok(false)` means the table
+/// is legitimately empty and the reader was not moved.
+pub fn seek_to_table(
+    reader: &mut Reader,
+    label: &str,
+    offset: i32,
+    count: i32,
+    min_entry_bytes: u64,
+) -> Result<bool> {
+    if count < 0 {
+        bail!("{label} count out of range: {count}");
+    }
+    if count == 0 {
+        return Ok(false);
+    }
+    if offset <= 0 {
+        bail!("{label} offset must be positive when the count is {count}");
+    }
+    // Name the table in the seek error too: "seek out of range" alone does not
+    // say which header table pointed off the end of the file.
+    if let Err(error) = reader.seek(offset as u64) {
+        bail!("{label} seek failed: {error:#}");
+    }
+    if (count as u64).saturating_mul(min_entry_bytes) > reader.remaining() {
+        bail!("{label} count out of range: {count}");
+    }
+    Ok(true)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Guid(pub [u32; 4]);
 

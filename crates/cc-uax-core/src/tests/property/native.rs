@@ -2637,8 +2637,12 @@ fn native_struct_rigvm_property_bag_alias_decodes() {
     assert_eq!(entries[0].value["has_data"].as_bool(), Some(false));
 }
 
+// UE5.0-5.8 PerPlatformProperties.h declares only the Int/Float/Bool/FrameRate
+// variants. `PerPlatformFString` is not an engine struct, so there is no layout
+// to decode and the value has to stay an opaque preview rather than being read
+// with a guessed one.
 #[test]
-fn native_struct_per_platform_fstring_decodes() {
+fn a_struct_the_engine_does_not_define_is_not_decoded_natively() {
     let names = NameMap {
         names: vec![
             "Label".to_string(),
@@ -2667,11 +2671,8 @@ fn native_struct_per_platform_fstring_decodes() {
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].value["default"].as_str(), Some("default"));
-    assert_eq!(
-        entries[0].value["per_platform"][0]["value"].as_str(),
-        Some("ios")
-    );
+    assert!(entries[0].value.get("default").is_none());
+    assert!(entries[0].value["@unparsed"].is_string());
 }
 
 #[test]

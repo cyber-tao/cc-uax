@@ -40,7 +40,7 @@ pub(crate) fn build_logic_graphs(
             continue;
         };
         let graph_index = object_export.outer_index.0;
-        if mirrors.excludes_class_or_graph(&export.identity.class, graph_index) {
+        if mirrors.excludes(&export.identity.class, graph_index) {
             continue;
         }
         graphs.entry(graph_index).or_default().push(export);
