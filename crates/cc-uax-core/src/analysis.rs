@@ -6,7 +6,9 @@ mod typed;
 
 use crate::decode::pins::is_graph_node_class;
 use crate::decode::rigvm::{is_rigvm_graph_class, is_rigvm_link_class};
-use crate::decode::{DecodeOptions, DecodeReport, DecodedExport};
+use crate::decode::{
+    DecodeOptions, DecodeReport, DecodedExport, is_niagara_compiled_class, is_script_bytecode_class,
+};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::graph_models::*;
 use crate::model::*;
@@ -173,6 +175,28 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         .filter_map(|region| region.byte_range.as_ref())
         .map(|range| range.size)
         .sum();
+    // Split the export tails so a project-scale `opaque_bytes` can be read: bulk
+    // class data dwarfs everything else, and lumping it with unattributed bytes
+    // makes a healthy scan look like a decoder failure.
+    let (class_payload_bytes, unattributed_tail_bytes) = report
+        .exports
+        .iter()
+        .filter_map(|export| {
+            export
+                .post_property_tail
+                .as_ref()
+                .map(|tail| (export, tail))
+        })
+        .fold(
+            (0u64, 0u64),
+            |(class_bytes, unattributed), (export, tail)| {
+                if export.property_block_closed {
+                    (class_bytes.saturating_add(tail.size), unattributed)
+                } else {
+                    (class_bytes, unattributed.saturating_add(tail.size))
+                }
+            },
+        );
     let export_bytes_total = report.exports.iter().map(|export| export.serial_size).sum();
     let unclassified_bytes = report
         .exports
@@ -218,6 +242,8 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         state_tree_transitions_decoded: state_tree_coverage.transitions_decoded,
         known_opaque_regions,
         opaque_bytes,
+        class_payload_bytes,
+        unattributed_tail_bytes,
         unclassified_bytes,
         diagnostic_errors,
         diagnostic_warnings,
@@ -764,6 +790,59 @@ fn build_capabilities(
             byte_range: None,
         });
     }
+    // Compiled Blueprint and Niagara payloads are the same kind of gap as compiled
+    // RigVM bytecode: the source-level graph decodes but the compiled form does
+    // not. Without a named capability they were an anonymous export tail, so a
+    // Niagara system could report `complete` while its compiled VM was missing.
+    if wants_logic {
+        let compiled = |predicate: fn(&str) -> bool| {
+            report
+                .exports
+                .iter()
+                .filter(|export| {
+                    predicate(&export.identity.class)
+                        && export
+                            .post_property_tail
+                            .as_ref()
+                            .is_some_and(|tail| tail.size > 0)
+                })
+                .count()
+        };
+        let bytecode_exports = compiled(is_script_bytecode_class);
+        if bytecode_exports > 0 {
+            capabilities.push(AnalysisCapability {
+                kind: CapabilityKind::BlueprintBytecode,
+                status: AnalysisStatus::Unsupported,
+                detail: Some(format!(
+                    "compiled script bytecode on {bytecode_exports} export(s) is retained as known opaque data"
+                )),
+            });
+            known_opaque.push(KnownOpaque {
+                path: "/capabilities/blueprint_bytecode".into(),
+                kind: KnownOpaqueKind::Capability,
+                type_name: Some("ScriptBytecode".into()),
+                reason: "compiled Blueprint bytecode semantics are not decoded".into(),
+                byte_range: None,
+            });
+        }
+        let niagara_exports = compiled(is_niagara_compiled_class);
+        if niagara_exports > 0 {
+            capabilities.push(AnalysisCapability {
+                kind: CapabilityKind::NiagaraCompiled,
+                status: AnalysisStatus::Unsupported,
+                detail: Some(format!(
+                    "compiled Niagara VM/GPU data on {niagara_exports} export(s) is retained as known opaque data"
+                )),
+            });
+            known_opaque.push(KnownOpaque {
+                path: "/capabilities/niagara_compiled".into(),
+                kind: KnownOpaqueKind::Capability,
+                type_name: Some("NiagaraCompiled".into()),
+                reason: "compiled Niagara VM/GPU semantics are not decoded".into(),
+                byte_range: None,
+            });
+        }
+    }
     if wants_logic && state_tree_adapter.graph_exports_total > 0 {
         capabilities.push(AnalysisCapability {
             kind: CapabilityKind::StateTreeSemantics,
@@ -995,6 +1074,28 @@ fn diagnostic_to_model(diagnostic: &Diagnostic) -> AnalysisDiagnostic {
     }
 }
 
+/// Why an export has bytes left after every decoder ran.
+///
+/// A tail after a cleanly closed property block is data the class's own
+/// `Serialize` override wrote — mesh render data, lightmaps, compiled bytecode —
+/// and is expected. A tail after an unresolved property block is unattributed:
+/// the decoder does not know what those bytes are, and it is the only one of the
+/// two that points at a decoding gap. On a real project the first accounts for
+/// gigabytes of bulk asset data, so sharing one reason with the second made the
+/// opaque byte total unreadable.
+fn tail_reason(export: &DecodedExport) -> &'static str {
+    if !export.property_block_closed {
+        return "bytes follow a tagged-property block that did not close cleanly, so they cannot be attributed";
+    }
+    if is_script_bytecode_class(&export.identity.class) {
+        return "compiled script bytecode written after the tagged properties (UStruct::Serialize)";
+    }
+    if is_niagara_compiled_class(&export.identity.class) {
+        return "compiled Niagara VM/GPU payload written after the tagged properties";
+    }
+    "class-owned serializer data written after the tagged properties"
+}
+
 fn collect_known_opaque(
     report: &DecodeReport<'_>,
     include_property_values: bool,
@@ -1025,7 +1126,7 @@ fn collect_known_opaque(
                 path: format!("{export_path}/post_property_tail"),
                 kind: KnownOpaqueKind::PostPropertyTail,
                 type_name: Some(export.identity.class.clone()),
-                reason: "bytes remain after all known export serializers".into(),
+                reason: tail_reason(export).into(),
                 byte_range: Some(OpaqueByteRange {
                     start: tail.start,
                     end: tail.end,

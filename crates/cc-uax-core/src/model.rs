@@ -164,6 +164,16 @@ pub struct ParseCoverage {
     /// Total bytes covered by `known_opaque` regions that carry a byte range.
     #[serde(skip_serializing_if = "is_zero_u64")]
     pub opaque_bytes: u64,
+    /// Subset of [`Self::opaque_bytes`]: export tails a class's own `Serialize`
+    /// override wrote after a cleanly closed property block (mesh render data,
+    /// lightmaps, compiled bytecode). Expected bulk data, not a decoding gap.
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub class_payload_bytes: u64,
+    /// Subset of [`Self::opaque_bytes`]: export tails that follow a property block
+    /// which did not close cleanly, so the decoder cannot say what they are. This
+    /// is the counter to watch when judging decoder coverage.
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub unattributed_tail_bytes: u64,
     /// Export payload bytes that are neither decoded nor classified as opaque.
     /// Always a defect: a non-zero value means an export window was not fully
     /// accounted for.
@@ -219,6 +229,8 @@ impl AddAssign<&ParseCoverage> for ParseCoverage {
             state_tree_transitions_decoded,
             known_opaque_regions,
             opaque_bytes,
+            class_payload_bytes,
+            unattributed_tail_bytes,
             unclassified_bytes,
             diagnostic_errors,
             diagnostic_warnings,
@@ -295,6 +307,12 @@ impl AddAssign<&ParseCoverage> for ParseCoverage {
             .known_opaque_regions
             .saturating_add(*known_opaque_regions);
         self.opaque_bytes = self.opaque_bytes.saturating_add(*opaque_bytes);
+        self.class_payload_bytes = self
+            .class_payload_bytes
+            .saturating_add(*class_payload_bytes);
+        self.unattributed_tail_bytes = self
+            .unattributed_tail_bytes
+            .saturating_add(*unattributed_tail_bytes);
         self.unclassified_bytes = self.unclassified_bytes.saturating_add(*unclassified_bytes);
         self.diagnostic_errors = self.diagnostic_errors.saturating_add(*diagnostic_errors);
         self.diagnostic_warnings = self
@@ -462,6 +480,13 @@ pub enum CapabilityKind {
     StateTreeSemantics,
     PcgSemantics,
     PackageVersion,
+    /// Compiled Blueprint bytecode (`UStruct::Serialize`'s `Script`). Named for
+    /// the same reason as `RigVmBytecode`: the source-level graph is decoded but
+    /// the compiled form is not, and a consumer must be told so.
+    BlueprintBytecode,
+    /// Compiled Niagara VM/GPU payloads. Niagara editor graphs decode through the
+    /// EdGraph model; the compiled representation does not.
+    NiagaraCompiled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

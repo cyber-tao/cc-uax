@@ -1063,6 +1063,7 @@ fn decoded_export(index: i32, name: &str, pins: Option<Vec<Pin>>) -> DecodedExpo
         user_defined_pins: None,
         member: None,
         rigvm_link: None,
+        property_block_closed: true,
         decoded_end: None,
         serial_size: 0,
         unclassified_bytes: 0,

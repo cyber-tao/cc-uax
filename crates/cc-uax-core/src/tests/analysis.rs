@@ -249,9 +249,11 @@ fn parse_coverage_add_assign_doubles_every_serialized_field() {
         state_tree_transitions_decoded: 36,
         known_opaque_regions: 37,
         opaque_bytes: 38,
-        unclassified_bytes: 39,
-        diagnostic_errors: 40,
-        diagnostic_warnings: 41,
+        class_payload_bytes: 39,
+        unattributed_tail_bytes: 40,
+        unclassified_bytes: 41,
+        diagnostic_errors: 42,
+        diagnostic_warnings: 43,
     };
 
     let mut doubled = base.clone();
@@ -263,7 +265,7 @@ fn parse_coverage_add_assign_doubles_every_serialized_field() {
     let doubled_obj = doubled_map.as_object().unwrap();
     assert_eq!(
         base_obj.len(),
-        41,
+        43,
         "every coverage field must be non-zero here"
     );
     for (key, value) in base_obj {

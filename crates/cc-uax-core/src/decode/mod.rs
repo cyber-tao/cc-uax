@@ -65,6 +65,12 @@ pub(crate) struct DecodedExport {
     pub(crate) user_defined_pins: Option<Vec<UserDefinedPin>>,
     pub(crate) member: Option<MemberRef>,
     pub(crate) rigvm_link: Option<DecodedRigVmLink>,
+    /// Whether the tagged-property block ended where it was supposed to. When it
+    /// did, a remaining tail is data the class's own `Serialize` override wrote
+    /// (mesh render data, lightmaps, script bytecode); when it did not, the tail
+    /// is unattributed and the decoder cannot say what those bytes are. Those are
+    /// very different pieces of evidence and must not share one reason string.
+    pub(crate) property_block_closed: bool,
     /// End of the contiguous decoded region (high-water mark set by each
     /// decoder). `None` means no decoder ran and the whole payload is opaque.
     pub(crate) decoded_end: Option<u64>,
@@ -221,6 +227,7 @@ impl Package {
                 user_defined_pins: None,
                 member: None,
                 rigvm_link: None,
+                property_block_closed: false,
                 decoded_end: None,
                 serial_size: 0,
                 unclassified_bytes: 0,
@@ -330,6 +337,7 @@ fn account_export_tail(
         Some(PropertyParseStatus::Complete | PropertyParseStatus::Empty)
     ) && (!window.has_declared_property_range
         || decoded_end == window.property_end);
+    export.property_block_closed = property_block_closed;
     if export.object_guid.is_none()
         && export.pins.is_none()
         && decoded_end < window.serial_end
@@ -391,4 +399,31 @@ fn is_pcg_model_object_class(class: &str) -> bool {
 
 fn is_state_tree_model_object_class(class: &str) -> bool {
     class.starts_with("/Script/StateTree")
+}
+
+/// A `UStruct` whose `Serialize` writes compiled script bytecode after the tagged
+/// properties (`UStruct::Serialize` emits `Script`, the EX_ opcode stream). Every
+/// Blueprint function and generated class carries one.
+pub(crate) fn is_script_bytecode_class(class: &str) -> bool {
+    let Some(simple) = class.rsplit(['.', '/']).next() else {
+        return false;
+    };
+    matches!(
+        simple,
+        "Function" | "DelegateFunction" | "SparseDelegateFunction" | "Class"
+    ) || simple.ends_with("GeneratedClass")
+}
+
+/// A Niagara object whose payload includes a compiled VM or GPU representation
+/// (`FNiagaraVMExecutableData`, simulation-stage and shader data) rather than
+/// source-level graph evidence.
+pub(crate) fn is_niagara_compiled_class(class: &str) -> bool {
+    let Some(simple) = class.rsplit(['.', '/']).next() else {
+        return false;
+    };
+    class.starts_with("/Script/Niagara.")
+        && matches!(
+            simple,
+            "NiagaraSystem" | "NiagaraScript" | "NiagaraEmitter" | "NiagaraSimulationStageBase"
+        )
 }

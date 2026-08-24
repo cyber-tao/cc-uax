@@ -680,6 +680,71 @@ fn post_property_tail_is_classified_with_its_byte_range() {
     );
 }
 
+// Bulk class data dwarfs everything else in a real project: on one corpus a
+// single reason string covered 1.25 GB of skeletal-mesh render data alongside the
+// handful of tails that actually point at a decoding gap. The two must be
+// separable, and compiled bytecode must be named rather than anonymous.
+#[test]
+fn export_tails_separate_class_payloads_from_unattributed_bytes() {
+    let single_export = |data: &[u8]| Package {
+        summary: Package::parse(&build_minimal_package()).unwrap().summary,
+        names: NameMap {
+            names: vec!["Prop".to_string(), "None".to_string()],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+    let tail_of = |analysis: &crate::AssetAnalysis| {
+        analysis
+            .known_opaque
+            .iter()
+            .find(|opaque| opaque.kind == KnownOpaqueKind::PostPropertyTail)
+            .expect("tail region")
+            .reason
+            .clone()
+    };
+
+    // A property block that closes cleanly, then a tail: those bytes are whatever
+    // the class's own Serialize override wrote.
+    let mut closed = Vec::new();
+    closed.push(0); // EClassSerializationControlExtension: no extensions
+    push_raw_name(&mut closed, 1); // None terminator, so the block is empty
+    push_i32(&mut closed, 0); // PossiblySerializeObjectGuid: absent
+    closed.extend_from_slice(&[1, 2, 3, 4]); // the class's own payload
+
+    let analysis = analyze_package(&single_export(&closed), &closed, AssetView::Full);
+    assert!(
+        tail_of(&analysis).contains("class-owned serializer data"),
+        "{}",
+        tail_of(&analysis)
+    );
+    assert_eq!(analysis.coverage.class_payload_bytes, 4);
+    assert_eq!(analysis.coverage.unattributed_tail_bytes, 0);
+
+    // A block that never reached a terminator leaves the same bytes unattributed:
+    // the decoder cannot say what they are, which is the case worth watching.
+    let mut unresolved = Vec::new();
+    unresolved.push(0);
+    push_raw_name(&mut unresolved, 0); // "Prop": a tag, not the terminator
+    unresolved.extend_from_slice(&[1, 2, 3, 4]); // truncated tag header
+
+    let analysis = analyze_package(&single_export(&unresolved), &unresolved, AssetView::Full);
+    assert!(
+        tail_of(&analysis).contains("did not close cleanly"),
+        "{}",
+        tail_of(&analysis)
+    );
+    assert_eq!(analysis.coverage.class_payload_bytes, 0);
+    assert_eq!(
+        analysis.coverage.unattributed_tail_bytes,
+        unresolved.len() as u64
+    );
+}
+
 #[test]
 fn non_tagged_property_payload_is_reported_as_status() {
     let base = Package::parse(&build_minimal_package()).unwrap();
