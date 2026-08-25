@@ -22,11 +22,3 @@ Thumbs.db
 
 # ---- Project-specific ----
 /.serena/
-/.agents/
-/.codex/
-/.qoder/
-/.codebuddy/
-/.workbuddy/
-
-# Stale local audit artifacts (contain machine-specific absolute paths; not for commit)
-/项目审核报告.md
