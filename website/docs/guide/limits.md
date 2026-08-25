@@ -30,6 +30,8 @@ Rejected rather than guessed at:
 - runtime behavior not evidenced by serialized graphs, properties, configuration, or references
 - plugin-native formats without a verified UE5.0–5.8 serialization contract
 
+Compiled Blueprint bytecode is a limit on **attribution**, not on reference completeness. An object reference inside the `Script` stream is an `FPackageIndex`, so it cannot serialize without an import row — the linker tables the reference graph is built from already list it. What the tables cannot hold is an asset path typed into a graph pin as a string, and `reference_evidence` measures that residue per asset instead of leaving it as an open-ended caveat.
+
 When evidence is incomplete, consumers must retain `partial`, `unsupported`, diagnostics, and capability limitations in their conclusions.
 
 The same `FileVersionUE5` does not guarantee the same layout: UE5.7 and UE5.8 share `1018` yet diverge. Custom versions and, where needed, the engine version gate those formats.

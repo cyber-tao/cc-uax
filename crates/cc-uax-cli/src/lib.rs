@@ -16,12 +16,13 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-/// Bumped to 7 when plugin content roots joined the default mounts, packaging
-/// cook roots became configured roots, `configured_roots` gained `resolution`,
-/// and per-asset capabilities kept the `detail` string that names their gap.
+/// Bumped to 8 when `analysis` gained the per-capability histogram and the
+/// compiled-payload-only partial count, `analysis.reference_evidence` summed the
+/// value-versus-tables cross-check, and `value_references` plus
+/// `reachability.value_reference_only_reachable` exposed the value-level edges.
 ///
 /// Public so tests assert against the constant rather than a copied literal.
-pub const PROJECT_REPORT_SCHEMA_VERSION: u32 = 7;
+pub const PROJECT_REPORT_SCHEMA_VERSION: u32 = 8;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {
@@ -358,6 +359,8 @@ struct ProjectReport {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     reverse: BTreeMap<String, BTreeSet<String>>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    value_references: BTreeMap<String, BTreeSet<String>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     ownership_closure: BTreeMap<String, BTreeSet<String>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     failures: Vec<ProjectIssue>,
@@ -448,6 +451,7 @@ impl ProjectReport {
             inventory,
             forward: index.forward.clone(),
             reverse: index.reverse.clone(),
+            value_references: index.value_references.clone(),
             ownership_closure: index.ownership_closure.clone(),
             failures,
             diagnostics,

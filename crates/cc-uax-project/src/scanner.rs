@@ -6,7 +6,9 @@ use crate::{
     ProjectLayout, ProjectReachability, ProjectReachabilityRoot, RootResolution, ScanDiagnostic,
     ScanFailure, ScanFailureStage, ScanStats, package_path_from_relative, strip_asset_extension,
 };
-use cc_uax_core::{AnalysisStatus, AssetAnalysis, AssetView, DecodedValue, PackageView};
+use cc_uax_core::{
+    AnalysisStatus, AssetAnalysis, AssetView, PackageView, collect_package_paths_from_value,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -136,6 +138,7 @@ impl ProjectScanner {
                                     asset_kind,
                                     ownership: classify_ownership(&file.relative_path),
                                     forward_references: entry.references.iter().cloned().collect(),
+                                    value_references: analysis.value_only_packages(),
                                     owned_sublevels: entry
                                         .owned_sublevels
                                         .iter()
@@ -157,6 +160,7 @@ impl ProjectScanner {
                                 asset_kind,
                                 ownership: classify_ownership(&file.relative_path),
                                 forward_references: BTreeSet::new(),
+                                value_references: BTreeSet::new(),
                                 owned_sublevels: BTreeSet::new(),
                                 analysis: AssetAnalysisSummary::unsupported(
                                     entry
@@ -253,6 +257,7 @@ impl ProjectScanner {
                         asset_kind,
                         ownership: classify_ownership(&file.relative_path),
                         forward_references: BTreeSet::new(),
+                        value_references: BTreeSet::new(),
                         owned_sublevels: BTreeSet::new(),
                         analysis: AssetAnalysisSummary::unsupported(message),
                     });
@@ -281,6 +286,7 @@ impl ProjectScanner {
                 asset_kind,
                 ownership: classify_ownership(&file.relative_path),
                 forward_references: parsed.references.into_iter().collect(),
+                value_references: parsed.analysis.value_only_packages(),
                 owned_sublevels: parsed.owned_sublevels,
                 analysis: parsed.analysis,
             });
@@ -392,6 +398,15 @@ pub(crate) fn build_project_index(
                     .unwrap_or_else(|| reference.clone())
             })
             .collect();
+        // Value-level edges are only useful where they name something the scan
+        // actually indexed: a path typed into a pin can be a stale or external
+        // name, and seeding `canonical` from it would invent a target.
+        record.value_references = record
+            .value_references
+            .iter()
+            .filter(|reference| reference.to_ascii_lowercase() != self_key)
+            .filter_map(|reference| canonical.get(&reference.to_ascii_lowercase()).cloned())
+            .collect();
     }
 
     resolve_external_ownership(&mut records, &mut failures);
@@ -402,6 +417,7 @@ pub(crate) fn build_project_index(
 
     let mut forward = Adjacency::new();
     let mut reverse = Adjacency::new();
+    let mut value_references = Adjacency::new();
     let mut ownership = BTreeMap::<String, BTreeSet<String>>::new();
     let mut stats = ScanStats {
         discovered,
@@ -418,6 +434,9 @@ pub(crate) fn build_project_index(
                 .entry(reference.clone())
                 .or_default()
                 .insert(record.package_path.clone());
+        }
+        if !record.value_references.is_empty() {
+            value_references.insert(record.package_path.clone(), record.value_references.clone());
         }
         if let AssetOwnership::External {
             external_kind,
@@ -455,11 +474,14 @@ pub(crate) fn build_project_index(
     let reachability = build_project_reachability(
         &entry_points,
         &assets,
-        &forward,
-        &reverse,
-        &ownership_closure,
+        &ReachabilityGraphs {
+            forward: &forward,
+            reverse: &reverse,
+            value_references: &value_references,
+            ownership_closure: &ownership_closure,
+            canonical: &canonical,
+        },
         failed_asset_count,
-        &canonical,
     );
     // `stats.failed` counts asset-level failures (read/parse/index of a discovered
     // asset) so the accounting `discovered == indexed + failed + skipped` holds.
@@ -480,6 +502,7 @@ pub(crate) fn build_project_index(
         assets,
         forward,
         reverse,
+        value_references,
         ownership,
         ownership_closure,
         reachability,
@@ -491,52 +514,62 @@ pub(crate) fn build_project_index(
     .with_canonical_lookup()
 }
 
+/// The graphs reachability is computed over. `forward`, `value_references` and
+/// `ownership_closure` are traversed; `reverse` only answers whether an
+/// unreachable asset is also isolated.
+struct ReachabilityGraphs<'a> {
+    forward: &'a Adjacency,
+    reverse: &'a Adjacency,
+    value_references: &'a Adjacency,
+    ownership_closure: &'a BTreeMap<String, BTreeSet<String>>,
+    canonical: &'a HashMap<String, String>,
+}
+
 fn build_project_reachability(
     entry_points: &ProjectEntryPoints,
     assets: &BTreeMap<String, AssetRecord>,
-    forward: &Adjacency,
-    reverse: &Adjacency,
-    ownership_closure: &BTreeMap<String, BTreeSet<String>>,
+    graphs: &ReachabilityGraphs<'_>,
     failed_assets: usize,
-    canonical: &HashMap<String, String>,
 ) -> ProjectReachability {
+    let ReachabilityGraphs {
+        forward,
+        reverse,
+        value_references,
+        ownership_closure,
+        canonical,
+    } = *graphs;
     let configured_roots = configured_roots(entry_points, assets, canonical);
-    let mut reachable_runtime_packages = BTreeSet::new();
-    let mut ownership_closure_members = BTreeSet::new();
-    let mut queue = configured_roots
+    let roots = configured_roots
         .iter()
         .filter_map(|root| root.resolved_package.clone())
-        .collect::<VecDeque<_>>();
+        .collect::<Vec<_>>();
 
-    while let Some(package) = queue.pop_front() {
-        if !reachable_runtime_packages.insert(package.clone()) {
-            continue;
-        }
-        if let Some(closure) = ownership_closure.get(&package) {
-            for member in closure {
-                if member != &package {
-                    ownership_closure_members.insert(member.clone());
-                }
-                if !reachable_runtime_packages.contains(member) {
-                    queue.push_back(member.clone());
-                }
-            }
-        }
-        if let Some(references) = forward.get(&package) {
-            for reference in references {
-                if let Some(resolved) = canonical_package(canonical, reference)
-                    && !reachable_runtime_packages.contains(&resolved)
-                {
-                    queue.push_back(resolved);
-                }
-            }
-        }
-    }
+    let (reachable_runtime_packages, ownership_closure_members) = walk_reachable(
+        &roots,
+        forward,
+        Some(value_references),
+        ownership_closure,
+        canonical,
+    );
+    // Walked a second time without the value-level edges so the difference is
+    // reported rather than asserted: it is the measured size of what a
+    // linker-table-only reference graph misses.
+    let value_reference_only_reachable = if value_references.is_empty() {
+        BTreeSet::new()
+    } else {
+        let (table_reachable, _) =
+            walk_reachable(&roots, forward, None, ownership_closure, canonical);
+        reachable_runtime_packages
+            .difference(&table_reachable)
+            .cloned()
+            .collect()
+    };
 
     let mut unreachable_project_assets = BTreeSet::new();
     let mut isolated_project_assets = BTreeSet::new();
     let mut partial_packages = BTreeSet::new();
     let mut unsupported_packages = BTreeSet::new();
+    let value_referenced = value_references.values().flatten().collect::<BTreeSet<_>>();
     for (package, record) in assets {
         match record.analysis.status {
             AnalysisStatus::Partial => {
@@ -551,8 +584,10 @@ fn build_project_reachability(
             && !reachable_runtime_packages.contains(package)
         {
             unreachable_project_assets.insert(package.clone());
-            let no_forward = forward.get(package).is_none_or(BTreeSet::is_empty);
-            let no_reverse = reverse.get(package).is_none_or(BTreeSet::is_empty);
+            let no_forward = forward.get(package).is_none_or(BTreeSet::is_empty)
+                && value_references.get(package).is_none_or(BTreeSet::is_empty);
+            let no_reverse = reverse.get(package).is_none_or(BTreeSet::is_empty)
+                && !value_referenced.contains(package);
             if no_forward && no_reverse {
                 isolated_project_assets.insert(package.clone());
             }
@@ -563,12 +598,60 @@ fn build_project_reachability(
         configured_roots,
         reachable_runtime_packages,
         ownership_closure_members,
+        value_reference_only_reachable,
         unreachable_project_assets,
         isolated_project_assets,
         partial_packages,
         unsupported_packages,
         failed_assets,
     }
+}
+
+/// Breadth-first walk from the configured roots, following ownership closures,
+/// linker-table edges, and optionally the value-level edges.
+///
+/// Returns the reachable packages and the closure members pulled in along the
+/// way. `value_references` is a parameter rather than a fixed input so the same
+/// walk can measure reachability with and without that evidence.
+fn walk_reachable(
+    roots: &[String],
+    forward: &Adjacency,
+    value_references: Option<&Adjacency>,
+    ownership_closure: &BTreeMap<String, BTreeSet<String>>,
+    canonical: &HashMap<String, String>,
+) -> (BTreeSet<String>, BTreeSet<String>) {
+    let mut reachable = BTreeSet::new();
+    let mut closure_members = BTreeSet::new();
+    let mut queue = roots.iter().cloned().collect::<VecDeque<_>>();
+    while let Some(package) = queue.pop_front() {
+        if !reachable.insert(package.clone()) {
+            continue;
+        }
+        if let Some(closure) = ownership_closure.get(&package) {
+            for member in closure {
+                if member != &package {
+                    closure_members.insert(member.clone());
+                }
+                if !reachable.contains(member) {
+                    queue.push_back(member.clone());
+                }
+            }
+        }
+        let edges = std::iter::once(forward.get(&package))
+            .chain(std::iter::once(
+                value_references.and_then(|edges| edges.get(&package)),
+            ))
+            .flatten()
+            .flatten();
+        for reference in edges {
+            if let Some(resolved) = canonical_package(canonical, reference)
+                && !reachable.contains(&resolved)
+            {
+                queue.push_back(resolved);
+            }
+        }
+    }
+    (reachable, closure_members)
 }
 
 fn configured_roots(
@@ -975,43 +1058,6 @@ fn is_world_asset_property(name: &str) -> bool {
         name,
         "WorldAsset" | "PackedWorldAsset" | "OverrideWorldAsset"
     )
-}
-
-fn collect_package_paths_from_value(value: &DecodedValue, out: &mut BTreeSet<String>) {
-    if let Some(path) = value.as_str() {
-        if let Some(package) = package_path_from_soft_asset_path(path) {
-            out.insert(package);
-        }
-        return;
-    }
-    if let Some(object) = value.as_object() {
-        if let Some(path) = object.get("asset_path").and_then(DecodedValue::as_str)
-            && let Some(package) = package_path_from_soft_asset_path(path)
-        {
-            out.insert(package);
-        }
-        for nested in object.values() {
-            collect_package_paths_from_value(nested, out);
-        }
-        return;
-    }
-    if let Some(array) = value.as_array() {
-        for nested in array {
-            collect_package_paths_from_value(nested, out);
-        }
-    }
-}
-
-fn package_path_from_soft_asset_path(path: &str) -> Option<String> {
-    let path = path.trim();
-    if path.is_empty() || path.eq_ignore_ascii_case("None") || !path.starts_with('/') {
-        return None;
-    }
-    let package = path
-        .split_once('.')
-        .map(|(package, _)| package)
-        .unwrap_or(path);
-    (!package.is_empty()).then(|| package.to_string())
 }
 
 fn asset_kind(path: &Path) -> Option<AssetKind> {

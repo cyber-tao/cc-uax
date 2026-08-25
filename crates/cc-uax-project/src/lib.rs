@@ -11,12 +11,12 @@ mod scanner;
 /// Distinct from the CLI's report schema: this one also gates cache reuse, so any
 /// change to what a cached `AssetAnalysisSummary` means must bump it or a warm
 /// scan will replay summaries built under the old meaning.
-pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 2;
+pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 3;
 
 pub use analysis_summary::{
     AnalysisDiagnosticSummary, AssetAnalysisSummary, CapabilitySummary, GraphSummary,
     KnownOpaqueGroup, KnownOpaqueSummary, PcgGraphSummary, ProjectAnalysisSummary,
-    RigVmGraphSummary, StateTreeGraphSummary,
+    ProjectCapabilityCount, ProjectReferenceEvidence, RigVmGraphSummary, StateTreeGraphSummary,
 };
 pub use cache::{CachePathError, CachePathPolicy};
 pub use entry_points::{ConfigReference, ProjectEntryPoints};

@@ -18,6 +18,7 @@ mod version;
 pub use analysis::PackageView;
 pub use graph_models::*;
 pub use model::*;
+pub use references::{collect_package_paths_from_value, package_path_from_object_path};
 pub use rejection::{PackageParseError, PackageRejection};
 
 #[cfg(test)]

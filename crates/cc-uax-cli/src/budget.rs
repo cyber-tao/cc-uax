@@ -224,8 +224,9 @@ fn tier_graph_elements(value: &mut Value) -> usize {
 /// (status/coverage/capabilities/diagnostics/known_opaque/reachability) is not
 /// listed here and is therefore always preserved. `imports`/`references` rank
 /// below the decoded exports and graphs: reference metadata is shed before core
-/// evidence when the budget is tight.
-const DETAIL_SECTION_KEYS: [&str; 12] = [
+/// evidence when the budget is tight. `value_references` ranks last because it is
+/// both the smallest map and the one an "unreferenced" claim depends on.
+const DETAIL_SECTION_KEYS: [&str; 13] = [
     "exports",
     "graphs",
     "rigvm_graphs",
@@ -238,6 +239,7 @@ const DETAIL_SECTION_KEYS: [&str; 12] = [
     "forward",
     "reverse",
     "ownership_closure",
+    "value_references",
 ];
 
 /// Tier 4 (skeleton): drop whole top-level detail sections, keeping the evidence
@@ -383,13 +385,14 @@ fn tier_reachability_sets(value: &mut Value) -> usize {
 /// The large project `reachability` package lists, nested under `reachability`.
 /// They are truncatable like the top-level detail sections; `configured_roots`
 /// and the numeric counts are skeleton and never listed here.
-const REACHABILITY_KEYS: [&str; 6] = [
+const REACHABILITY_KEYS: [&str; 7] = [
     "reachable_runtime_packages",
     "ownership_closure_members",
     "unreachable_project_assets",
     "isolated_project_assets",
     "partial_packages",
     "unsupported_packages",
+    "value_reference_only_reachable",
 ];
 
 /// Replace arrays/objects stored under any of `keys` with an `{"@elided": count}`

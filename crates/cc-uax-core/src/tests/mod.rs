@@ -5,3 +5,4 @@ mod package;
 mod pin;
 mod property;
 mod reader;
+mod references;

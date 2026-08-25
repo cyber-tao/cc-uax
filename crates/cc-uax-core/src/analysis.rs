@@ -11,6 +11,7 @@ mod typed;
 use crate::decode::DecodeOptions;
 use crate::model::*;
 use crate::package::Package;
+use crate::references::build_reference_evidence;
 use crate::rejection::PackageParseError;
 
 use capability::{CapabilityInputs, build_capabilities, determine_analysis_status};
@@ -260,20 +261,30 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         &capabilities,
     );
 
+    let references = if wants_references {
+        references_to_model(package)
+    } else {
+        AssetReferences::default()
+    };
+    // Only meaningful when the tables and the values to check against them were
+    // both decoded; `--view references` decodes no exports, so an empty result
+    // there would claim a clean cross-check that never ran.
+    let reference_evidence = (wants_references && wants_properties && wants_logic).then(|| {
+        build_reference_evidence(
+            &package.summary.package_name,
+            &references,
+            &exports,
+            &graphs,
+        )
+    });
+
     AssetAnalysis {
         schema_version: ASSET_ANALYSIS_SCHEMA_VERSION,
         view,
         status,
         summary: summary_to_model(package),
-        references: if wants_references {
-            references_to_model(package)
-        } else {
-            AssetReferences {
-                assets: Vec::new(),
-                scripts: Vec::new(),
-                soft: Vec::new(),
-            }
-        },
+        references,
+        reference_evidence,
         imports: if wants_references {
             imports_to_model(package)
         } else {

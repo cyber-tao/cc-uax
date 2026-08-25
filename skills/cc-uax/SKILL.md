@@ -83,6 +83,8 @@ Do not upgrade `partial` to `confirmed` from naming conventions, screenshots, re
 
 Use project `reachability` and adjacency to distinguish configured roots, reachable runtime dependencies, editor-only assets, isolated assets, and failed/unsupported assets. Treat “unreferenced” as a graph fact under the scanned mounts, not proof that deletion is safe; account for soft loads, primary asset rules, config paths, localization, and runtime-generated names.
 
+Do not turn opaque compiled bytecode into a blanket caveat on reference claims. A reference in the `Script` stream is an `FPackageIndex` and so must have an import row, which means the linker tables the reference graph is built from already list it; `analysis.capabilities` shows `reference_tables` complete on the same assets that `blueprint_bytecode` marks partial. Quantify the residue instead: `analysis.reference_evidence.value_only_packages` counts the package paths that only a decoded value names, and `reachability.value_reference_only_reachable` lists the packages nothing but those value-level edges reaches.
+
 When proposing deletion, require both no reachable hard/soft/config reference and adequate scan coverage.
 
 ## Finish with coverage

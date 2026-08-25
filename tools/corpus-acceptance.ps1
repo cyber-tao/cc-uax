@@ -188,9 +188,14 @@ function Get-JsonTopLevelString {
 
 # A budgeted array keeps its leading entries followed by an `{"@elided": N}`
 # marker, so a raw element count understates the real total.
+#
+# Reports are sparse, so an absent section arrives here as `$null`. That must count
+# as zero: `@($null)` is a one-element array in PowerShell, which reported an empty
+# `failures` list as one failure.
 function Measure-JsonArray {
     param($Array)
 
+    if ($null -eq $Array) { return 0 }
     $total = 0
     foreach ($item in @($Array)) {
         if ($item -is [psobject] -and $item.PSObject.Properties['@elided']) {
@@ -199,6 +204,19 @@ function Measure-JsonArray {
         else { $total += 1 }
     }
     return $total
+}
+
+# Whether every element of a budgeted array survived, so a set comparison over it
+# is sound rather than a comparison of two prefixes.
+function Test-JsonArrayComplete {
+    param($Array)
+
+    if ($null -eq $Array) { return $true }
+    if ($Array -is [psobject] -and $Array.PSObject.Properties['@elided']) { return $false }
+    foreach ($item in @($Array)) {
+        if ($item -is [psobject] -and $item.PSObject.Properties['@elided']) { return $false }
+    }
+    return $true
 }
 
 function Measure-Project {
@@ -226,10 +244,33 @@ function Measure-Project {
     $status = Get-JsonTopLevelString -Json $json -Key 'status'
     if ($null -eq $status) { throw "report for $Target has no top-level status" }
     $coverage = $analysis.coverage
+    $reachability = Get-JsonSection -Json $json -Key 'reachability'
 
     # Reports are sparse: a zero counter or empty collection is omitted, so an
     # absent property means the default rather than an error.
     $number = { param($object, $name) if ($object.PSObject.Properties[$name]) { $object.$name } else { 0 } }
+
+    # Capability counts are recorded per kind so a capability that stops being
+    # reported at all shows up, not just one whose statuses shift.
+    $capabilities = [ordered] @{}
+    foreach ($entry in @(if ($analysis.PSObject.Properties['capabilities']) { $analysis.capabilities })) {
+        if ($null -eq $entry -or -not $entry.PSObject.Properties['kind']) { continue }
+        $capabilities[$entry.kind] = [ordered] @{
+            complete    = & $number $entry 'complete'
+            partial     = & $number $entry 'partial'
+            unsupported = & $number $entry 'unsupported'
+        }
+    }
+
+    # Sparse again: an empty reachability set is omitted entirely, and strict mode
+    # makes a direct property access on an absent key throw.
+    $section = {
+        param($object, $name)
+        if ($null -ne $object -and $object.PSObject.Properties[$name]) { $object.$name } else { $null }
+    }
+    $evidence = & $section $analysis 'reference_evidence'
+    $unreachable = & $section $reachability 'unreachable_project_assets'
+    $valueOnlyReachable = & $section $reachability 'value_reference_only_reachable'
 
     # The version distribution comes from the report, so it covers exactly what was
     # scanned -- including auto-mounted plugin content, which a Content-directory
@@ -267,6 +308,25 @@ function Measure-Project {
         grouped_regions       = $analysis.grouped_opaque_regions
         grouped_bytes         = $analysis.grouped_opaque_bytes
         unexplained_partials  = $analysis.partial_assets_without_explanation
+        compiled_payload_only_partials = & $number $analysis 'partial_assets_compiled_payload_only'
+        capabilities          = $capabilities
+        reference_checked_assets = & $number $evidence 'checked_assets'
+        reference_value_packages = & $number $evidence 'value_packages'
+        reference_confirmed   = & $number $evidence 'confirmed_by_tables'
+        reference_value_only  = & $number $evidence 'value_only_packages'
+        reference_assets_with_value_only = & $number $evidence 'assets_with_value_only_packages'
+        unreachable_assets    = Measure-JsonArray $unreachable
+        value_only_reachable  = Measure-JsonArray $valueOnlyReachable
+        # Only a complete pair can be compared as sets; a budgeted prefix cannot
+        # disprove an overlap.
+        reachability_sets_complete = (Test-JsonArrayComplete $unreachable) -and
+            (Test-JsonArrayComplete $valueOnlyReachable)
+        reachability_overlap  = if ((Test-JsonArrayComplete $unreachable) -and
+                (Test-JsonArrayComplete $valueOnlyReachable)) {
+            $reachable = [System.Collections.Generic.HashSet[string]]::new(
+                [string[]] @($valueOnlyReachable), [System.StringComparer]::Ordinal)
+            @(@($unreachable) | Where-Object { $reachable.Contains([string] $_) }).Count
+        } else { 0 }
         file_version_ue5      = $versions
     }
 }
@@ -303,6 +363,37 @@ function Test-Invariants {
     if ($Result.unexplained_partials -ne 0) {
         $problems += "$($Result.unexplained_partials) partial asset(s) carry neither a diagnostic code nor a capability detail; a partial must say what is missing"
     }
+    if ($Result.compiled_payload_only_partials -gt $Result.partial_assets) {
+        $problems += "compiled-payload-only partials $($Result.compiled_payload_only_partials) exceed partial assets $($Result.partial_assets)"
+    }
+    # A capability is reported at most once per asset, so its three status counts
+    # cannot exceed the asset total; if they do, one asset reported it twice.
+    foreach ($kind in $Result.capabilities.Keys) {
+        $counts = $Result.capabilities[$kind]
+        $total = $counts.complete + $counts.partial + $counts.unsupported
+        if ($total -gt $Result.assets) {
+            $problems += "capability $kind is reported by $total assets, more than the $($Result.assets) scanned"
+        }
+    }
+    if ($Result.reference_checked_assets -gt $Result.assets) {
+        $problems += "reference cross-check ran on $($Result.reference_checked_assets) assets, more than the $($Result.assets) scanned"
+    }
+    if ($Result.reference_confirmed -gt $Result.reference_value_packages) {
+        $problems += "confirmed value packages $($Result.reference_confirmed) exceed the $($Result.reference_value_packages) found"
+    }
+    if ($Result.reference_assets_with_value_only -gt $Result.reference_checked_assets) {
+        $problems += "$($Result.reference_assets_with_value_only) assets carry value-only packages but only $($Result.reference_checked_assets) were checked"
+    }
+    # The two sides of the same fact: neither can be zero while the other is not.
+    if (($Result.reference_value_only -eq 0) -ne ($Result.reference_assets_with_value_only -eq 0)) {
+        $problems += "value-only accounting disagrees: $($Result.reference_value_only) package(s) across $($Result.reference_assets_with_value_only) asset(s)"
+    }
+    if ($Result.value_only_reachable -gt 0 -and $Result.reference_value_only -eq 0) {
+        $problems += "$($Result.value_only_reachable) package(s) are value-reachable while no asset reports a value-only package"
+    }
+    if ($Result.reachability_sets_complete -and $Result.reachability_overlap -ne 0) {
+        $problems += "$($Result.reachability_overlap) package(s) are both value-reachable and unreachable; the second walk did not subtract the first"
+    }
     if ($Result.file_version_ue5.Keys.Count -eq 0 -and $Result.assets -gt 0) {
         $problems += "no FileVersionUE5 distribution reported; the scan cannot state which version gates it exercised"
     }
@@ -335,6 +426,26 @@ function Test-AgainstBaseline {
     # Losing a mount means losing whole content roots from the scan.
     if ($Result.mounts -lt $Baseline.mounts) {
         $problems += "mounts fell: $($Baseline.mounts) -> $($Result.mounts)"
+    }
+    # More unreachable assets means the reference graph got weaker, which is how a
+    # lost edge kind shows up: the assets are still indexed, just no longer reached.
+    if ($Result.unreachable_assets -gt $Baseline.unreachable_assets) {
+        $problems += "unreachable project assets rose: $($Baseline.unreachable_assets) -> $($Result.unreachable_assets)"
+    }
+    if ($Result.reference_checked_assets -lt $Baseline.reference_checked_assets) {
+        $problems += "reference cross-check coverage fell: $($Baseline.reference_checked_assets) -> $($Result.reference_checked_assets) asset(s)"
+    }
+    if ($Result.value_only_reachable -lt $Baseline.value_only_reachable) {
+        $problems += "value-reachable packages fell: $($Baseline.value_only_reachable) -> $($Result.value_only_reachable)"
+    }
+    # A capability disappearing from the histogram means a whole class of evidence
+    # stopped being reported, even if every other count holds.
+    if ($Baseline.PSObject.Properties['capabilities']) {
+        foreach ($property in $Baseline.capabilities.PSObject.Properties) {
+            if (-not $Result.capabilities.Contains($property.Name)) {
+                $problems += "capability $($property.Name) is no longer reported by any asset"
+            }
+        }
     }
     # Version coverage is the only statement of which gates real assets exercise,
     # so a version disappearing from the distribution is lost coverage even if
@@ -398,6 +509,12 @@ foreach ($target in $Project) {
         "$_=$($result.file_version_ue5[$_])"
     }) -join ' '
     Write-Host "  mounts=$($result.mounts) FileVersionUE5: $versions"
+    # Says whether `partial` means missing evidence on this corpus, and how much
+    # of the reference graph rests on value-level rather than linker-table edges.
+    Write-Host ("  partial={0} (compiled-payload-only={1})  value_only_packages={2} across {3} asset(s)  value_reachable={4}  unreachable={5}" -f `
+        $result.partial_assets, $result.compiled_payload_only_partials, `
+        $result.reference_value_only, $result.reference_assets_with_value_only, `
+        $result.value_only_reachable, $result.unreachable_assets)
 }
 
 Write-Host ""

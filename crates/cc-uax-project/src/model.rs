@@ -40,6 +40,12 @@ pub struct AssetRecord {
     pub asset_kind: AssetKind,
     pub ownership: AssetOwnership,
     pub forward_references: BTreeSet<String>,
+    /// Packages this asset names in a decoded value but that neither linker table
+    /// records, resolved against the scanned mounts. Kept apart from
+    /// `forward_references` so table-level and value-level evidence stay
+    /// distinguishable.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub value_references: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub owned_sublevels: BTreeSet<String>,
     pub analysis: AssetAnalysisSummary,
@@ -53,6 +59,13 @@ pub struct ProjectReachability {
     pub reachable_runtime_packages: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub ownership_closure_members: BTreeSet<String>,
+    /// Packages that only the value-level edges reach: dropping `value_references`
+    /// would move every one of these into `unreachable_project_assets`.
+    ///
+    /// This is the auditable size of the gap a linker-table-only reference graph
+    /// leaves, and the set an "unreferenced, safe to delete" claim must clear.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub value_reference_only_reachable: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub unreachable_project_assets: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -212,6 +225,9 @@ pub struct ProjectIndex {
     pub assets: BTreeMap<String, AssetRecord>,
     pub forward: Adjacency,
     pub reverse: Adjacency,
+    /// Value-level edges, kept out of `forward`/`reverse` so those stay exactly
+    /// what the engine's linker tables recorded.
+    pub value_references: Adjacency,
     pub ownership: BTreeMap<String, BTreeSet<String>>,
     pub ownership_closure: BTreeMap<String, BTreeSet<String>>,
     pub reachability: ProjectReachability,

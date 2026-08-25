@@ -1,10 +1,10 @@
 use cc_uax_core::{
     AnalysisCapability, AnalysisDiagnostic, AnalysisStatus, AssetAnalysis, CapabilityKind,
     DiagnosticSeverity, KnownOpaque, KnownOpaqueKind, LogicGraph, ParseCoverage, PcgGraph,
-    RigVmGraph, StateTreeGraph,
+    ReferenceEvidence, RigVmGraph, StateTreeGraph,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// serde `skip_serializing_if` helper: drop zero counts from per-asset summaries
 /// so a project report only carries the non-zero accounting for each asset.
@@ -198,6 +198,10 @@ pub struct AssetAnalysisSummary {
     pub diagnostics: AnalysisDiagnosticSummary,
     #[serde(default, skip_serializing_if = "KnownOpaqueSummary::is_empty")]
     pub known_opaque: KnownOpaqueSummary,
+    /// The value-versus-tables reference cross-check, carried through unchanged.
+    /// Absent for a package that was never parsed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_evidence: Option<ReferenceEvidence>,
 }
 
 impl AssetAnalysisSummary {
@@ -218,6 +222,7 @@ impl AssetAnalysisSummary {
             state_tree_graphs: Vec::new(),
             diagnostics: AnalysisDiagnosticSummary::default(),
             known_opaque: KnownOpaqueSummary::default(),
+            reference_evidence: None,
         }
     }
 
@@ -230,6 +235,40 @@ impl AssetAnalysisSummary {
                 .capabilities
                 .iter()
                 .any(|capability| capability.detail.is_some())
+    }
+
+    /// Packages this asset names in a decoded value that no linker table records.
+    ///
+    /// Read back off the cross-check rather than stored separately so a warm cache
+    /// replays exactly the evidence it recorded.
+    pub(crate) fn value_only_packages(&self) -> BTreeSet<String> {
+        self.reference_evidence
+            .as_ref()
+            .map(|evidence| evidence.value_only_packages.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Whether the only reason this asset is not `complete` is one or more named
+    /// compiled-payload capabilities.
+    ///
+    /// This mirrors every branch of the core status rule, so answering `true`
+    /// means the package's reference tables, tagged properties, source graphs and
+    /// byte accounting are all whole: nothing failed, nothing went unclassified,
+    /// and the sole gap is a compiled form the parser does not read.
+    fn is_compiled_payload_only_gap(&self) -> bool {
+        if self.diagnostics.errors > 0
+            || self.diagnostics.warnings > 0
+            || self.coverage.unclassified_bytes > 0
+        {
+            return false;
+        }
+        let mut incomplete = self
+            .capabilities
+            .iter()
+            .filter(|capability| capability.status != AnalysisStatus::Complete)
+            .peekable();
+        incomplete.peek().is_some()
+            && incomplete.all(|capability| capability.kind.is_compiled_payload())
     }
 
     pub(crate) fn from_analysis(analysis: &AssetAnalysis) -> Self {
@@ -265,6 +304,7 @@ impl AssetAnalysisSummary {
                 .collect(),
             diagnostics: AnalysisDiagnosticSummary::from_diagnostics(&analysis.diagnostics),
             known_opaque: KnownOpaqueSummary::from_regions(&analysis.known_opaque),
+            reference_evidence: analysis.reference_evidence.clone(),
         }
     }
 }
@@ -449,6 +489,40 @@ impl KnownOpaqueSummary {
     }
 }
 
+/// How many scanned assets reported one capability at each status.
+///
+/// Without this a project report said only how many assets were `partial`, so
+/// answering "is any of my evidence actually missing?" meant re-deriving the
+/// histogram from tens of thousands of inventory entries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectCapabilityCount {
+    pub kind: CapabilityKind,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub complete: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub partial: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unsupported: usize,
+}
+
+/// How much of the scan's reference evidence the linker tables did not hold.
+///
+/// A scan where `value_only_packages` is `0` has proved, per asset, that every
+/// package path its decoded values name is also a recorded reference. That is
+/// the measurement an "unreferenced, safe to delete" claim needs, and the reason
+/// compiled Blueprint bytecode staying opaque does not put it in doubt.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectReferenceEvidence {
+    /// Assets whose values and tables were both decoded, so the cross-check ran.
+    pub checked_assets: usize,
+    /// Distinct packages named by decoded values, summed per asset.
+    pub value_packages: usize,
+    pub confirmed_by_tables: usize,
+    /// Distinct packages, across the whole scan, that no table records.
+    pub value_only_packages: usize,
+    pub assets_with_value_only_packages: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectAnalysisSummary {
     pub status: AnalysisStatus,
@@ -463,6 +537,18 @@ pub struct ProjectAnalysisSummary {
     /// consumer nothing. Published here so that can be checked without walking a
     /// whole inventory.
     pub partial_assets_without_explanation: usize,
+    /// Partial assets whose only gap is a named compiled-payload capability.
+    ///
+    /// Every compiled Blueprint makes its package `partial`, so on a real project
+    /// this is most of `partial_assets`. Separating it is what lets a consumer see
+    /// that those assets' reference tables, properties and byte accounting are
+    /// whole, instead of reading one aggregate count as if evidence were missing.
+    pub partial_assets_compiled_payload_only: usize,
+    /// Per-capability status counts across every parsed asset.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<ProjectCapabilityCount>,
+    /// The value-versus-tables reference cross-check, summed over the scan.
+    pub reference_evidence: ProjectReferenceEvidence,
     /// Regions and bytes summed from the per-asset `known_opaque` groups.
     ///
     /// These must equal `coverage.known_opaque_regions` and
@@ -494,11 +580,17 @@ impl ProjectAnalysisSummary {
             unsupported_assets: 0,
             scan_failures,
             partial_assets_without_explanation: 0,
+            partial_assets_compiled_payload_only: 0,
+            capabilities: Vec::new(),
+            reference_evidence: ProjectReferenceEvidence::default(),
             grouped_opaque_regions: 0,
             grouped_opaque_bytes: 0,
             file_versions: BTreeMap::new(),
             coverage: ParseCoverage::default(),
         };
+        let mut capability_counts: BTreeMap<CapabilityKind, ProjectCapabilityCount> =
+            BTreeMap::new();
+        let mut value_only_packages = BTreeSet::new();
         for summary in summaries {
             aggregate.assets += 1;
             match summary.status {
@@ -509,6 +601,24 @@ impl ProjectAnalysisSummary {
             if summary.status == AnalysisStatus::Partial && !summary.explains_its_gap() {
                 aggregate.partial_assets_without_explanation += 1;
             }
+            if summary.status == AnalysisStatus::Partial && summary.is_compiled_payload_only_gap() {
+                aggregate.partial_assets_compiled_payload_only += 1;
+            }
+            for capability in &summary.capabilities {
+                let entry = capability_counts.entry(capability.kind).or_insert_with(|| {
+                    ProjectCapabilityCount {
+                        kind: capability.kind,
+                        complete: 0,
+                        partial: 0,
+                        unsupported: 0,
+                    }
+                });
+                match capability.status {
+                    AnalysisStatus::Complete => entry.complete += 1,
+                    AnalysisStatus::Partial => entry.partial += 1,
+                    AnalysisStatus::Unsupported => entry.unsupported += 1,
+                }
+            }
             for group in &summary.known_opaque.groups {
                 aggregate.grouped_opaque_regions += group.regions;
                 aggregate.grouped_opaque_bytes += group.bytes;
@@ -516,8 +626,20 @@ impl ProjectAnalysisSummary {
             if let Some(version) = summary.file_version_ue5 {
                 *aggregate.file_versions.entry(version).or_default() += 1;
             }
+            if let Some(evidence) = &summary.reference_evidence {
+                let totals = &mut aggregate.reference_evidence;
+                totals.checked_assets += 1;
+                totals.value_packages += evidence.value_packages;
+                totals.confirmed_by_tables += evidence.confirmed_by_tables;
+                if !evidence.value_only_packages.is_empty() {
+                    totals.assets_with_value_only_packages += 1;
+                    value_only_packages.extend(evidence.value_only_packages.iter().cloned());
+                }
+            }
             aggregate.coverage += &summary.coverage;
         }
+        aggregate.reference_evidence.value_only_packages = value_only_packages.len();
+        aggregate.capabilities = capability_counts.into_values().collect();
         aggregate.status = if aggregate.scan_failures > 0 {
             AnalysisStatus::Partial
         } else if aggregate.assets == 0 || aggregate.complete_assets == aggregate.assets {

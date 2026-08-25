@@ -3,11 +3,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::AddAssign;
 
-/// Bumped to 6 when coverage split its incomplete property outcomes and its
-/// opaque byte total, `blueprint_bytecode`/`niagara_compiled` joined the
-/// capability kinds, export tails gained per-cause reasons, and the StateTree
-/// graph gained the evaluator, global-task, single-task and consideration fields.
-pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 6;
+/// Bumped to 7 when `reference_evidence` began cross-checking the package paths
+/// named by decoded values against the linker tables, so a consumer can measure
+/// the references those tables cannot hold instead of treating every opaque
+/// compiled payload as a possible hidden reference.
+pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 7;
 
 /// serde `skip_serializing_if` helper: drop `false` booleans from the rendered
 /// report so only set flags are emitted.
@@ -62,6 +62,11 @@ pub struct AssetAnalysis {
     pub summary: AssetSummary,
     #[serde(default, skip_serializing_if = "AssetReferences::is_empty")]
     pub references: AssetReferences,
+    /// Present only when the view decoded both the reference tables and the values
+    /// to check against them, which today is `full`. Absent means the cross-check
+    /// was not run, which is not the same as finding nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_evidence: Option<ReferenceEvidence>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub imports: Vec<AssetImport>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -374,6 +379,44 @@ pub struct AssetReferences {
     pub soft: Vec<String>,
 }
 
+/// Package paths found inside decoded values, checked against the linker tables
+/// that [`AssetReferences`] reports.
+///
+/// `references` is authoritative for what the engine's own linker recorded, and
+/// compiled Blueprint bytecode cannot hide a reference from it: an object
+/// constant in the `Script` stream is an `FPackageIndex`, so it needs an import
+/// row to serialize at all. What the tables genuinely cannot hold is a path that
+/// was never a typed reference — an asset path typed as a string into a graph pin
+/// and loaded at runtime. This block measures that residue instead of leaving it
+/// as an unbounded caveat on every "unreferenced" claim.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceEvidence {
+    /// Distinct packages named by any decoded value in this asset.
+    pub value_packages: usize,
+    /// Of those, the ones the import or soft-package tables also record.
+    pub confirmed_by_tables: usize,
+    /// Of those, the ones neither table records. These are exactly the references
+    /// a linker-table-only reference graph cannot see.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub value_only_packages: Vec<String>,
+    pub sources: ReferenceEvidenceSources,
+}
+
+/// Distinct packages contributed by each kind of decoded value. A package named
+/// in more than one place is counted once per source, so these do not sum to
+/// [`ReferenceEvidence::value_packages`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceEvidenceSources {
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub property_values: usize,
+    /// Graph pin `DefaultValue` strings, where a typed-in asset path lives.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub pin_default_values: usize,
+    /// Graph pin `DefaultObject` references and pin type objects.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub pin_default_objects: usize,
+}
+
 impl AssetReferences {
     fn is_empty(&self) -> bool {
         self.assets.is_empty() && self.scripts.is_empty() && self.soft.is_empty()
@@ -471,7 +514,7 @@ pub struct AnalysisCapability {
     pub detail: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityKind {
     PackageTables,
@@ -491,6 +534,24 @@ pub enum CapabilityKind {
     /// Compiled Niagara VM/GPU payloads. Niagara editor graphs decode through the
     /// EdGraph model; the compiled representation does not.
     NiagaraCompiled,
+}
+
+impl CapabilityKind {
+    /// Whether this capability is a compiled-payload gap: the source-level graph
+    /// decodes but the engine's compiled form of it does not.
+    ///
+    /// These gaps say nothing about the package's reference or property evidence,
+    /// which is why they are worth separating from every other reason an asset can
+    /// be `partial`. A whole project of Blueprints is `partial` because of them.
+    pub fn is_compiled_payload(self) -> bool {
+        matches!(
+            self,
+            Self::BlueprintBytecode
+                | Self::NiagaraCompiled
+                | Self::RigVmBytecode
+                | Self::RigHierarchy
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
