@@ -18,10 +18,16 @@
 # Environment overrides (set before invoking):
 #   $env:INSTALL_DIR   binary install location   (default: ~\AppData\Local\Programs\cc-uax)
 #   $env:VERSION       specific release tag      (default: latest)
-#   $env:NO_SKILL='1'  skip skill configuration
-#   $env:UNINSTALL='1' remove cc-uax instead of installing
+#   $env:NO_SKILL='1'        skip skill configuration
+#   $env:UNINSTALL='1'       remove cc-uax instead of installing
+#   $env:KEEP_BOTH='1'       if a cargo/dev copy exists, keep it (no prompt)
+#   $env:REPLACE_OTHER='1'   if a cargo/dev copy exists, remove it (no prompt)
 #
-param([switch]$Uninstall)
+param(
+    [switch]$Uninstall,
+    [switch]$KeepBoth,
+    [switch]$ReplaceOther
+)
 $ErrorActionPreference = 'Stop'
 # Invoke-WebRequest's progress bar drastically throttles downloads on Windows PowerShell 5.1.
 $ProgressPreference = 'SilentlyContinue'
@@ -37,6 +43,105 @@ function Write-Ok($msg)      { Write-Host "[OK] $msg" -ForegroundColor Green }
 function Write-Info($msg)    { Write-Host ">> $msg" -ForegroundColor DarkGray }
 function Write-WarnMsg($msg) { Write-Host "!! $msg" -ForegroundColor Yellow }
 function Die($msg)           { Write-Host "[X] $msg" -ForegroundColor Red; exit 1 }
+
+function Test-SamePath($a, $b) {
+    if (-not $a -or -not $b) { return $false }
+    return [string]::Equals(
+        [IO.Path]::GetFullPath($a),
+        [IO.Path]::GetFullPath($b),
+        [StringComparison]::OrdinalIgnoreCase
+    )
+}
+
+function Get-DefaultCargoBinDir {
+    if ($env:CC_UAX_DEV_BIN) { return $env:CC_UAX_DEV_BIN }
+    if ($env:CARGO_HOME) { return (Join-Path $env:CARGO_HOME 'bin') }
+    return (Join-Path $env:USERPROFILE '.cargo\bin')
+}
+
+function Get-OtherInstallBins([string]$OurDir) {
+    $found = @()
+    $cargoBin = Get-DefaultCargoBinDir
+    if (-not (Test-SamePath $cargoBin $OurDir)) {
+        foreach ($name in @('cc-uax.exe', 'cc-uax')) {
+            $p = Join-Path $cargoBin $name
+            if (Test-Path -LiteralPath $p) { $found += (Resolve-Path -LiteralPath $p).Path }
+        }
+    }
+    return $found | Select-Object -Unique
+}
+
+function Confirm-RemoveOther([string[]]$Others, [string]$Consequence) {
+    $doReplace = $ReplaceOther -or ($env:REPLACE_OTHER -eq '1')
+    $doKeep = $KeepBoth -or ($env:KEEP_BOTH -eq '1')
+    if ($doReplace) { return $true }
+    if ($doKeep) { return $false }
+    Write-Host ''
+    Write-WarnMsg 'Another cc-uax install is present:'
+    foreach ($p in $Others) { Write-Host "    $p" }
+    Write-Host $Consequence
+    $redirected = $false
+    try { $redirected = [Console]::IsInputRedirected } catch { $redirected = $true }
+    if ($redirected) {
+        Write-WarnMsg 'stdin is not a TTY; keeping both. Re-run with -ReplaceOther (or $env:REPLACE_OTHER=1) to remove the other copy.'
+        return $false
+    }
+    $ans = Read-Host 'Uninstall the other copy? [y/N]'
+    return ($ans -match '^[yY]([eE][sS])?$')
+}
+
+# Run the sibling installer in a child process -- `exit` in that script
+# would otherwise terminate this one. Clear this script's INSTALL_DIR so
+# the child uninstalls ~/.cargo/bin, not the release destination.
+function Invoke-DevUninstall {
+    if (-not $PSScriptRoot) {
+        Write-WarnMsg 'cannot invoke dev-install.ps1 (not running from a checkout); leaving the other copy in place.'
+        return $false
+    }
+    $script = Join-Path $PSScriptRoot 'dev-install.ps1'
+    if (-not (Test-Path -LiteralPath $script)) {
+        Write-WarnMsg 'cannot invoke dev-install.ps1 (not next to this script); leaving the other copy in place.'
+        return $false
+    }
+    $saved = @{
+        INSTALL_DIR   = $env:INSTALL_DIR
+        CC_UAX_HOME   = $env:CC_UAX_HOME
+        REPLACE_OTHER = $env:REPLACE_OTHER
+        KEEP_BOTH     = $env:KEEP_BOTH
+        UNINSTALL     = $env:UNINSTALL
+    }
+    if ($env:CC_UAX_DEV_BIN) {
+        $env:INSTALL_DIR = $env:CC_UAX_DEV_BIN
+        if (-not $env:CC_UAX_HOME) { $env:CC_UAX_HOME = $env:USERPROFILE }
+    } else {
+        Remove-Item Env:INSTALL_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:CC_UAX_HOME -ErrorAction SilentlyContinue
+    }
+    Remove-Item Env:REPLACE_OTHER -ErrorAction SilentlyContinue
+    Remove-Item Env:KEEP_BOTH -ErrorAction SilentlyContinue
+    Remove-Item Env:UNINSTALL -ErrorAction SilentlyContinue
+    try {
+        $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script, '-Uninstall'
+        ) -WorkingDirectory $PSScriptRoot -Wait -PassThru -NoNewWindow
+        if ($p.ExitCode -ne 0) {
+            Write-WarnMsg "dev-install.ps1 -Uninstall exited $($p.ExitCode)"
+            return $false
+        }
+        return $true
+    } finally {
+        foreach ($k in $saved.Keys) {
+            [Environment]::SetEnvironmentVariable($k, $saved[$k], 'Process')
+        }
+    }
+}
+
+function Show-PathWinner {
+    $cmd = Get-Command cc-uax -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source) {
+        Write-Host "PATH will run: $($cmd.Source)" -ForegroundColor DarkGray
+    }
+}
 
 # == uninstall ===============================================================
 if ($DoUninstall) {
@@ -88,6 +193,23 @@ if ($DoUninstall) {
     else { Write-Host 'nothing to uninstall.' -ForegroundColor Yellow }
     Write-Host ''
     exit 0
+}
+
+$otherBins = @(Get-OtherInstallBins $InstallDir)
+if ($otherBins.Count -gt 0) {
+    $consequence = @"
+This installer prepends $InstallDir to User PATH, so the new release
+binary will run instead of the cargo/dev copy. Keeping both leaves an
+unused binary in ~/.cargo/bin. Uninstalling the cargo/dev copy runs
+dev-install.ps1 -Uninstall; this installer then refreshes skills.
+"@
+    if (Confirm-RemoveOther $otherBins $consequence) {
+        if (-not (Invoke-DevUninstall)) {
+            Write-WarnMsg 'keeping both -- could not run dev-install.ps1 -Uninstall.'
+        }
+    } else {
+        Write-WarnMsg 'keeping both -- the release copy will win on PATH after install.'
+    }
 }
 
 # == [1/5] detect platform ===================================================
@@ -201,5 +323,6 @@ if ($NoSkill) {
 Remove-Item -Recurse -Force $Tmp.FullName -ErrorAction SilentlyContinue
 Write-Host ""
 Write-Host "cc-uax $Version installed." -ForegroundColor Green
+Show-PathWinner
 Write-Host "Open a NEW terminal, then run:  cc-uax --version" -ForegroundColor DarkGray
 Write-Host ""

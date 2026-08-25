@@ -31,10 +31,26 @@ cd cc-uax
 cargo build -p cc-uax-cli --release --locked
 ```
 
-二进制位于 `target/release/cc-uax`（Windows 上为 `.exe`）。也可以从 checkout 安装：
+二进制位于 `target/release/cc-uax`（Windows 上为 `.exe`）。在 checkout 里安装二进制**并**刷新 Agent Skill：
 
 ```bash
-cargo install --path crates/cc-uax-cli --locked
+./dev-install.sh
+```
+
+```powershell
+.\dev-install.ps1
+```
+
+`dev-install` 会增量 `cargo build` 出 release 二进制并拷到 `~/.cargo/bin`，再把 `skills/cc-uax/` 链接到 Claude Code、Codex 和 Agents 的 skill 目录。`cargo install --path crates/cc-uax-cli --locked` 只装二进制，不会安装 skill。
+
+如果正式安装和 checkout 安装同时存在，脚本会说明 `PATH` 会命中哪一份，并询问是否卸掉另一份。管道一行安装无法提问，默认保留两边。可用 `-ReplaceOther` / `REPLACE_OTHER=1` 或 `-KeepBoth` / `KEEP_BOTH=1` 跳过提问。
+
+```bash
+./dev-install.sh uninstall
+```
+
+```powershell
+.\dev-install.ps1 -Uninstall
 ```
 
 `PATH` 上的旧版 `cc-uax` 会静默给出和本仓库不一致的结果。在 clone 里更稳妥的做法是：

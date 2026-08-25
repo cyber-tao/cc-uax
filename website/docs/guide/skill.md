@@ -13,7 +13,7 @@ Copy the entire [`skills/cc-uax/`](https://github.com/cyber-tao/cc-uax/tree/mast
 | Codex | `~/.codex/skills/cc-uax/` | `<repo>/.codex/skills/cc-uax/` |
 | Agents-compatible clients | `~/.agents/skills/cc-uax/` | `<repo>/.agents/skills/cc-uax/` |
 
-Prebuilt installers already place this directory next to the binary. From a source checkout, copy it yourself.
+Prebuilt installers already place this directory next to the binary. From a source checkout, `./dev-install.sh` or `.\dev-install.ps1` links the working-tree skill into those user-level locations.
 
 Ask the agent to:
 

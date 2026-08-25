@@ -19,17 +19,24 @@
 # Environment overrides:
 #   INSTALL_DIR   binary install location        (default: ~/.local/bin)
 #   VERSION       specific release tag           (default: latest)
-#   NO_SKILL=1    skip skill configuration
-#   UNINSTALL=1   remove cc-uax instead of installing
+#   NO_SKILL=1         skip skill configuration
+#   UNINSTALL=1        remove cc-uax instead of installing
+#   KEEP_BOTH=1        if a cargo/dev copy exists, keep it (no prompt)
+#   REPLACE_OTHER=1    if a cargo/dev copy exists, remove it (no prompt)
 #
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || SCRIPT_DIR=""
 REPO="cyber-tao/cc-uax"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 NO_SKILL="${NO_SKILL:-0}"
 UNINSTALL="${UNINSTALL:-0}"
+KEEP_BOTH="${KEEP_BOTH:-0}"
+REPLACE_OTHER="${REPLACE_OTHER:-0}"
 case "${1:-}" in
     uninstall|--uninstall|-u) UNINSTALL=1 ;;
+    --keep-both) KEEP_BOTH=1 ;;
+    --replace-other) REPLACE_OTHER=1 ;;
 esac
 
 # ── output helpers ──────────────────────────────────────────────────────────
@@ -48,19 +55,91 @@ die()     { err "$*"; exit 1; }
 step()    { printf "\n${C_BLUE}[%s/%s]${C_NC} %s\n" "$1" "$TOTAL_STEPS" "$2"; }
 TOTAL_STEPS=5
 
+other_cargo_bin() {
+    if [ -n "${CC_UAX_DEV_BIN:-}" ]; then
+        printf '%s' "$CC_UAX_DEV_BIN"
+        return
+    fi
+    if [ -n "${CARGO_HOME:-}" ]; then
+        printf '%s/bin' "$CARGO_HOME"
+        return
+    fi
+    printf '%s/.cargo/bin' "$HOME"
+}
+
+collect_other_bins() {
+    local ours="$1"
+    local cargo
+    cargo="$(other_cargo_bin)"
+    [ "$cargo" != "$ours" ] || return 0
+    # Windows treats cc-uax and cc-uax.exe as the same file; list one path.
+    if [ -e "${cargo}/cc-uax.exe" ]; then
+        printf '%s\n' "${cargo}/cc-uax.exe"
+    elif [ -e "${cargo}/cc-uax" ] || [ -L "${cargo}/cc-uax" ]; then
+        printf '%s\n' "${cargo}/cc-uax"
+    fi
+}
+
+confirm_remove_other() {
+    if [ "$REPLACE_OTHER" = "1" ]; then
+        return 0
+    fi
+    if [ "$KEEP_BOTH" = "1" ]; then
+        return 1
+    fi
+    if [ ! -t 0 ]; then
+        warn "stdin is not a TTY; keeping both. Re-run with REPLACE_OTHER=1 to remove the other copy."
+        return 1
+    fi
+    printf "Uninstall the other copy? [y/N] "
+    ans=""
+    read -r ans || ans=""
+    case "$ans" in
+        y|Y|yes|YES) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+invoke_dev_uninstall() {
+    local script="${SCRIPT_DIR}/dev-install.sh"
+    if [ ! -f "$script" ]; then
+        warn "cannot invoke dev-install.sh (not running from a checkout); leaving the other copy in place."
+        return 1
+    fi
+    if [ -n "${CC_UAX_DEV_BIN:-}" ]; then
+        env -u REPLACE_OTHER -u KEEP_BOTH -u UNINSTALL \
+            INSTALL_DIR="$CC_UAX_DEV_BIN" \
+            bash "$script" uninstall
+    else
+        env -u REPLACE_OTHER -u KEEP_BOTH -u UNINSTALL -u INSTALL_DIR \
+            bash "$script" uninstall
+    fi
+}
+
+show_path_winner() {
+    if command -v cc-uax >/dev/null 2>&1; then
+        printf "${C_DIM}PATH will run:${C_NC} %s\n" "$(command -v cc-uax)"
+    fi
+}
+
 # ── uninstall ───────────────────────────────────────────────────────────────
 if [ "$UNINSTALL" = "1" ]; then
     printf "\n${C_BLUE}cc-uax uninstall${C_NC}\n"
     removed=0
-    BIN="${INSTALL_DIR}/cc-uax"
-    if [ -e "$BIN" ]; then
-        rm -f "$BIN"
-        ok "removed ${BIN}"
-        removed=1
+    found_bin=0
+    for name in cc-uax cc-uax.exe; do
+        if [ -e "${INSTALL_DIR}/${name}" ] || [ -L "${INSTALL_DIR}/${name}" ]; then
+            rm -f "${INSTALL_DIR}/${name}"
+            ok "removed ${INSTALL_DIR}/${name}"
+            removed=1
+            found_bin=1
+        fi
+    done
+    if [ "$found_bin" = "1" ]; then
         # Drop the install dir only if it is now empty (never touch a shared bin dir).
         rmdir "$INSTALL_DIR" 2>/dev/null && ok "removed empty ${INSTALL_DIR}" || true
     else
-        warn "binary not found: ${BIN}"
+        warn "binary not found: ${INSTALL_DIR}/cc-uax"
     fi
 
     if [ "$NO_SKILL" = "1" ]; then
@@ -81,6 +160,22 @@ if [ "$UNINSTALL" = "1" ]; then
         printf "\n${C_YELLOW}nothing to uninstall.${C_NC}\n\n"
     fi
     exit 0
+fi
+
+other_list="$(collect_other_bins "$INSTALL_DIR" || true)"
+if [ -n "$other_list" ]; then
+    printf "\n${C_YELLOW}!${C_NC} Another cc-uax install is present:\n"
+    printf '%s\n' "$other_list" | while IFS= read -r p; do
+        printf "    %s\n" "$p"
+    done
+    printf "Depending on PATH order, that cargo/dev copy may still run instead of\n"
+    printf "%s/cc-uax. Uninstalling it runs dev-install.sh uninstall;\n" "$INSTALL_DIR"
+    printf "this installer then refreshes skills.\n"
+    if confirm_remove_other; then
+        invoke_dev_uninstall || warn "keeping both -- could not run dev-install.sh uninstall."
+    else
+        warn "keeping both -- check PATH if \`cc-uax --version\` is not the release you just installed."
+    fi
 fi
 
 # ── prerequisites ───────────────────────────────────────────────────────────
@@ -201,6 +296,7 @@ fi
 
 # ── summary ─────────────────────────────────────────────────────────────────
 printf "\n${C_GREEN}cc-uax ${VERSION_NUM} installed.${C_NC}\n"
+show_path_winner
 if command -v cc-uax >/dev/null 2>&1; then
     printf "${C_DIM}Verify:${C_NC} cc-uax --version\n"
 else

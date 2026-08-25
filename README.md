@@ -56,10 +56,26 @@ cd cc-uax
 cargo build -p cc-uax-cli --release --locked
 ```
 
-The binary is written to `target/release/cc-uax[.exe]`. To install from the checkout:
+The binary is written to `target/release/cc-uax[.exe]`. From a checkout, install the binary **and** refresh agent skills with:
 
 ```bash
-cargo install --path crates/cc-uax-cli --locked
+./dev-install.sh
+```
+
+```powershell
+.\dev-install.ps1
+```
+
+That copies the release binary into `~/.cargo/bin` and links `skills/cc-uax/` into the Claude Code, Codex, and Agents skill directories. `cargo install --path crates/cc-uax-cli --locked` installs only the binary; it does not install the skill.
+
+If a release install and a checkout install are both present, the scripts say so and ask whether to remove the other copy. Piped one-liners (`curl | bash`, `irm | iex`) cannot prompt: they keep both and print how `PATH` will resolve `cc-uax`. Use `-ReplaceOther` / `REPLACE_OTHER=1` or `-KeepBoth` / `KEEP_BOTH=1` to choose without a prompt.
+
+```bash
+./dev-install.sh uninstall
+```
+
+```powershell
+.\dev-install.ps1 -Uninstall
 ```
 
 ## CLI
@@ -419,6 +435,8 @@ Current limitations include:
 When evidence is incomplete, consumers must retain `partial`, `unsupported`, diagnostics, and capability limitations in their conclusions.
 
 ## Contributing
+
+From a clone, `./dev-install.sh` or `.\dev-install.ps1` installs the release binary and links the working-tree skill.
 
 ```bash
 cargo fmt --all -- --check
