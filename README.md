@@ -9,7 +9,7 @@
 [![UE5](https://img.shields.io/badge/UE5-5.0–5.8-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
-**English** · [简体中文](README.zh-CN.md)
+[Website](https://cyber-tao.github.io/cc-uax/) · **English** · [简体中文](README.zh-CN.md)
 
 </div>
 
@@ -425,6 +425,15 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked
 cargo build --workspace --release --locked
+```
+
+## Website
+
+The public site is a VitePress app in [`website/`](website/), deployed by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) to [https://cyber-tao.github.io/cc-uax/](https://cyber-tao.github.io/cc-uax/).
+
+```bash
+bun install --cwd website
+bun run --cwd website dev
 ```
 
 ## License

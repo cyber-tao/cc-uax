@@ -34,6 +34,7 @@ The root `Cargo.toml` is a virtual workspace. Keep these responsibilities separa
 - **`crates/cc-uax-core`** (library import `cc_uax_core`) — byte-bound package parsing, typed decoded values, logic graphs, diagnostics, coverage, and capability results.
 - **`crates/cc-uax-project`** (library import `cc_uax_project`) — project/Content discovery, mounts, one-pass inventory, forward/reverse adjacency, World Partition ownership closure, and cache placement.
 - **`crates/cc-uax-cli`** — the `cc-uax` binary, `asset`/`project` commands, focus selection/full-analysis attachment, process exit policy, and JSON rendering.
+- **`website/`** — VitePress documentation site (not a Cargo member). GitHub Actions builds it via `.github/workflows/pages.yml` and publishes to `https://cyber-tao.github.io/cc-uax/`.
 
 Dependency direction is `cli -> project -> core`, with `cli -> core` allowed. Core must never depend on project or CLI concerns.
 

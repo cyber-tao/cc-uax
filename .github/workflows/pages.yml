@@ -1,0 +1,78 @@
+name: Pages
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'website/**'
+      - '.github/workflows/pages.yml'
+  pull_request:
+    paths:
+      - 'website/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Cache VitePress
+        uses: actions/cache@v4
+        with:
+          path: website/docs/.vitepress/cache
+          key: ${{ runner.os }}-vitepress-${{ hashFiles('website/bun.lock', 'website/docs/**') }}
+          restore-keys: |
+            ${{ runner.os }}-vitepress-
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      - name: Setup Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/docs/.vitepress/dist
+
+  deploy:
+    name: Deploy
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

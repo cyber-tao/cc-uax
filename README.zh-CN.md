@@ -9,7 +9,7 @@
 [![UE5](https://img.shields.io/badge/UE5-5.0–5.8-0E1128?logo=unrealengine&logoColor=white)](https://www.unrealengine.com/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
-[English](README.md) · **简体中文**
+[网站](https://cyber-tao.github.io/cc-uax/zh/) · [English](README.md) · **简体中文**
 
 </div>
 
@@ -425,6 +425,15 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked
 cargo build --workspace --release --locked
+```
+
+## 网站
+
+公开站点是 [`website/`](website/) 下的 VitePress 应用，由 [`.github/workflows/pages.yml`](.github/workflows/pages.yml) 发布到 [https://cyber-tao.github.io/cc-uax/zh/](https://cyber-tao.github.io/cc-uax/zh/)。
+
+```bash
+bun install --cwd website
+bun run --cwd website dev
 ```
 
 ## 许可
