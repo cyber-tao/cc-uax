@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "cc-uax-cli"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "cc-uax-core",
@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "cc-uax-core"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "byteorder",
@@ -110,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "cc-uax-project"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "cc-uax-core",
  "rusqlite",
