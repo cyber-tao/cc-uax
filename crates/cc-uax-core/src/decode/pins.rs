@@ -191,7 +191,15 @@ pub(super) fn decode_pins_for_export(
 
 pub(crate) fn is_graph_node_class(class_full: &str) -> bool {
     let simple = class_full.rsplit(['.', '/']).next().unwrap_or(class_full);
-    if simple.starts_with("K2Node") || simple.starts_with("EdGraphNode") {
+    // A plugin that defines Blueprint nodes prefixes them with its module name
+    // (`GameplayTagsK2Node_SwitchGameplayTag`, `MVVMK2Node_LoadSoftTexture`), and
+    // 25 of UE5.8's 239 `K2Node_` classes are named that way. Anchoring on the
+    // start skipped every one of them, which left their pins undecoded and turned
+    // links into them into unresolved links on the nodes that did decode.
+    if simple.starts_with("K2Node") || simple.contains("K2Node_") {
+        return true;
+    }
+    if simple.starts_with("EdGraphNode") {
         return true;
     }
     if simple.starts_with("NiagaraNode") || simple == "NiagaraOverviewNode" {

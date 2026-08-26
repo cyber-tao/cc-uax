@@ -85,6 +85,29 @@ fn anim_graph_node_binding_is_not_a_graph_node() {
     assert!(is_graph_node_class("/Script/BlueprintGraph.K2Node_Event"));
 }
 
+// A plugin names its Blueprint nodes after its own module, so `K2Node_` lands in
+// the middle. Anchoring on the start skipped every one of them: their pins went
+// undecoded and the nodes that did decode reported links into them as unresolved.
+#[test]
+fn module_prefixed_k2_nodes_are_graph_nodes() {
+    use crate::decode::pins::is_graph_node_class;
+    assert!(is_graph_node_class(
+        "/Script/GameplayTagsEditor.GameplayTagsK2Node_SwitchGameplayTag"
+    ));
+    assert!(is_graph_node_class(
+        "/Script/ModelViewViewModelBlueprint.MVVMK2Node_LoadSoftTexture"
+    ));
+    // The name carries both markers; being a K2Node decides it, because the
+    // "Binding" exclusion exists only for UObject descriptors that merely have
+    // "GraphNode" in their name.
+    assert!(is_graph_node_class(
+        "/Script/ModelViewViewModelBlueprint.MVVMK2Node_AreSourcesValidForBinding"
+    ));
+    // The widened match is anchored on the `K2Node_` marker, so a name that only
+    // happens to contain "K2Node" as a word is still not a node.
+    assert!(!is_graph_node_class("/Script/Engine.MyK2NodeRegistry"));
+}
+
 #[test]
 fn node_pin_array_decodes() {
     let names = NameMap {

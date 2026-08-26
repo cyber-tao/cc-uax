@@ -150,7 +150,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         .iter()
         .any(|diagnostic| diagnostic.code == "overridable_serialization_unsupported");
     let property_partial = property_coverage.is_partial() || overridable_serialization;
-    let graph_partial = graph_coverage.is_partial(&graphs);
+    let graph_partial_reason = graph_coverage.partial_reason(&graphs);
 
     let capabilities = build_capabilities(
         &report,
@@ -162,7 +162,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
             property_coverage: &property_coverage,
             property_partial,
             graph_coverage: &graph_coverage,
-            graph_partial,
+            graph_partial_reason,
             rigvm_adapter: &rigvm_adapter,
             rigvm_coverage,
             state_tree_adapter: &state_tree_adapter,

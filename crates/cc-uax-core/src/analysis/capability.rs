@@ -25,7 +25,8 @@ pub(super) struct CapabilityInputs<'a> {
     pub(super) property_coverage: &'a PropertyCoverage,
     pub(super) property_partial: bool,
     pub(super) graph_coverage: &'a GraphCoverage,
-    pub(super) graph_partial: bool,
+    /// Why the EdGraph capability is not complete, or `None` when it is.
+    pub(super) graph_partial_reason: Option<String>,
     pub(super) rigvm_adapter: &'a rigvm::RigVmAdapterResult,
     pub(super) rigvm_coverage: RigVmCoverage,
     pub(super) state_tree_adapter: &'a state_tree::StateTreeAdapterResult,
@@ -49,7 +50,7 @@ pub(super) fn build_capabilities(
         property_coverage,
         property_partial,
         graph_coverage,
-        graph_partial,
+        graph_partial_reason,
         rigvm_adapter,
         rigvm_coverage,
         state_tree_adapter,
@@ -116,17 +117,12 @@ pub(super) fn build_capabilities(
     if wants_logic && graph_coverage.nodes_total > 0 {
         capabilities.push(AnalysisCapability {
             kind: CapabilityKind::EdGraphLogic,
-            status: if graph_partial {
+            status: if graph_partial_reason.is_some() {
                 AnalysisStatus::Partial
             } else {
                 AnalysisStatus::Complete
             },
-            detail: graph_partial.then(|| {
-                format!(
-                    "{}/{} graph nodes decoded; unresolved or cross-graph links are excluded",
-                    graph_coverage.nodes_decoded, graph_coverage.nodes_total
-                )
-            }),
+            detail: graph_partial_reason,
         });
     }
     if wants_logic && rigvm_coverage.graphs_total > 0 {

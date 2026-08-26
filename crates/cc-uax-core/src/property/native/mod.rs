@@ -71,6 +71,7 @@ pub(crate) fn is_tagged_fallback_struct(name: &str) -> bool {
             // These serializers only register custom versions and return false,
             // so the actual payload remains ordinary tagged properties.
             | "StateTreeReference"
+            | "GeometryCollectionSizeSpecificData"
             | "PCGAttributePropertySelector"
             | "PCGAttributePropertyInputSelector"
             | "PCGAttributePropertyOutputNoSourceSelector"

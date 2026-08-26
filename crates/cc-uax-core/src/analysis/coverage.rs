@@ -65,11 +65,39 @@ fn count_fields(fields: &[crate::script::field::DecodedField]) -> usize {
 }
 
 impl GraphCoverage {
-    pub(super) fn is_partial(&self, graphs: &[LogicGraph]) -> bool {
-        self.nodes_decoded < self.nodes_total
-            || graphs
-                .iter()
-                .any(|graph| graph.excluded_cross_graph_links > 0 || graph.unresolved_links > 0)
+    /// Why the EdGraph evidence is incomplete, naming every cause that fired, or
+    /// `None` when it is whole.
+    ///
+    /// Three different things make this capability partial and only one of them
+    /// is about nodes, so reporting the node ratio alone produced the reading
+    /// "26/26 graph nodes decoded" on an asset that was partial because of its
+    /// links. Status and explanation come from this one function so they cannot
+    /// describe different situations.
+    pub(super) fn partial_reason(&self, graphs: &[LogicGraph]) -> Option<String> {
+        let mut causes = Vec::new();
+        if self.nodes_decoded < self.nodes_total {
+            causes.push(format!(
+                "{} of {} graph node(s) did not decode",
+                self.nodes_total - self.nodes_decoded,
+                self.nodes_total
+            ));
+        }
+        let cross_graph: usize = graphs
+            .iter()
+            .map(|graph| graph.excluded_cross_graph_links)
+            .sum();
+        if cross_graph > 0 {
+            causes.push(format!(
+                "{cross_graph} link(s) leave their graph and are kept on the pin rather than as edges"
+            ));
+        }
+        let unresolved: usize = graphs.iter().map(|graph| graph.unresolved_links).sum();
+        if unresolved > 0 {
+            causes.push(format!(
+                "{unresolved} link(s) name a pin that did not resolve"
+            ));
+        }
+        (!causes.is_empty()).then(|| causes.join("; "))
     }
 }
 
