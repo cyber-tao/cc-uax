@@ -116,6 +116,21 @@ pub mod custom {
     /// FEditorObjectVersion, which gates the package MetaData root map.
     pub const EDITOR_OBJECT_VERSION: Guid =
         Guid([0xE4B0_68ED, 0xF494_42E9, 0xA231_DA0B, 0x2E46_BB41]);
+    /// FCoreObjectVersion, which gates `UStruct`'s `ChildProperties` block.
+    pub const CORE_OBJECT_VERSION: Guid =
+        Guid([0x375E_C13C, 0x06E4_48FB, 0xB500_84F0, 0x262A_717E]);
+
+    /// FCoreObjectVersion::FProperties — from this version on `UStruct::Serialize`
+    /// writes its reflected fields as `FField`s through `SerializeProperties`.
+    pub const CORE_FPROPERTIES: i32 = 4;
+    /// FFrameworkObjectVersion::RemoveUField_Next — before it, `UField::Serialize`
+    /// writes `Next` and `UStruct` writes `Children` as a single list head; from it
+    /// on, `Children` is a counted array and `Next` is gone.
+    pub const FRAMEWORK_REMOVE_UFIELD_NEXT: i32 = 29;
+    /// FReleaseObjectVersion::FFieldPathOwnerSerialization — from this version on an
+    /// `FFieldPath` appends the owning struct after its path names. Bytecode field
+    /// references are `FFieldPath`s, so this decides their width.
+    pub const RELEASE_FIELD_PATH_OWNER_SERIALIZATION: i32 = 30;
 
     /// FEditorObjectVersion::RootMetaDataSupport — from this version on
     /// `UMetaData::Serialize` writes a package-level root map after the

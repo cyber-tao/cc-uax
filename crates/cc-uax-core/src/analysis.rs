@@ -18,7 +18,7 @@ use capability::{CapabilityInputs, build_capabilities, determine_analysis_status
 pub(crate) use coverage::ControlRigMirrors;
 use coverage::{
     compute_graph_coverage, compute_pcg_coverage, compute_property_coverage,
-    compute_rigvm_coverage, compute_state_tree_coverage,
+    compute_rigvm_coverage, compute_script_coverage, compute_state_tree_coverage,
 };
 pub(crate) use ed_graph::build_logic_graphs;
 use model_map::{
@@ -130,6 +130,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
     let pcg_coverage = compute_pcg_coverage(&pcg_adapter);
     let state_tree_coverage = compute_state_tree_coverage(&state_tree_adapter);
     let rigvm_coverage = compute_rigvm_coverage(&rigvm_adapter);
+    let script_coverage = compute_script_coverage(&report);
 
     let diagnostic_errors = diagnostics
         .iter()
@@ -245,6 +246,11 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         state_tree_tasks_decoded: state_tree_coverage.tasks_decoded,
         state_tree_conditions_decoded: state_tree_coverage.conditions_decoded,
         state_tree_transitions_decoded: state_tree_coverage.transitions_decoded,
+        script_structs_total: script_coverage.structs_total,
+        script_structs_decoded: script_coverage.structs_decoded,
+        script_properties_decoded: script_coverage.properties_decoded,
+        script_bytecode_bytes: script_coverage.bytecode_bytes,
+        script_expressions_decoded: script_coverage.expressions_decoded,
         known_opaque_regions,
         opaque_bytes,
         class_payload_bytes,

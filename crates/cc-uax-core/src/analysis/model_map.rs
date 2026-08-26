@@ -8,6 +8,8 @@ use crate::model::*;
 use crate::package::Package;
 use crate::property::{PropertyEntry, PropertyParseStatus};
 use crate::references::collect_package_references;
+use crate::script::field::DecodedField;
+use crate::script::{DecodedBytecode, DecodedScriptStruct, function_flag_names};
 use crate::version::ue5;
 use std::collections::BTreeSet;
 
@@ -128,6 +130,95 @@ pub(super) fn export_to_model(
             name: member.name.clone(),
             parent: member.parent.clone(),
         }),
+        script: export.script_struct.as_ref().map(script_struct_to_model),
+    }
+}
+
+fn script_struct_to_model(script: &DecodedScriptStruct) -> ScriptStructInfo {
+    ScriptStructInfo {
+        super_struct: script.super_struct.clone(),
+        children: script.children.clone(),
+        properties: script
+            .properties
+            .iter()
+            .map(script_field_to_model)
+            .collect(),
+        function: script.function.as_ref().map(|function| ScriptFunctionInfo {
+            flags: function.flags,
+            flag_names: function_flag_names(function.flags)
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            event_graph_function: function.event_graph_function.clone(),
+            event_graph_call_offset: function.event_graph_call_offset,
+        }),
+        class: script.class.as_ref().map(|class| ScriptClassInfo {
+            flags: class.class_flags,
+            functions: class.functions.iter().cloned().collect(),
+            class_within: class.class_within.clone(),
+            config_name: class.class_config_name.clone(),
+            generated_by: class.class_generated_by.clone(),
+            interfaces: class.interfaces.clone(),
+            default_object: class.default_object.clone(),
+        }),
+        bytecode: script.bytecode.as_ref().map(|code| {
+            let summary = code.summary.as_ref();
+            ScriptBytecodeInfo {
+                buffer_size: code.buffer_size,
+                serialized_size: code.serialized_size,
+                undecoded_reason: bytecode_undecoded_reason(code),
+                expressions: summary.map_or(0, |summary| summary.expressions),
+                opcodes: summary
+                    .map(|summary| {
+                        summary
+                            .opcodes
+                            .iter()
+                            .map(|(name, count)| ((*name).to_owned(), *count))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                references: summary
+                    .map(|summary| {
+                        summary
+                            .references
+                            .iter()
+                            .map(|(kind, target)| ScriptBytecodeReference {
+                                kind: kind.as_str().to_owned(),
+                                target: target.clone(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }
+        }),
+    }
+}
+
+/// Why a stream is not fully decoded evidence: it failed to walk, or it walked
+/// the right number of file bytes while disagreeing with the in-memory size the
+/// struct declared.
+fn bytecode_undecoded_reason(code: &DecodedBytecode) -> Option<String> {
+    if let Some(failure) = &code.failure {
+        return Some(failure.clone());
+    }
+    (!code.sizes_agree()).then(|| {
+        format!(
+            "disassembly accounted for {} in-memory byte(s) against a declared {}",
+            code.summary.as_ref().map_or(0, |summary| summary.icode),
+            code.buffer_size
+        )
+    })
+}
+
+fn script_field_to_model(field: &DecodedField) -> ScriptProperty {
+    ScriptProperty {
+        name: field.name.clone(),
+        type_name: field.type_name.clone(),
+        type_object: field.type_object.clone(),
+        flags: field.flags,
+        array_dim: field.array_dim,
+        rep_notify_func: field.rep_notify_func.clone(),
+        inner: field.inner.iter().map(script_field_to_model).collect(),
     }
 }
 

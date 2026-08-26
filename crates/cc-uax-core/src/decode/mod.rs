@@ -9,6 +9,9 @@ use crate::package::Package;
 use crate::pin::{Pin, PinSerCtx, UserDefinedPin};
 use crate::property::{ParseCtx, PropertyEntry, PropertyParseStatus};
 use crate::reader::Reader;
+pub(crate) use crate::script::is_script_bytecode_class;
+
+use crate::script::{DecodedScriptStruct, ScriptStructContext, decode_script_struct};
 use crate::structured_value::{Value, json};
 use crate::version::{SerializationPolicy, custom, ue5};
 use std::collections::HashMap;
@@ -65,6 +68,10 @@ pub(crate) struct DecodedExport {
     pub(crate) user_defined_pins: Option<Vec<UserDefinedPin>>,
     pub(crate) member: Option<MemberRef>,
     pub(crate) rigvm_link: Option<DecodedRigVmLink>,
+    /// The `UStruct`/`UFunction` serializer block, for the classes that write
+    /// compiled script. Its absence on such a class means the block could not be
+    /// decoded and the whole remainder stays opaque.
+    pub(crate) script_struct: Option<DecodedScriptStruct>,
     /// Whether the tagged-property block ended where it was supposed to. When it
     /// did, a remaining tail is data the class's own `Serialize` override wrote
     /// (mesh render data, lightmaps, script bytecode); when it did not, the tail
@@ -196,6 +203,7 @@ impl Package {
             file_version_ue4: self.summary.file_version_ue4,
             file_version_ue5: self.summary.file_version_ue5,
         };
+        let script_ctx = ScriptStructContext::new(self);
         let mut reader = Reader::new(data);
         let file_len = reader.len();
         let has_script = self.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET;
@@ -227,6 +235,7 @@ impl Package {
                 user_defined_pins: None,
                 member: None,
                 rigvm_link: None,
+                script_struct: None,
                 property_block_closed: false,
                 decoded_end: None,
                 serial_size: 0,
@@ -292,7 +301,15 @@ impl Package {
             }
 
             if let Some(window) = serial_window {
-                account_export_tail(&mut reader, window, &mut export);
+                account_export_tail(
+                    &mut reader,
+                    window,
+                    &class_full,
+                    &script_ctx,
+                    i,
+                    diagnostics,
+                    &mut export,
+                );
             }
 
             decoded.push(export);
@@ -308,6 +325,10 @@ impl Package {
 fn account_export_tail(
     reader: &mut Reader,
     window: ExportSerialWindow,
+    class_full: &str,
+    script_ctx: &ScriptStructContext<'_>,
+    export_index: usize,
+    diagnostics: &mut Vec<Diagnostic>,
     export: &mut DecodedExport,
 ) {
     let serial_size = window.serial_end.saturating_sub(window.serial_start);
@@ -346,6 +367,51 @@ fn account_export_tail(
     {
         consume_object_guid_tail(reader, window.serial_end, export);
         decoded_end = reader.pos().clamp(decoded_end, window.serial_end);
+    }
+    // `UStruct::Serialize` resumes exactly here: everything before it belongs to
+    // `UObject`, and the compiled script sits a few fixed fields further on.
+    if property_block_closed
+        && decoded_end < window.serial_end
+        && is_script_bytecode_class(class_full)
+        && reader.seek(decoded_end).is_ok()
+    {
+        match decode_script_struct(reader, window.serial_end, class_full, script_ctx) {
+            Ok(script_struct) => {
+                decoded_end = script_struct.end.clamp(decoded_end, window.serial_end);
+                if let Some(code) = &script_struct.bytecode {
+                    if let Some(failure) = &code.failure {
+                        diagnostics.push(Diagnostic::warning(
+                            "script_bytecode_undecoded",
+                            format!("/exports/{export_index}"),
+                            format!(
+                                "compiled script bytecode could not be disassembled: {failure}"
+                            ),
+                        ));
+                    } else if !code.sizes_agree() {
+                        // The disk length is enforced by the bounded read, so a
+                        // mismatch here means an expression's in-memory width is
+                        // wrong even though it consumed the right file bytes.
+                        diagnostics.push(Diagnostic::warning(
+                            "script_bytecode_size_mismatch",
+                            format!("/exports/{export_index}"),
+                            format!(
+                                "disassembly accounted for {} in-memory byte(s) but the struct declares {}",
+                                code.summary.as_ref().map_or(0, |summary| summary.icode),
+                                code.buffer_size
+                            ),
+                        ));
+                    }
+                }
+                export.script_struct = Some(script_struct);
+            }
+            Err(error) => {
+                diagnostics.push(Diagnostic::warning(
+                    "script_struct_undecoded",
+                    format!("/exports/{export_index}"),
+                    format!("{class_full} script serializer could not be decoded: {error:#}"),
+                ));
+            }
+        }
     }
     if decoded_end < window.serial_end {
         export.post_property_tail = Some(preview_range(reader, decoded_end, window.serial_end));
@@ -399,19 +465,6 @@ fn is_pcg_model_object_class(class: &str) -> bool {
 
 fn is_state_tree_model_object_class(class: &str) -> bool {
     class.starts_with("/Script/StateTree")
-}
-
-/// A `UStruct` whose `Serialize` writes compiled script bytecode after the tagged
-/// properties (`UStruct::Serialize` emits `Script`, the EX_ opcode stream). Every
-/// Blueprint function and generated class carries one.
-pub(crate) fn is_script_bytecode_class(class: &str) -> bool {
-    let Some(simple) = class.rsplit(['.', '/']).next() else {
-        return false;
-    };
-    matches!(
-        simple,
-        "Function" | "DelegateFunction" | "SparseDelegateFunction" | "Class"
-    ) || simple.ends_with("GeneratedClass")
 }
 
 /// A Niagara object whose payload includes a compiled VM or GPU representation

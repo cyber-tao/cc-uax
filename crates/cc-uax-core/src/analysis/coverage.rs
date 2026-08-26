@@ -9,7 +9,7 @@
 use super::{pcg, rigvm, state_tree};
 use crate::decode::pins::is_graph_node_class;
 use crate::decode::rigvm::{is_rigvm_graph_class, is_rigvm_link_class};
-use crate::decode::{DecodeReport, DecodedExport};
+use crate::decode::{DecodeReport, DecodedExport, is_script_bytecode_class};
 use crate::graph_models::LogicGraph;
 use crate::package::Package;
 use crate::property::PropertyParseStatus;
@@ -20,6 +20,48 @@ pub(super) struct GraphCoverage {
     pub(super) nodes_decoded: usize,
     pub(super) pins_decoded: usize,
     pub(super) edges_decoded: usize,
+}
+
+/// What the `UStruct`/`UFunction` serializer and the script disassembler
+/// recovered. `structs_total` counts exports whose class writes such a block, so
+/// `structs_decoded < structs_total` is the one number that says evidence is
+/// missing.
+#[derive(Default)]
+pub(super) struct ScriptCoverage {
+    pub(super) structs_total: usize,
+    pub(super) structs_decoded: usize,
+    pub(super) properties_decoded: usize,
+    pub(super) bytecode_bytes: u64,
+    pub(super) expressions_decoded: usize,
+}
+
+pub(super) fn compute_script_coverage(report: &DecodeReport<'_>) -> ScriptCoverage {
+    let mut coverage = ScriptCoverage::default();
+    for export in &report.exports {
+        if !is_script_bytecode_class(&export.identity.class) {
+            continue;
+        }
+        coverage.structs_total += 1;
+        let Some(script) = &export.script_struct else {
+            continue;
+        };
+        coverage.structs_decoded += 1;
+        coverage.properties_decoded += count_fields(&script.properties);
+        if let Some(code) = &script.bytecode
+            && let Some(summary) = &code.summary
+        {
+            coverage.bytecode_bytes += u64::from(code.serialized_size);
+            coverage.expressions_decoded += summary.expressions;
+        }
+    }
+    coverage
+}
+
+fn count_fields(fields: &[crate::script::field::DecodedField]) -> usize {
+    fields
+        .iter()
+        .map(|field| 1 + count_fields(&field.inner))
+        .sum()
 }
 
 impl GraphCoverage {

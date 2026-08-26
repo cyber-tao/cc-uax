@@ -6,3 +6,4 @@ mod pin;
 mod property;
 mod reader;
 mod references;
+mod script;

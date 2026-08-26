@@ -179,10 +179,10 @@ pub(super) fn build_capabilities(
             byte_range: None,
         });
     }
-    // Compiled Blueprint and Niagara payloads are the same kind of gap as compiled
-    // RigVM bytecode: the source-level graph decodes but the compiled form does
-    // not. Without a named capability they were an anonymous export tail, so a
-    // Niagara system could report `complete` while its compiled VM was missing.
+    // Compiled Niagara payloads remain the same kind of gap as compiled RigVM
+    // bytecode: the source-level graph decodes but the compiled form does not.
+    // Without a named capability they were an anonymous export tail, so a Niagara
+    // system could report `complete` while its compiled VM was missing.
     if wants_logic {
         let compiled = |predicate: fn(&str) -> bool| {
             report
@@ -197,22 +197,62 @@ pub(super) fn build_capabilities(
                 })
                 .count()
         };
-        let bytecode_exports = compiled(is_script_bytecode_class);
-        if bytecode_exports > 0 {
+        // Blueprint bytecode is disassembled rather than retained opaque, so this
+        // capability now reports what the walk achieved. Both declared sizes must
+        // agree: consuming the right number of file bytes while disagreeing with
+        // the in-memory total means an expression width is wrong.
+        let script_exports = report
+            .exports
+            .iter()
+            .filter(|export| is_script_bytecode_class(&export.identity.class))
+            .collect::<Vec<_>>();
+        if !script_exports.is_empty() {
+            let with_bytecode = script_exports
+                .iter()
+                .filter_map(|export| export.script_struct.as_ref()?.bytecode.as_ref())
+                .collect::<Vec<_>>();
+            let undecoded = script_exports
+                .iter()
+                .filter(|export| export.script_struct.is_none())
+                .count()
+                + with_bytecode
+                    .iter()
+                    .filter(|code| code.failure.is_some() || !code.sizes_agree())
+                    .count();
+            let expressions: usize = with_bytecode
+                .iter()
+                .filter_map(|code| code.summary.as_ref())
+                .map(|summary| summary.expressions)
+                .sum();
             capabilities.push(AnalysisCapability {
                 kind: CapabilityKind::BlueprintBytecode,
-                status: AnalysisStatus::Unsupported,
-                detail: Some(format!(
-                    "compiled script bytecode on {bytecode_exports} export(s) is retained as known opaque data"
-                )),
+                status: if undecoded == 0 {
+                    AnalysisStatus::Complete
+                } else {
+                    AnalysisStatus::Partial
+                },
+                detail: (undecoded > 0).then(|| {
+                    format!(
+                        "{undecoded} of {} compiled script export(s) did not disassemble",
+                        script_exports.len()
+                    )
+                })
+                .or_else(|| {
+                    Some(format!(
+                        "{expressions} expression(s) disassembled across {} compiled script export(s)",
+                        script_exports.len()
+                    ))
+                }),
             });
-            known_opaque.push(KnownOpaque {
-                path: "/capabilities/blueprint_bytecode".into(),
-                kind: KnownOpaqueKind::Capability,
-                type_name: Some("ScriptBytecode".into()),
-                reason: "compiled Blueprint bytecode semantics are not decoded".into(),
-                byte_range: None,
-            });
+            if undecoded > 0 {
+                known_opaque.push(KnownOpaque {
+                    path: "/capabilities/blueprint_bytecode".into(),
+                    kind: KnownOpaqueKind::Capability,
+                    type_name: Some("ScriptBytecode".into()),
+                    reason: "compiled Blueprint bytecode did not disassemble".into(),
+                    byte_range: None,
+                });
+            }
         }
         let niagara_exports = compiled(is_niagara_compiled_class);
         if niagara_exports > 0 {

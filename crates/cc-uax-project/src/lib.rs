@@ -11,7 +11,7 @@ mod scanner;
 /// Distinct from the CLI's report schema: this one also gates cache reuse, so any
 /// change to what a cached `AssetAnalysisSummary` means must bump it or a warm
 /// scan will replay summaries built under the old meaning.
-pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 3;
+pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 4;
 
 pub use analysis_summary::{
     AnalysisDiagnosticSummary, AssetAnalysisSummary, CapabilitySummary, GraphSummary,

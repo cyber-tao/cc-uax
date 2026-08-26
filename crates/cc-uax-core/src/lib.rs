@@ -11,6 +11,7 @@ mod property;
 mod reader;
 mod references;
 mod rejection;
+mod script;
 mod structured_value;
 mod summary;
 mod version;

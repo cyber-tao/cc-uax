@@ -3,11 +3,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::AddAssign;
 
-/// Bumped to 7 when `reference_evidence` began cross-checking the package paths
-/// named by decoded values against the linker tables, so a consumer can measure
-/// the references those tables cannot hold instead of treating every opaque
-/// compiled payload as a possible hidden reference.
-pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 7;
+/// Bumped to 8 when exports gained the decoded `script` block: the `UStruct`,
+/// `UFunction` and `UClass` serializers are read as structured fields and the
+/// compiled Kismet bytecode is disassembled, so `blueprint_bytecode` reports what
+/// it recovered instead of naming a gap.
+pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 8;
 
 /// serde `skip_serializing_if` helper: drop `false` booleans from the rendered
 /// report so only set flags are emitted.
@@ -24,6 +24,11 @@ pub(crate) fn is_absent_name(value: &str) -> bool {
 /// serde `skip_serializing_if` helper: drop a zero `i32` (default array index).
 pub(crate) fn is_zero_i32(value: &i32) -> bool {
     *value == 0
+}
+
+/// serde `skip_serializing_if` helper: drop the default static-array length of 1.
+pub(crate) fn is_one_i32(value: &i32) -> bool {
+    *value == 1
 }
 
 /// serde `skip_serializing_if` helper: drop a zero `usize` (default unresolved count).
@@ -168,6 +173,20 @@ pub struct ParseCoverage {
     pub state_tree_conditions_decoded: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub state_tree_transitions_decoded: usize,
+    /// Exports whose class writes a `UStruct` serializer block (Blueprint
+    /// functions, delegate signatures, generated classes).
+    #[serde(skip_serializing_if = "is_zero_usize")]
+    pub script_structs_total: usize,
+    #[serde(skip_serializing_if = "is_zero_usize")]
+    pub script_structs_decoded: usize,
+    /// Reflected `FProperty` declarations recovered from those blocks.
+    #[serde(skip_serializing_if = "is_zero_usize")]
+    pub script_properties_decoded: usize,
+    /// Serialized bytes of compiled script the disassembler consumed.
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub script_bytecode_bytes: u64,
+    #[serde(skip_serializing_if = "is_zero_usize")]
+    pub script_expressions_decoded: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub known_opaque_regions: usize,
     /// Total bytes covered by `known_opaque` regions that carry a byte range.
@@ -236,6 +255,11 @@ impl AddAssign<&ParseCoverage> for ParseCoverage {
             state_tree_tasks_decoded,
             state_tree_conditions_decoded,
             state_tree_transitions_decoded,
+            script_structs_total,
+            script_structs_decoded,
+            script_properties_decoded,
+            script_bytecode_bytes,
+            script_expressions_decoded,
             known_opaque_regions,
             opaque_bytes,
             class_payload_bytes,
@@ -312,6 +336,21 @@ impl AddAssign<&ParseCoverage> for ParseCoverage {
         self.state_tree_transitions_decoded = self
             .state_tree_transitions_decoded
             .saturating_add(*state_tree_transitions_decoded);
+        self.script_structs_total = self
+            .script_structs_total
+            .saturating_add(*script_structs_total);
+        self.script_structs_decoded = self
+            .script_structs_decoded
+            .saturating_add(*script_structs_decoded);
+        self.script_properties_decoded = self
+            .script_properties_decoded
+            .saturating_add(*script_properties_decoded);
+        self.script_bytecode_bytes = self
+            .script_bytecode_bytes
+            .saturating_add(*script_bytecode_bytes);
+        self.script_expressions_decoded = self
+            .script_expressions_decoded
+            .saturating_add(*script_expressions_decoded);
         self.known_opaque_regions = self
             .known_opaque_regions
             .saturating_add(*known_opaque_regions);
@@ -415,6 +454,11 @@ pub struct ReferenceEvidenceSources {
     /// Graph pin `DefaultObject` references and pin type objects.
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub pin_default_objects: usize,
+    /// Targets named by disassembled script bytecode. These carry attribution the
+    /// linker tables cannot: the tables say the package depends on something, this
+    /// says the compiled code reaches it.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub bytecode: usize,
 }
 
 impl AssetReferences {
@@ -464,6 +508,119 @@ pub struct AssetExport {
     pub metadata: Option<DecodedValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member: Option<MemberReference>,
+    /// The `UStruct`/`UFunction` serializer block, present on the classes that
+    /// carry compiled script: Blueprint functions, delegate signatures, and
+    /// generated classes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<ScriptStructInfo>,
+}
+
+/// `UStruct::Serialize`: the reflected shape of a function or generated class,
+/// and the compiled script that follows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptStructInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub super_struct: Option<String>,
+    /// `UField` children: the functions a class owns, or nothing for a function.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<String>,
+    /// `ChildProperties`: a function's parameters and locals, or a generated
+    /// class's variables.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<ScriptProperty>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function: Option<ScriptFunctionInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<ScriptClassInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytecode: Option<ScriptBytecodeInfo>,
+}
+
+/// `UClass::Serialize`: what a generated class declares beyond its `UStruct`
+/// shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptClassInfo {
+    pub flags: u32,
+    /// `FuncMap`, mapping each callable name to the function object.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub functions: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_within: Option<String>,
+    #[serde(default, skip_serializing_if = "is_absent_name")]
+    pub config_name: String,
+    /// The Blueprint asset this class was compiled from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub interfaces: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_object: Option<String>,
+}
+
+/// One reflected `FProperty` declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptProperty {
+    pub name: String,
+    /// The `FFieldClass` name, e.g. `ObjectProperty` or `StructProperty`.
+    pub type_name: String,
+    /// What the property's type points at: the class it references, the struct it
+    /// holds, or the signature of the delegate it stores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_object: Option<String>,
+    /// `EPropertyFlags`. Retained raw because the flag set is large, versioned,
+    /// and only meaningful against UE's own table.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub flags: u64,
+    /// Static array length; absent means the usual single element.
+    #[serde(default, skip_serializing_if = "is_one_i32")]
+    pub array_dim: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rep_notify_func: Option<String>,
+    /// An array's element, a map's key and value, an enum's underlying integer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inner: Vec<ScriptProperty>,
+}
+
+/// `UFunction::Serialize`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptFunctionInfo {
+    pub flags: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flag_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_graph_function: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub event_graph_call_offset: i32,
+}
+
+/// A disassembled `Script` stream.
+///
+/// The two sizes are separate facts: `buffer_size` is what the VM executes and
+/// `serialized_size` is what the file holds. Agreeing with both is what makes a
+/// disassembly verifiable rather than merely plausible, so both are reported.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptBytecodeInfo {
+    pub buffer_size: u32,
+    pub serialized_size: u32,
+    /// Absent when the stream disassembled and both sizes agreed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undecoded_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub expressions: usize,
+    /// How many of each opcode the stream contains.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub opcodes: BTreeMap<String, usize>,
+    /// What the compiled code points at. This is the reference attribution a
+    /// linker-table-only view cannot give: the tables say the package depends on
+    /// a target, these say which compiled function reaches it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<ScriptBytecodeReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptBytecodeReference {
+    pub kind: String,
+    pub target: String,
 }
 
 /// Byte-level export placement, emitted only for the `full` view. Focused views

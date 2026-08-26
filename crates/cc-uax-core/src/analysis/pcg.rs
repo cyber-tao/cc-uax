@@ -409,6 +409,7 @@ mod tests {
             properties,
             metadata: None,
             member: None,
+            script: None,
         }
     }
 

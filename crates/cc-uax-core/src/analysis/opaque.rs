@@ -25,7 +25,14 @@ pub(super) fn tail_reason(export: &DecodedExport) -> &'static str {
         return "bytes follow a tagged-property block that did not close cleanly, so they cannot be attributed";
     }
     if is_script_bytecode_class(&export.identity.class) {
-        return "compiled script bytecode written after the tagged properties (UStruct::Serialize)";
+        // `UStruct::Serialize`, including the compiled script, is decoded; what
+        // can be left is the concrete class's own block, which for a generated
+        // class is `UClass::Serialize`.
+        return if export.script_struct.is_some() {
+            "class serializer data written after the decoded UStruct block (UClass::Serialize)"
+        } else {
+            "compiled script struct written after the tagged properties (UStruct::Serialize)"
+        };
     }
     if is_niagara_compiled_class(&export.identity.class) {
         return "compiled Niagara VM/GPU payload written after the tagged properties";

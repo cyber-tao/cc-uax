@@ -18,6 +18,10 @@ const SCRIPT_PATH_PREFIX: &str = "/Script/";
 /// the property decoder for a soft object or class reference.
 const ASSET_PATH_KEY: &str = "asset_path";
 
+/// Bytecode reference kind that names a function rather than a path, so it can
+/// never contribute a package.
+const BYTECODE_FUNCTION_NAME_KIND: &str = "function_name";
+
 impl Package {
     pub(crate) fn import_class_object_names(&self) -> impl Iterator<Item = (String, String)> + '_ {
         self.imports.iter().map(|import| {
@@ -140,9 +144,29 @@ pub(crate) fn build_reference_evidence(
         .collect::<BTreeSet<_>>();
 
     let mut property_values = BTreeSet::new();
+    let mut bytecode = BTreeSet::new();
     for export in exports {
         for property in &export.properties {
             collect_package_paths_from_value(&property.value, &mut property_values);
+        }
+        // Disassembled script names its targets directly. An object or function
+        // constant resolves through the import table and will simply confirm what
+        // the tables already hold; a soft-object constant is a runtime path and is
+        // exactly the kind the tables cannot record.
+        let Some(code) = export
+            .script
+            .as_ref()
+            .and_then(|script| script.bytecode.as_ref())
+        else {
+            continue;
+        };
+        for reference in &code.references {
+            if reference.kind == BYTECODE_FUNCTION_NAME_KIND {
+                continue;
+            }
+            if let Some(package) = package_path_from_object_path(&reference.target) {
+                bytecode.insert(package);
+            }
         }
     }
 
@@ -183,6 +207,7 @@ pub(crate) fn build_reference_evidence(
         (property_values, &mut sources.property_values),
         (pin_default_values, &mut sources.pin_default_values),
         (pin_default_objects, &mut sources.pin_default_objects),
+        (bytecode, &mut sources.bytecode),
     ] {
         for package in bucket {
             if package.starts_with(SCRIPT_PATH_PREFIX) || !is_package_shaped(&package) {

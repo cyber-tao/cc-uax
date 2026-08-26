@@ -631,6 +631,7 @@ mod tests {
             user_defined_pins: None,
             member: None,
             rigvm_link: None,
+            script_struct: None,
             property_block_closed: true,
             decoded_end: None,
             serial_size: 0,

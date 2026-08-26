@@ -16,13 +16,12 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-/// Bumped to 8 when `analysis` gained the per-capability histogram and the
-/// compiled-payload-only partial count, `analysis.reference_evidence` summed the
-/// value-versus-tables cross-check, and `value_references` plus
-/// `reachability.value_reference_only_reachable` exposed the value-level edges.
+/// Bumped to 9 when `coverage` gained the script-struct and bytecode counters
+/// that come with disassembling compiled Blueprint script, which also moves
+/// `blueprint_bytecode` from an unsupported capability to a reported one.
 ///
 /// Public so tests assert against the constant rather than a copied literal.
-pub const PROJECT_REPORT_SCHEMA_VERSION: u32 = 8;
+pub const PROJECT_REPORT_SCHEMA_VERSION: u32 = 9;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {

@@ -26,11 +26,11 @@ Rejected rather than guessed at:
 
 - cooked/unversioned packages and UE4 package formats
 - source-level reconstruction of compiled RigVM bytecode and compressed RigHierarchy data
-- compiled Blueprint bytecode and compiled Niagara VM/GPU payloads (named capabilities, not anonymous tails)
+- compiled Niagara VM/GPU payloads (a named capability, not an anonymous tail)
 - runtime behavior not evidenced by serialized graphs, properties, configuration, or references
 - plugin-native formats without a verified UE5.0–5.8 serialization contract
 
-Compiled Blueprint bytecode is a limit on **attribution**, not on reference completeness. An object reference inside the `Script` stream is an `FPackageIndex`, so it cannot serialize without an import row — the linker tables the reference graph is built from already list it. What the tables cannot hold is an asset path typed into a graph pin as a string, and `reference_evidence` measures that residue per asset instead of leaving it as an open-ended caveat.
+Compiled Blueprint script is no longer on that list: `UStruct`, `UFunction` and `UClass` are decoded as structured fields and the Kismet stream is disassembled, so a Blueprint's functions, variables and the targets its compiled code reaches are reported evidence. What the linker tables still cannot hold is an asset path typed into a graph pin as a string, and `reference_evidence` measures that residue per asset instead of leaving it as an open-ended caveat.
 
 When evidence is incomplete, consumers must retain `partial`, `unsupported`, diagnostics, and capability limitations in their conclusions.
 
