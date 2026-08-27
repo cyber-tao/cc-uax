@@ -1,5 +1,6 @@
 name: Pages
 
+# Publishes website/ to https://cyber-tao.github.io/cc-uax/.
 on:
   push:
     branches:
