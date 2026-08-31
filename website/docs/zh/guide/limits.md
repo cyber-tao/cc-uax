@@ -26,9 +26,11 @@ description: cc-uax 的支持范围、拒绝策略和当前具名缺口。
 
 - Cooked/无版本包和 UE4 包格式
 - RigVM 编译字节码、压缩 RigHierarchy 的源码级还原
-- 编译后的 Blueprint 字节码和 Niagara VM/GPU payload（具名 capability，不是匿名尾巴）
+- 编译后的 Niagara VM/GPU payload（具名 capability，不是匿名尾巴）
 - 无法由序列化图、属性、配置或引用证明的运行时行为
 - 尚未核对 UE5.0–5.8 序列化契约的插件原生格式
+
+编译后的 Blueprint 字节码已经不在这个清单里：`UStruct`、`UFunction` 和 `UClass` 按结构化字段解码，Kismet 指令流也会反汇编，因此 Blueprint 的函数、变量以及编译代码触及的目标都是可报告的证据。linker 表仍然装不下的，是以字符串形式填进图 pin 的资源路径，`reference_evidence` 会按资产逐个度量这部分残差，而不是留一句没有边界的免责声明。
 
 证据不完整时，下游结论必须保留 `partial`、`unsupported`、diagnostics 和 capability 限制。
 

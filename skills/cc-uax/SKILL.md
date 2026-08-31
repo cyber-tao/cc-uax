@@ -23,7 +23,7 @@ A project report also carries the `FileVersionUE5` of each package and an aggreg
 cc-uax project "<PROJECT_OR_CONTENT_DIR>" --output "<REPORT.json>"
 ```
 
-Add content roots outside `Plugins/` with `--mount <PACKAGE_PREFIX=RELATIVE_DIR>`; it adds to the discovered mounts rather than replacing them. Use `--focus <PACKAGE_OR_GLOB>` to attach full typed analyses for selected packages while retaining the single project inventory and reference graph. Both flags are repeatable.
+Add content roots outside `Plugins/` with `--mount <PACKAGE_PREFIX=RELATIVE_DIR>`; it adds to the discovered mounts, and replaces only a root it names by name. Use `--focus <PACKAGE_OR_GLOB>` to attach full typed analyses for selected packages while retaining the single project inventory and reference graph. Both flags are repeatable.
 
 Keep strict mode enabled: it exits nonzero only for hard scan failures, while inherent partial or unsupported evidence keeps a truthful non-complete `status` and exits zero. A UE4, cooked, or otherwise out-of-scope package is `unsupported` evidence in the inventory, not a failure. Use `--allow-partial` only when the user explicitly accepts hard failures with a zero exit, and carry every failure and non-complete status into the conclusion. See [references/report-contract.md](references/report-contract.md) for the exact exit-code contract.
 

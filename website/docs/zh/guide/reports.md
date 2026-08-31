@@ -77,8 +77,8 @@ coverage 把类自身 serializer 写下的尾巴（`class_payload_bytes`）和�
 
 | 退出码 | 含义 |
 |---|---|
-| `0` | 产出了报告。包括 `partial` 和 `unsupported`。 |
-| `2` | `project` 的 hard scan failure。报告仍会写出。 |
-| `1` | 没有报告：资产不可读/超范围、项目无法发现、`--mount` 错误，或写出失败。 |
+| `0` | 产出了报告**且扫描要做的事都做成了**。包括 `partial`、`unsupported`，以及 `discovery`/`ownership`/`config` 这类软失败。 |
+| `2` | `project` 的 hard scan failure：mapped 资产读/索引/解析失败、mount 或 cache 错误，或 `--focus` 未命中。报告仍会写出。 |
+| `1` | 没有报告：资产不可读/超范围、项目无法发现、`--mount` 错误、命令行本身非法，或写出失败。 |
 
 `"error"` 只用于致命失败文档，永远不是报告的 `status`。

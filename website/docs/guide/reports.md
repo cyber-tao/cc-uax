@@ -77,8 +77,8 @@ Coverage separates expected class serializer tails (`class_payload_bytes`) from 
 
 | Code | Meaning |
 |---|---|
-| `0` | A report was produced. Includes `partial` and `unsupported`. |
-| `2` | `project` hard scan failure. The report is still written. |
-| `1` | No report: unreadable/out-of-scope asset, undiscoverable project, bad `--mount`, or a failed write. |
+| `0` | A report was produced **and nothing the scan was asked to do failed**. Includes `partial` and `unsupported`, and the soft `discovery`/`ownership`/`config` failures. |
+| `2` | `project` hard scan failure: a mapped asset that could not be read, indexed or parsed, a mount or cache error, or a `--focus` pattern that matched nothing. The report is still written. |
+| `1` | No report: unreadable/out-of-scope asset, undiscoverable project, bad `--mount`, an invalid command line, or a failed write. |
 
 `"error"` is the fatal document only. It is never a report `status`.

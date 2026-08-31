@@ -48,15 +48,17 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: swatinem/rust-cache@v2
-      # Run the same gates as Linux: path handling, case sensitivity and line
-      # endings differ enough that a lint or format regression can land here
-      # without Linux noticing.
+      # Run all four gates from CLAUDE.md, the same as Linux: path handling,
+      # case sensitivity and line endings differ enough that a lint, format or
+      # release-build regression can land here without Linux noticing.
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test
         run: cargo test --workspace --locked
+      - name: Release build
+        run: cargo build --workspace --release --locked
       - name: Parse PowerShell scripts with Windows PowerShell 5.1
         shell: powershell
         run: |
@@ -82,10 +84,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
-      # Releases ship darwin archives, so the platform needs at least one
-      # build-and-test signal before a tag is cut.
+      # Releases ship darwin archives, so the platform needs a test and a
+      # release build before a tag is cut. Format and clippy are platform-
+      # independent and already gated on Linux and Windows.
       - name: Test
         run: cargo test --workspace --locked
+      - name: Release build
+        run: cargo build --workspace --release --locked
 
   msrv:
     name: Rust 1.88 MSRV
