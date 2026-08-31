@@ -29,6 +29,7 @@ fn parse_test_native_struct(
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization,
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -130,6 +131,7 @@ fn native_struct_array_falls_back_to_hex() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -165,6 +167,7 @@ fn native_struct_box_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -204,6 +207,7 @@ fn native_vector_uses_f32_below_large_world_coordinates() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: fv,
@@ -243,6 +247,7 @@ fn native_vector_uses_f64_at_large_world_coordinates() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: fv,
@@ -278,6 +283,7 @@ fn native_struct_box2f_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -317,6 +323,7 @@ fn native_struct_gameplay_tag_container_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -353,6 +360,7 @@ fn native_struct_vector4f_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -388,6 +396,7 @@ fn native_struct_skeletal_mesh_sampling_lod_built_data_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -435,6 +444,7 @@ fn native_struct_niagara_variable_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             niagara_version: 0,
             ..Default::default()
@@ -499,6 +509,7 @@ fn native_struct_niagara_gpu_param_info_decodes() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "idx": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             niagara_version:
                 crate::version::custom::NIAGARA_SERIALIZE_USAGE_BITMASK_TO_GPU_FUNCTION_INFO,
@@ -546,6 +557,7 @@ fn native_struct_spline_empty_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -575,6 +587,7 @@ fn native_struct_gameplay_effect_version_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -636,6 +649,7 @@ fn native_struct_rich_curve_key_array_keeps_stride() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -681,6 +695,7 @@ fn material_scalar_input_resolves_expression() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -725,6 +740,7 @@ fn material_color_input_uses_packed_color_before_linear_color_version() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             fortnite_main_version: 76,
             ..Default::default()
@@ -776,6 +792,7 @@ fn material_color_input_uses_linear_color_at_or_past_version() {
             resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
             pins: PinSerCtx::default(),
             soft_object_paths: &[],
+            soft_object_paths_unavailable: false,
             serialization: crate::version::SerializationPolicy {
                 fortnite_main_version: version,
                 ..Default::default()
@@ -823,6 +840,7 @@ fn native_struct_per_platform_float_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -865,6 +883,7 @@ fn native_struct_per_platform_frame_rate_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -906,6 +925,7 @@ fn native_struct_movie_scene_frame_range_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -965,6 +985,7 @@ fn native_struct_movie_scene_float_channel_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             fortnite_main_version: 53,
             ..Default::default()
@@ -1038,6 +1059,7 @@ fn native_struct_movie_scene_float_channel_show_curve_version_gate() {
             resolve_object: &|_idx: i32| crate::DecodedValue::Null,
             pins: PinSerCtx::default(),
             soft_object_paths: &[],
+            soft_object_paths_unavailable: false,
             serialization: crate::version::SerializationPolicy {
                 fortnite_main_version: version,
                 ..Default::default()
@@ -1095,6 +1117,7 @@ fn native_struct_instanced_struct_decodes() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             instanced_struct_version: crate::version::custom::INSTANCED_STRUCT_CUSTOM_VERSION_ADDED,
             ..Default::default()
@@ -1157,6 +1180,7 @@ fn native_struct_instanced_property_bag_decodes() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             property_bag_version: crate::version::custom::PROPERTY_BAG_META_CLASS,
             ..Default::default()
@@ -1212,6 +1236,7 @@ fn native_struct_instanced_property_bag_bad_size_falls_back_to_opaque() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             property_bag_version: crate::version::custom::PROPERTY_BAG_META_CLASS,
             ..Default::default()
@@ -1291,6 +1316,7 @@ fn native_struct_property_bag_ue58_desc_fields_decode() {
             resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
             pins: PinSerCtx::default(),
             soft_object_paths: &[],
+            soft_object_paths_unavailable: false,
             serialization: crate::version::SerializationPolicy {
                 property_bag_version: version,
                 ..Default::default()
@@ -1354,6 +1380,7 @@ fn native_struct_property_bag_v1_container_types_decode() {
             resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
             pins: PinSerCtx::default(),
             soft_object_paths: &[],
+            soft_object_paths_unavailable: false,
             serialization: crate::version::SerializationPolicy {
                 property_bag_version: crate::version::custom::PROPERTY_BAG_CONTAINER_TYPES,
                 ..Default::default()
@@ -1402,6 +1429,7 @@ fn native_struct_property_bag_future_version_falls_back_with_reason() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             property_bag_version: future,
             ..Default::default()
@@ -1531,6 +1559,7 @@ fn native_struct_instanced_struct_container_decodes_items() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -1576,6 +1605,7 @@ fn native_struct_state_tree_instance_data_decodes_storage() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             state_tree_instance_storage_version:
                 crate::version::custom::STATE_TREE_INSTANCE_STORAGE_ADDED_CUSTOM_SERIALIZATION,
@@ -1702,6 +1732,7 @@ fn pcg_input_and_output_selectors_parse_as_tagged_properties() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -1754,6 +1785,7 @@ fn native_struct_pcg_point_array_decodes_channels() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -1841,6 +1873,7 @@ fn native_struct_pcg_point_decodes_structured_mask() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             fortnite_release_version: crate::version::custom::PCG_POINT_STRUCTURED_SERIALIZER,
             ..Default::default()
@@ -1968,6 +2001,7 @@ fn niagara_variant_parses_as_tagged_properties() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2010,6 +2044,7 @@ fn state_tree_reference_parses_as_tagged_properties() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2065,6 +2100,7 @@ fn native_struct_edgraph_pin_type_decodes() {
             has_single_precision_float: true,
         },
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2132,6 +2168,7 @@ fn frame_rate_struct_parses_as_tagged_properties() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2180,6 +2217,7 @@ fn cloth_lod_data_common_decodes_transition_payloads() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2228,6 +2266,7 @@ fn groom_dataflow_settings_keeps_named_tail_payload() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2262,6 +2301,7 @@ fn instanced_property_bag_empty_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             property_bag_version: crate::version::custom::PROPERTY_BAG_CONTAINER_TYPES,
             ..Default::default()
@@ -2302,6 +2342,7 @@ fn cloth_tether_data_decodes_batches() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2353,6 +2394,7 @@ fn native_struct_animation_attribute_identifier_decodes_inline_path() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2397,6 +2439,7 @@ fn native_struct_animation_attribute_identifier_uses_soft_object_path_list() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &soft_paths,
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2451,6 +2494,7 @@ fn native_struct_anim_sync_marker_falls_back_to_tagged_properties() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2493,6 +2537,7 @@ fn native_struct_expression_input_decodes() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2556,6 +2601,7 @@ fn native_struct_box3f_and_matrix_aliases_decode() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2590,6 +2636,7 @@ fn native_struct_property_bag_v0_reads_inline_version_before_has_data() {
             resolve_object: &|_idx: i32| crate::DecodedValue::Null,
             pins: PinSerCtx::default(),
             soft_object_paths: &[],
+            soft_object_paths_unavailable: false,
             serialization: SerializationPolicy {
                 property_bag_version,
                 ..Default::default()
@@ -2624,6 +2671,7 @@ fn native_struct_rigvm_property_bag_alias_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: SerializationPolicy {
             property_bag_version: crate::version::custom::PROPERTY_BAG_CONTAINER_TYPES,
             ..Default::default()
@@ -2664,6 +2712,7 @@ fn a_struct_the_engine_does_not_define_is_not_decoded_natively() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -2703,6 +2752,7 @@ fn native_struct_niagara_data_channel_variable_alias_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: SerializationPolicy {
             niagara_version: crate::version::custom::NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY,
             ..Default::default()

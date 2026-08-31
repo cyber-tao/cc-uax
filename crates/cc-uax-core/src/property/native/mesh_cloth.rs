@@ -1,5 +1,6 @@
+use super::{ensure_complete_tagged_payload, ensure_tagged_payload_parsed};
 use crate::property::{
-    PREVIEW_MAX, ParseCtx, ensure_within_value, entries_to_values, parse_properties, to_hex,
+    PREVIEW_MAX, ParseCtx, ensure_within_value, entries_to_values, parse_properties_report, to_hex,
     validate_count,
 };
 use crate::reader::Reader;
@@ -38,10 +39,11 @@ fn parse_tagged_struct_with_payload(
     value_end: u64,
     payload_key: &str,
 ) -> Result<Value> {
-    let nested = parse_properties(r, ctx, value_end);
+    let nested = parse_properties_report(r, ctx, value_end, "/properties");
+    ensure_tagged_payload_parsed(&nested.status, name)?;
     let mut o = Map::new();
     o.insert("@struct".into(), json!(name));
-    o.insert("properties".into(), entries_to_values(&nested));
+    o.insert("properties".into(), entries_to_values(&nested.entries));
     if r.pos() < value_end {
         let payload_size = value_end - r.pos();
         let preview_len = payload_size.min(PREVIEW_MAX as u64) as usize;
@@ -97,10 +99,11 @@ fn read_i32_array(r: &mut Reader, value_end: u64, label: &str) -> Result<Value> 
 }
 
 fn parse_cloth_lod_data_common(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Value> {
-    let nested = parse_properties(r, ctx, value_end);
+    let nested = parse_properties_report(r, ctx, value_end, "/properties");
+    ensure_tagged_payload_parsed(&nested.status, "ClothLODDataCommon")?;
     let mut o = Map::new();
     o.insert("@struct".into(), json!("ClothLODDataCommon"));
-    o.insert("properties".into(), entries_to_values(&nested));
+    o.insert("properties".into(), entries_to_values(&nested.entries));
     o.insert(
         "transition_up_skin_data".into(),
         parse_mesh_to_mesh_vert_data_array(r, value_end, "TransitionUpSkinData")?,
@@ -117,7 +120,8 @@ fn parse_cloth_tether_data(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Re
     const BATCH_SAMPLE_LIMIT: usize = 4;
     const TETHER_SAMPLE_LIMIT: usize = 4;
 
-    let nested = parse_properties(r, ctx, value_end);
+    let nested = parse_properties_report(r, ctx, value_end, "/properties");
+    ensure_tagged_payload_parsed(&nested.status, "ClothTetherData")?;
     let batch_count = r.read_i32()?;
     let remaining = value_end.saturating_sub(r.pos());
     validate_count(batch_count, remaining, 4, "ClothTetherData batch")?;
@@ -155,7 +159,7 @@ fn parse_cloth_tether_data(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Re
     }
     Ok(json!({
         "@struct": "ClothTetherData",
-        "properties": entries_to_values(&nested),
+        "properties": entries_to_values(&nested.entries),
         "batch_count": batch_count,
         "tether_count": tether_total,
         "batch_sample": batch_sample,
@@ -246,8 +250,12 @@ fn decode_property_bag_body(
     if value_end.saturating_sub(r.pos()) != serial_size as u64 {
         return None;
     }
-    let entries = parse_properties(r, ctx, value_end);
-    Some((Value::Array(descs), entries_to_values(&entries)))
+    // The declared serial size is the rest of the window, so a clean parse must
+    // also land exactly on it; anything else means the desc walk drifted and the
+    // caller falls back to the opaque preview.
+    let parsed = parse_properties_report(r, ctx, value_end, "/property_bag");
+    ensure_complete_tagged_payload(r, value_end, &parsed.status, "InstancedPropertyBag").ok()?;
+    Some((Value::Array(descs), entries_to_values(&parsed.entries)))
 }
 
 fn read_property_bag_descs(

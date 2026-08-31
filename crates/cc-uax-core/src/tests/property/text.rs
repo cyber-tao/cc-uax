@@ -33,6 +33,7 @@ fn text_property_unknown_history_falls_back_to_hex() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -69,6 +70,7 @@ fn parse_text_property_value(value: &[u8]) -> crate::DecodedValue {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -195,6 +197,7 @@ fn text_ordered_format_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -241,6 +244,7 @@ fn text_string_table_entry_decodes() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -271,12 +275,13 @@ fn parse_text_bytes(
             ..PinSerCtx::default()
         },
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization,
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
     };
     let mut r = Reader::new(value);
-    match crate::property::parse_text(&mut r, &ctx, 0) {
+    match crate::property::parse_text(&mut r, &ctx, value.len() as u64, 0) {
         Ok(decoded) => (decoded, r.pos(), true),
         Err(_) => (crate::DecodedValue::Null, r.pos(), false),
     }

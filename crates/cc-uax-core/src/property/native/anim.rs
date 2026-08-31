@@ -9,15 +9,20 @@ pub(super) fn parse_anim_struct(
     r: &mut Reader,
     name: &str,
     ctx: &ParseCtx,
+    value_end: u64,
 ) -> Result<Option<Value>> {
     let v = match name {
         // FAnimationAttributeIdentifier::Serialize returns true and writes:
         //   Ar << Name << BoneName << BoneIndex << ScriptStructPath.
         "AnimationAttributeIdentifier" => {
-            let name = ctx.names.resolve_raw(r.read_raw_name()?);
-            let bone_name = ctx.names.resolve_raw(r.read_raw_name()?);
-            let bone_index = r.read_i32()?;
-            let script_struct_path = parse_soft_object(r, ctx)?;
+            let name = ctx
+                .names
+                .resolve_raw(r.read_raw_name_within(value_end, "attribute name")?);
+            let bone_name = ctx
+                .names
+                .resolve_raw(r.read_raw_name_within(value_end, "attribute bone name")?);
+            let bone_index = r.read_i32_within(value_end, "attribute bone index")?;
+            let script_struct_path = parse_soft_object(r, ctx, value_end)?;
             json!({
                 "name": name,
                 "bone_name": bone_name,

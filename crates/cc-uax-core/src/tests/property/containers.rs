@@ -42,6 +42,7 @@ fn optional_property_decodes_set_and_unset() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -103,6 +104,7 @@ fn a_legacy_map_without_an_inner_struct_name_is_its_own_limitation() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         // Below PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION so the tag
@@ -175,6 +177,7 @@ fn legacy_struct_array_ctx(names: &NameMap, file_version_ue5: i32) -> ParseCtx<'
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5,
@@ -374,6 +377,7 @@ fn multicast_inline_delegate_decodes() {
         resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -418,6 +422,7 @@ fn soft_object_property_resolves_list_index() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &table,
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -427,6 +432,63 @@ fn soft_object_property_resolves_list_index() {
 
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].value["asset_path"].as_str(), Some("/Game/B.B"));
+}
+
+/// A declared-but-unreadable soft-object-path table must not silently fall back
+/// to inline decoding.
+///
+/// On disk the value is a 4-byte index into a list the parser could not build.
+/// Reading it as an inline path (two FNames plus an FString) would misread every
+/// soft reference in the package, so it stays undecoded with a stated reason.
+#[test]
+fn unavailable_soft_object_path_table_does_not_fall_back_to_inline() {
+    let names = NameMap {
+        names: vec![
+            "Ref".to_string(),
+            "SoftObjectProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Ref
+    push_raw_name(&mut d, 1); // SoftObjectProperty
+    push_i32(&mut d, 0); // type name inner param count
+    push_i32(&mut d, 4); // size = the int32 index
+    d.push(0); // flags
+    push_i32(&mut d, 1); // the index itself
+    push_raw_name(&mut d, 2); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        // The table failed to parse, so nothing was decoded from it.
+        soft_object_paths: &[],
+        soft_object_paths_unavailable: true,
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let parse =
+        crate::property::parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert_eq!(parse.entries.len(), 1);
+    assert!(
+        parse.entries[0].value.get("asset_path").is_none(),
+        "an unresolvable index must not be reported as a path: {:?}",
+        parse.entries[0].value
+    );
+    let diagnostic = parse
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "property_value_fallback")
+        .unwrap_or_else(|| panic!("expected a fallback diagnostic: {:#?}", parse.diagnostics));
+    assert!(
+        diagnostic.message.contains("soft object path list"),
+        "the reason must name the unreadable list: {}",
+        diagnostic.message
+    );
 }
 
 // FSoftObjectPath::SerializePathWithoutFixup: below FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES
@@ -448,6 +510,7 @@ fn read_soft_object_path_pre_1007_is_single_fname() {
         &mut r,
         &names,
         crate::version::ue5::LARGE_WORLD_COORDINATES, // 1004 < 1007
+        data.len() as u64,
     )
     .unwrap();
     assert_eq!(value["asset_path"].as_str(), Some("/Game/Curves/Foo.Foo"));
@@ -474,6 +537,7 @@ fn read_soft_object_path_from_1007_is_top_level_asset_path_pair() {
         &mut r,
         &names,
         crate::version::ue5::FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES,
+        data.len() as u64,
     )
     .unwrap();
     assert_eq!(value["asset_path"].as_str(), Some("/Game/Curves.Foo"));
@@ -503,6 +567,7 @@ fn read_soft_object_path_utf8_subpath_without_nul_is_consumed() {
         &mut r,
         &names,
         crate::version::ue5::FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES,
+        data.len() as u64,
     )
     .unwrap();
     assert_eq!(value["asset_path"].as_str(), Some("/Game/Curves.Foo"));
@@ -537,6 +602,7 @@ fn lazy_object_property_decodes_guid() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -588,6 +654,7 @@ fn map_removed_keys_are_discarded() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -635,6 +702,7 @@ fn set_removed_elements_are_discarded() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,

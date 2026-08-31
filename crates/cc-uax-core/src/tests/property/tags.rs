@@ -21,6 +21,9 @@ fn nested_struct_respects_declared_value_end() {
         ],
     };
 
+    // A nested struct's payload is a complete tagged block: UScriptStruct::
+    // SerializeItem runs SerializeTaggedProperties, which closes with NAME_None,
+    // and the declared Size covers that terminator.
     let mut nested = Vec::new();
     push_raw_name(&mut nested, 3); // Inner
     push_raw_name(&mut nested, 4); // IntProperty
@@ -28,6 +31,7 @@ fn nested_struct_respects_declared_value_end() {
     push_i32(&mut nested, 4); // size
     nested.push(0); // flags
     push_i32(&mut nested, 123);
+    push_raw_name(&mut nested, 6); // None
 
     let mut d = Vec::new();
     push_raw_name(&mut d, 0); // Outer
@@ -53,6 +57,7 @@ fn nested_struct_respects_declared_value_end() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -67,6 +72,75 @@ fn nested_struct_respects_declared_value_end() {
     assert_eq!(nested_props[0]["name"], "Inner");
     assert_eq!(entries[1].name, "After");
     assert_eq!(entries[1].value.as_i64(), Some(456));
+}
+
+/// A nested struct whose payload is not a well-formed tagged block must fall back
+/// with a diagnostic, not be reported as a decoded empty struct.
+///
+/// The failure paths in the tag loop seek to `value_end`, so the caller sees a
+/// cursor that looks exactly like a clean decode. Only the parse status
+/// distinguishes the two, which is why `parse_struct` checks it.
+#[test]
+fn nested_struct_with_unparsable_payload_falls_back_instead_of_reporting_success() {
+    let names = NameMap {
+        names: vec![
+            "Outer".to_string(),          // 0
+            "StructProperty".to_string(), // 1
+            "MyStruct".to_string(),       // 2
+            "None".to_string(),           // 3
+        ],
+    };
+
+    // 16 bytes of binary payload: no name index in it resolves to a tag, so the
+    // very first tag read inside the struct fails. The tag flags below leave
+    // HasBinaryOrNativeSerialize clear, which is what a legacy tag always reports
+    // and what routes an unknown struct into the tagged-property path.
+    let payload = [0xFFu8; 16];
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Outer
+    push_raw_name(&mut d, 1); // StructProperty
+    push_i32(&mut d, 1); // one type parameter
+    push_raw_name(&mut d, 2); // MyStruct
+    push_i32(&mut d, 0);
+    push_i32(&mut d, payload.len() as i32);
+    d.push(0); // flags
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 3); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+    };
+    let mut r = Reader::new(&d);
+    let parsed = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert_eq!(parsed.entries.len(), 1);
+    assert_eq!(parsed.entries[0].name, "Outer");
+    assert!(
+        parsed.entries[0].value.get("@struct").is_none(),
+        "an unparsable payload must not be reported as a decoded struct: {:?}",
+        parsed.entries[0].value
+    );
+    assert!(
+        parsed.entries[0].value.get("@unparsed").is_some(),
+        "the undecoded payload must be retained as evidence: {:?}",
+        parsed.entries[0].value
+    );
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_fallback"),
+        "the fallback must say why: {:?}",
+        parsed.diagnostics
+    );
 }
 
 #[test]
@@ -94,6 +168,7 @@ fn under_consumed_property_value_is_recorded_not_silently_dropped() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -138,6 +213,7 @@ fn truncated_property_array_index_stops_parse() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -176,6 +252,7 @@ fn failed_property_after_entries_reports_status_and_diagnostic() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -277,6 +354,7 @@ fn legacy_property_tags_decode_type_metadata() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: fv,
@@ -346,6 +424,7 @@ fn legacy_property_tags_match_ue5_1_on_disk_layout() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: fv,
@@ -395,6 +474,7 @@ fn property_tag_extensions_are_byte_aligned() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -437,6 +517,7 @@ fn property_tag_extension_has_external_objects_is_parsed() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -497,6 +578,7 @@ fn skipped_serialize_property_is_marked_and_parsing_continues() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -540,6 +622,7 @@ fn a_tag_header_crossing_the_window_end_does_not_read_past_it() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 0,
@@ -593,6 +676,7 @@ fn a_value_overrunning_the_window_does_not_count_as_decoded() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 0,
@@ -611,4 +695,90 @@ fn a_value_overrunning_the_window_does_not_count_as_decoded() {
         parse.diagnostics
     );
     assert_eq!(parse.decoded_end, Some(after_first));
+}
+
+/// A variable-length value must be sized against its own declared window, not
+/// against the rest of the file.
+///
+/// The tag loop bounds `Size`, but the length prefix *inside* the value is
+/// attacker-controlled: sizing a read against the file lets a corrupt prefix
+/// allocate by file size and read into the following export before the loop
+/// notices the cursor moved too far.
+#[test]
+fn variable_length_values_are_bounded_by_the_declared_window_not_the_file() {
+    // A property type name plus the 8-byte payload that overstates its length.
+    type OverlongValue = (&'static str, fn(&mut Vec<u8>));
+
+    // Each case declares an 8-byte value whose internal length/count prefix claims
+    // far more, with plenty of unrelated bytes after it in the "file".
+    let cases: [OverlongValue; 3] = [
+        ("StrProperty", |v: &mut Vec<u8>| {
+            push_i32(v, 0x0010_0000); // ANSI length far beyond the window
+            push_i32(v, 0);
+        }),
+        ("FieldPathProperty", |v: &mut Vec<u8>| {
+            push_i32(v, 4096); // 4096 * 8 bytes of FName path
+            push_i32(v, 0);
+        }),
+        ("TextProperty", |v: &mut Vec<u8>| {
+            push_u32(v, 0); // flags
+            v.push(1); // history = NamedFormat
+            v.extend_from_slice(&[0u8; 3]);
+        }),
+    ];
+
+    for (type_name, write_payload) in cases {
+        let label = type_name;
+        let names = NameMap {
+            names: vec![
+                "Value".to_string(), // 0
+                type_name.to_string(),
+                "None".to_string(), // 2
+            ],
+        };
+        let mut d = Vec::new();
+        push_raw_name(&mut d, 0); // Value
+        push_raw_name(&mut d, 1); // type
+        push_i32(&mut d, 0); // type name inner param count
+        push_i32(&mut d, 8); // declared size
+        d.push(0); // flags
+        let value_start = d.len() as u64;
+        write_payload(&mut d);
+        assert_eq!(
+            d.len() as u64 - value_start,
+            8,
+            "{label}: payload must be 8"
+        );
+        push_raw_name(&mut d, 2); // None
+        // Bytes a runaway read could reach if it were bounded by the file.
+        d.extend_from_slice(&[0xAB; 4096]);
+
+        let ctx = ParseCtx {
+            names: &names,
+            resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+            pins: PinSerCtx::default(),
+            soft_object_paths: &[],
+            soft_object_paths_unavailable: false,
+            serialization: crate::version::SerializationPolicy::default(),
+            file_version_ue4: crate::version::ue4::HIGHEST,
+            file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        };
+        let mut r = Reader::new(&d);
+        let parse = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+        assert_eq!(parse.entries.len(), 1, "{label}: {:#?}", parse.entries);
+        assert!(
+            parse.entries[0].value.get("@unparsed").is_some(),
+            "{label}: an out-of-window read must fall back, got {:?}",
+            parse.entries[0].value
+        );
+        assert!(
+            parse
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "property_value_fallback"),
+            "{label}: {:#?}",
+            parse.diagnostics
+        );
+    }
 }

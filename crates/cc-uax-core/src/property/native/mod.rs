@@ -15,6 +15,25 @@ use crate::reader::Reader;
 use crate::structured_value::Value;
 use anyhow::{Result, bail};
 
+/// Rejects a tagged-property block that did not parse cleanly.
+///
+/// The tag loop seeks to the window end on every failure path, so the cursor
+/// alone cannot tell a clean decode from a malformed one — only the status can.
+/// Any decoder that keeps a tagged block's entries must consult it, or an opaque
+/// payload is reported as a successfully decoded (usually empty) struct.
+///
+/// Use this when serialized data follows the tagged block inside the same window;
+/// use [`ensure_complete_tagged_payload`] when the block is the whole payload.
+pub(crate) fn ensure_tagged_payload_parsed(status: &PropertyParseStatus, name: &str) -> Result<()> {
+    if matches!(
+        status,
+        PropertyParseStatus::NonTaggedPayload | PropertyParseStatus::FailedAfterEntries
+    ) {
+        bail!("{name} tagged payload is malformed ({})", status.as_str());
+    }
+    Ok(())
+}
+
 /// Rejects a native struct whose payload is really tagged properties unless those
 /// properties parsed cleanly and consumed the declared value window exactly.
 ///
@@ -27,12 +46,7 @@ pub(crate) fn ensure_complete_tagged_payload(
     status: &PropertyParseStatus,
     name: &str,
 ) -> Result<()> {
-    if matches!(
-        status,
-        PropertyParseStatus::NonTaggedPayload | PropertyParseStatus::FailedAfterEntries
-    ) {
-        bail!("{name} tagged payload is malformed ({})", status.as_str());
-    }
+    ensure_tagged_payload_parsed(status, name)?;
     if r.pos() != value_end {
         bail!(
             "{name} tagged payload ended at byte {}, expected {value_end}",
@@ -91,7 +105,7 @@ pub(crate) fn parse_native_struct(
     ctx: &ParseCtx,
     value_end: u64,
 ) -> Result<Option<Value>> {
-    if let Some(v) = anim::parse_anim_struct(r, name, ctx)? {
+    if let Some(v) = anim::parse_anim_struct(r, name, ctx, value_end)? {
         return Ok(Some(v));
     }
     if let Some(v) = math::parse_math_struct(r, name, ctx)? {

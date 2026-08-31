@@ -408,6 +408,7 @@ fn property_tag_layout_switches_exactly_at_its_version_gate() {
             resolve_object: &|_idx: i32| crate::DecodedValue::Null,
             pins: PinSerCtx::default(),
             soft_object_paths: &[],
+            soft_object_paths_unavailable: false,
             serialization: crate::version::SerializationPolicy::default(),
             file_version_ue4: crate::version::ue4::HIGHEST,
             file_version_ue5,

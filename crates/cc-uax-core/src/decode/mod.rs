@@ -8,7 +8,7 @@ use crate::diagnostic::{ByteRangePreview, Diagnostic};
 use crate::package::Package;
 use crate::pin::{Pin, PinSerCtx, UserDefinedPin};
 use crate::property::{ParseCtx, PropertyEntry, PropertyParseStatus};
-use crate::reader::Reader;
+use crate::reader::{Guid, Reader};
 pub(crate) use crate::script::is_script_bytecode_class;
 
 use crate::script::{DecodedScriptStruct, ScriptStructContext, decode_script_struct};
@@ -166,6 +166,7 @@ impl Package {
             resolve_object: &resolve,
             pins: pin_ctx,
             soft_object_paths: &self.soft_object_paths,
+            soft_object_paths_unavailable: self.soft_object_path_error.is_some(),
             serialization: SerializationPolicy {
                 niagara_version: self
                     .summary
@@ -430,30 +431,35 @@ fn account_export_tail(
 ///
 /// The flag is written through `FStructuredArchive::TryEnterField`, which in a
 /// binary archive emits `FArchive::SerializeBool` — exactly 0 or 1 as a uint32.
-/// Any other value means the property block did not end where the caller thinks
-/// it did, so the bytes stay classified opaque rather than being consumed.
+/// Any other value means the caller is not positioned at the end of the
+/// tagged-property block.
+///
+/// One layout, two policies: the metadata decoder must stay aligned so it treats
+/// a failure here as fatal, while the export tail walk is speculative and rolls
+/// back. Keeping the layout in one place is what stops those policies from
+/// drifting into two different readings of the same bytes.
+pub(super) fn read_object_guid_field(
+    reader: &mut Reader,
+    end: u64,
+) -> anyhow::Result<Option<Guid>> {
+    match reader.read_i32_within(end, "object guid presence")? {
+        0 => Ok(None),
+        1 => Ok(Some(reader.read_guid_within(end, "object guid")?)),
+        other => anyhow::bail!("unexpected object guid presence flag {other}"),
+    }
+}
+
 fn consume_object_guid_tail(reader: &mut Reader, end: u64, export: &mut DecodedExport) {
     let start = reader.pos();
-    if end.saturating_sub(start) < 4 {
-        return;
-    }
-    let Ok(present) = reader.read_u32() else {
-        let _ = reader.seek(start);
-        return;
-    };
-    match present {
-        0 => {}
-        1 => {
-            if end.saturating_sub(reader.pos()) >= 16
-                && let Ok(guid) = reader.read_guid()
-                && !guid.is_zero()
-            {
-                export.object_guid = Some(guid.to_hex());
-            } else {
-                let _ = reader.seek(start);
-            }
+    match read_object_guid_field(reader, end) {
+        // No annotation was written; the flag itself is still part of the field.
+        Ok(None) => {}
+        Ok(Some(guid)) if !guid.is_zero() => {
+            export.object_guid = Some(guid.to_hex());
         }
-        _ => {
+        // A zero GUID or an unreadable field means these bytes are the class's own
+        // payload, so leave them for the tail classifier instead of claiming them.
+        Ok(Some(_)) | Err(_) => {
             let _ = reader.seek(start);
         }
     }

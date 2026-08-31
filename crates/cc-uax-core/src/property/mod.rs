@@ -16,7 +16,6 @@ pub(crate) use text::parse_text;
 pub(crate) use value::{parse_soft_object, read_soft_object_path};
 
 pub(crate) const PREVIEW_MAX: usize = 64;
-const MAX_DYNAMIC_COUNT: i32 = 1_000_000;
 
 // The "overridable serialization" bit, shared by EClassSerializationControlExtension
 // (object control byte) and EPropertyTagExtension (per-tag extension flags).
@@ -27,6 +26,13 @@ pub struct ParseCtx<'a> {
     pub resolve_object: &'a dyn Fn(i32) -> Value,
     pub pins: PinSerCtx,
     pub soft_object_paths: &'a [Value],
+    /// The header declared a soft-object-path list that could not be read.
+    ///
+    /// Distinct from an empty `soft_object_paths`: a package without a list
+    /// serializes soft references inline, while one with an unreadable list still
+    /// serializes them as an int32 index that cannot be resolved. Without this the
+    /// two are indistinguishable and every soft reference is misread as a path.
+    pub soft_object_paths_unavailable: bool,
     pub serialization: SerializationPolicy,
     pub file_version_ue4: i32,
     pub file_version_ue5: i32,
@@ -176,6 +182,13 @@ pub fn parse_object_properties_report(
     parsed
 }
 
+/// Entries only, for tests that assert decoded values and check the cursor
+/// themselves.
+///
+/// Deliberately test-only: dropping [`PropertyParse::status`] is what let a
+/// nested struct report a malformed payload as a successfully decoded empty
+/// struct, so no production path may take this shortcut.
+#[cfg(test)]
 pub(crate) fn parse_properties(
     r: &mut Reader,
     ctx: &ParseCtx,
@@ -199,13 +212,7 @@ pub(crate) fn validate_count(
     min_bytes_per_item: u64,
     label: &str,
 ) -> Result<()> {
-    if !(0..=MAX_DYNAMIC_COUNT).contains(&count) {
-        bail!("{label} count out of range: {count}");
-    }
-    if (count as u64).saturating_mul(min_bytes_per_item) > remaining {
-        bail!("{label} count out of range: {count}");
-    }
-    Ok(())
+    crate::reader::validate_dynamic_count(count, remaining, min_bytes_per_item, label)
 }
 
 pub(crate) fn ensure_within_value(r: &Reader, value_end: u64, label: &str) -> Result<()> {

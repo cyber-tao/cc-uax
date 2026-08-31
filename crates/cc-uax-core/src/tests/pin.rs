@@ -209,6 +209,7 @@ fn node_pin_array_decodes() {
         pins: PinSerCtx::default(),
 
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
 
         serialization: crate::version::SerializationPolicy::default(),
 
@@ -320,6 +321,7 @@ fn node_pin_parse_failure_reports_diagnostic() {
         resolve_object: &|_idx: i32| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
@@ -415,6 +417,7 @@ fn edgraph_pin_type_map_container_decodes() {
         },
 
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
 
         serialization: crate::version::SerializationPolicy::default(),
 
@@ -487,6 +490,7 @@ fn legacy_property_terminator_locates_the_same_pin_stream_as_script_offset() {
         resolve_object: &|_| crate::DecodedValue::Null,
         pins: pin_context,
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 1009,
@@ -551,6 +555,7 @@ fn locate_legacy_pin_start_after_bool_property_tags() {
             resolve_object: &|_| crate::DecodedValue::Null,
             pins: PinSerCtx::default(),
             soft_object_paths: &[],
+            soft_object_paths_unavailable: false,
             serialization: crate::version::SerializationPolicy::default(),
             file_version_ue4: crate::version::ue4::HIGHEST,
             file_version_ue5: fv,
@@ -693,6 +698,7 @@ fn pin_friendly_name_consumes_ftext_dev_notes() {
         resolve_object: &|_| crate::DecodedValue::Null,
         pins: pin_context,
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             fortnite_main_version: crate::version::custom::ADD_DEV_NOTES_TO_FTEXT,
             ..Default::default()
@@ -728,6 +734,7 @@ fn legacy_pin_boundary_is_not_guessed_without_none_terminator() {
         resolve_object: &|_| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 1009,
@@ -750,6 +757,7 @@ fn user_defined_pins_follow_framework_name_layout() {
         resolve_object: &|_| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 1017,
@@ -827,6 +835,7 @@ fn dynamic_cast_pure_state_tail_is_version_gated_and_bounded() {
         resolve_object: &|_| crate::DecodedValue::Null,
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
         serialization,
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::IMPORT_TYPE_HIERARCHIES,

@@ -1,6 +1,7 @@
+use super::ensure_tagged_payload_parsed;
 use crate::name::NameMap;
 use crate::property::{
-    PREVIEW_MAX, ParseCtx, ensure_within_value, entries_to_values, parse_properties, to_hex,
+    PREVIEW_MAX, ParseCtx, ensure_within_value, entries_to_values, parse_properties_report, to_hex,
     validate_count,
 };
 use crate::reader::Reader;
@@ -17,10 +18,12 @@ pub(super) fn parse_niagara_struct(
     let v = match name {
         "NiagaraDataInterfaceGPUParamInfo" => parse_niagara_gpu_param_info(r, ctx, value_end)?,
         // Niagara core variable types (modern format only). FNiagaraTypeDefinition
-        // serializes via SerializeTaggedProperties, so it reuses parse_properties.
+        // serializes via SerializeTaggedProperties, so it reuses the tag loop. The
+        // caller checks the position; this only has to know the block parsed.
         "NiagaraTypeDefinition" if niagara_modern(ctx) => {
-            let nested = parse_properties(r, ctx, value_end);
-            json!({ "@struct": "NiagaraTypeDefinition", "properties": entries_to_values(&nested) })
+            let nested = parse_properties_report(r, ctx, value_end, "/niagara_type_definition");
+            ensure_tagged_payload_parsed(&nested.status, "NiagaraTypeDefinition")?;
+            json!({ "@struct": "NiagaraTypeDefinition", "properties": entries_to_values(&nested.entries) })
         }
         "NiagaraVariableBase" | "NiagaraDataChannelVariable" if niagara_modern(ctx) => {
             Value::Object(parse_niagara_variable_base(r, ctx, value_end)?)
@@ -171,12 +174,15 @@ fn parse_niagara_variable_references(
 /// properties. Leaves the reader positioned right after the type definition.
 fn parse_niagara_variable_base(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Map> {
     let name = ctx.names.resolve_raw(r.read_raw_name()?);
-    let type_def = parse_properties(r, ctx, value_end);
+    // VarData or an offset can follow in the same window, so the block need not
+    // end at `value_end` — but it still has to have parsed.
+    let type_def = parse_properties_report(r, ctx, value_end, "/niagara_type_definition");
+    ensure_tagged_payload_parsed(&type_def.status, "NiagaraTypeDefinition")?;
     let mut o = Map::new();
     o.insert("name".into(), json!(name));
     o.insert(
         "type".into(),
-        json!({ "@struct": "NiagaraTypeDefinition", "properties": entries_to_values(&type_def) }),
+        json!({ "@struct": "NiagaraTypeDefinition", "properties": entries_to_values(&type_def.entries) }),
     );
     Ok(o)
 }

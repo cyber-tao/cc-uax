@@ -171,19 +171,12 @@ fn parse_package_metadata_tail(
     }))
 }
 
-/// Consumes `UObject::Serialize`'s trailing `PossiblySerializeObjectGuid`: a
-/// 4-byte presence bool, followed by an `FGuid` when set. UE only writes the GUID
-/// for a valid annotation, so any presence value other than 0 or 1 means the
-/// tagged-property block did not end where the caller thinks it did.
+/// Consumes `UObject::Serialize`'s trailing `PossiblySerializeObjectGuid` so the
+/// metadata maps that follow are read from the right offset. Unlike the export
+/// tail walk this cannot guess: a malformed field means the whole metadata
+/// payload is opaque.
 fn skip_object_guid_field(reader: &mut Reader, end: u64) -> anyhow::Result<()> {
-    match reader.read_i32_within(end, "object guid presence")? {
-        0 => Ok(()),
-        1 => {
-            reader.read_guid_within(end, "object guid")?;
-            Ok(())
-        }
-        other => anyhow::bail!("unexpected object guid presence flag {other}"),
-    }
+    super::read_object_guid_field(reader, end).map(|_| ())
 }
 
 fn parse_metadata_name_string_map(
@@ -210,11 +203,12 @@ fn validate_metadata_count(
     end: u64,
     label: &str,
 ) -> anyhow::Result<()> {
-    if count < 0 || (count as u64).saturating_mul(RAW_NAME_BYTES) > end.saturating_sub(reader.pos())
-    {
-        anyhow::bail!("{label} count out of range: {count}");
-    }
-    Ok(())
+    crate::reader::validate_dynamic_count(
+        count,
+        end.saturating_sub(reader.pos()),
+        RAW_NAME_BYTES,
+        label,
+    )
 }
 
 #[cfg(test)]
@@ -245,6 +239,7 @@ mod metadata_tests {
             resolve_object: &|index: i32| json!({ "index": index }),
             pins: PinSerCtx::default(),
             soft_object_paths: &[],
+            soft_object_paths_unavailable: false,
             serialization: SerializationPolicy {
                 editor_version,
                 ..SerializationPolicy::default()

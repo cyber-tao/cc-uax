@@ -10,6 +10,49 @@ pub const RAW_NAME_BYTES: u64 = 8;
 /// smallest number of bytes an `FString` array entry can occupy.
 pub const FSTRING_LENGTH_BYTES: u64 = 4;
 
+/// Largest count this parser will honour from an export payload before using it
+/// to allocate or to drive a loop.
+///
+/// Header tables are bounded by the file instead (see [`seek_to_table`]): a real
+/// package can legitimately declare more names than this, but no single property
+/// value can.
+pub const MAX_DYNAMIC_COUNT: i32 = 1_000_000;
+
+/// Rejects a count read from package bytes that is negative, or that cannot be
+/// satisfied by `available` bytes at `min_entry_bytes` each.
+///
+/// This arithmetic is the one thing every count check shares. It had three copies
+/// with three different strengths, which is how the metadata maps ended up
+/// without the payload cap the property decoders enforce.
+pub fn ensure_count_fits(
+    count: i32,
+    available: u64,
+    min_entry_bytes: u64,
+    label: &str,
+) -> Result<()> {
+    if count < 0 {
+        bail!("{label} count out of range: {count}");
+    }
+    if (count as u64).saturating_mul(min_entry_bytes) > available {
+        bail!("{label} count out of range: {count}");
+    }
+    Ok(())
+}
+
+/// [`ensure_count_fits`] plus the [`MAX_DYNAMIC_COUNT`] cap, for any count read
+/// from inside an export payload.
+pub fn validate_dynamic_count(
+    count: i32,
+    available: u64,
+    min_entry_bytes: u64,
+    label: &str,
+) -> Result<()> {
+    if count > MAX_DYNAMIC_COUNT {
+        bail!("{label} count out of range: {count}");
+    }
+    ensure_count_fits(count, available, min_entry_bytes, label)
+}
+
 /// Validates a header-declared table and seeks to it, or reports why it cannot be
 /// read.
 ///
@@ -38,9 +81,8 @@ pub fn seek_to_table(
     if let Err(error) = reader.seek(offset as u64) {
         bail!("{label} seek failed: {error:#}");
     }
-    if (count as u64).saturating_mul(min_entry_bytes) > reader.remaining() {
-        bail!("{label} count out of range: {count}");
-    }
+    // Checked after the seek: `remaining()` is relative to the table's start.
+    ensure_count_fits(count, reader.remaining(), min_entry_bytes, label)?;
     Ok(true)
 }
 
@@ -210,9 +252,49 @@ impl<'a> Reader<'a> {
         self.read_u8()
     }
 
+    pub fn read_i8_within(&mut self, end: u64, what: &str) -> Result<i8> {
+        self.ensure_within(end, 1, what)?;
+        self.read_i8()
+    }
+
+    pub fn read_u16_within(&mut self, end: u64, what: &str) -> Result<u16> {
+        self.ensure_within(end, 2, what)?;
+        self.read_u16()
+    }
+
+    pub fn read_i16_within(&mut self, end: u64, what: &str) -> Result<i16> {
+        self.ensure_within(end, 2, what)?;
+        self.read_i16()
+    }
+
+    pub fn read_u32_within(&mut self, end: u64, what: &str) -> Result<u32> {
+        self.ensure_within(end, 4, what)?;
+        self.read_u32()
+    }
+
     pub fn read_i32_within(&mut self, end: u64, what: &str) -> Result<i32> {
         self.ensure_within(end, 4, what)?;
         self.read_i32()
+    }
+
+    pub fn read_u64_within(&mut self, end: u64, what: &str) -> Result<u64> {
+        self.ensure_within(end, 8, what)?;
+        self.read_u64()
+    }
+
+    pub fn read_i64_within(&mut self, end: u64, what: &str) -> Result<i64> {
+        self.ensure_within(end, 8, what)?;
+        self.read_i64()
+    }
+
+    pub fn read_f32_within(&mut self, end: u64, what: &str) -> Result<f32> {
+        self.ensure_within(end, 4, what)?;
+        self.read_f32()
+    }
+
+    pub fn read_f64_within(&mut self, end: u64, what: &str) -> Result<f64> {
+        self.ensure_within(end, 8, what)?;
+        self.read_f64()
     }
 
     pub fn read_bool32_within(&mut self, end: u64, what: &str) -> Result<bool> {

@@ -160,8 +160,11 @@ fn parse_soft_object_path_table(
         Err(err) => return (out, Some(format!("{err:#}"))),
     }
     out.reserve(count as usize);
+    // The header declares no end offset for this table, so the file end is the
+    // only bound the entries have.
+    let table_end = r.len();
     for i in 0..count {
-        match read_soft_object_path(r, names, file_version_ue5) {
+        match read_soft_object_path(r, names, file_version_ue5, table_end) {
             Ok(v) => out.push(v),
             Err(err) => {
                 return (

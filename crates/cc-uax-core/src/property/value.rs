@@ -1,11 +1,12 @@
-use super::native::{is_tagged_fallback_struct, parse_native_struct};
+use super::native::{ensure_tagged_payload_parsed, is_tagged_fallback_struct, parse_native_struct};
 use super::tag::read_inner_array_struct_name;
 use super::text::parse_text;
 use super::{
-    ParseCtx, TypeName, ensure_within_value, entries_to_values, parse_properties, validate_count,
+    ParseCtx, TypeName, ensure_within_value, entries_to_values, parse_properties_report,
+    validate_count,
 };
 use crate::name::NameMap;
-use crate::reader::Reader;
+use crate::reader::{RAW_NAME_BYTES, Reader};
 use crate::structured_value::{Value, json};
 use crate::version::{ue4, ue5};
 use anyhow::{Result, bail};
@@ -18,65 +19,86 @@ pub(crate) fn parse_value(
     value_end: u64,
 ) -> Result<Value> {
     let v = match ty.name.as_str() {
-        "BoolProperty" => json!(r.read_u8()? != 0),
-        "Int8Property" => json!(r.read_i8()?),
-        "Int16Property" => json!(r.read_i16()?),
-        "IntProperty" => json!(r.read_i32()?),
-        "Int64Property" => json!(r.read_i64()?),
+        "BoolProperty" => json!(r.read_u8_within(value_end, "BoolProperty")? != 0),
+        "Int8Property" => json!(r.read_i8_within(value_end, "Int8Property")?),
+        "Int16Property" => json!(r.read_i16_within(value_end, "Int16Property")?),
+        "IntProperty" => json!(r.read_i32_within(value_end, "IntProperty")?),
+        "Int64Property" => json!(r.read_i64_within(value_end, "Int64Property")?),
         "ByteProperty" => {
             if has_enum_param(ty) {
-                json!(ctx.names.resolve_raw(r.read_raw_name()?))
+                json!(
+                    ctx.names
+                        .resolve_raw(r.read_raw_name_within(value_end, "ByteProperty enum")?)
+                )
             } else {
-                json!(r.read_u8()?)
+                json!(r.read_u8_within(value_end, "ByteProperty")?)
             }
         }
-        "UInt16Property" => json!(r.read_u16()?),
-        "UInt32Property" => json!(r.read_u32()?),
-        "UInt64Property" => json!(r.read_u64()?),
-        "FloatProperty" => json!(r.read_f32()? as f64),
-        "DoubleProperty" => json!(r.read_f64()?),
-        "EnumProperty" => json!(ctx.names.resolve_raw(r.read_raw_name()?)),
-        "NameProperty" => json!(ctx.names.resolve_raw(r.read_raw_name()?)),
-        "StrProperty" => json!(r.read_fstring()?),
-        "TextProperty" => parse_text(r, ctx, 0)?,
+        "UInt16Property" => json!(r.read_u16_within(value_end, "UInt16Property")?),
+        "UInt32Property" => json!(r.read_u32_within(value_end, "UInt32Property")?),
+        "UInt64Property" => json!(r.read_u64_within(value_end, "UInt64Property")?),
+        "FloatProperty" => json!(r.read_f32_within(value_end, "FloatProperty")? as f64),
+        "DoubleProperty" => json!(r.read_f64_within(value_end, "DoubleProperty")?),
+        "EnumProperty" => json!(
+            ctx.names
+                .resolve_raw(r.read_raw_name_within(value_end, "EnumProperty")?)
+        ),
+        "NameProperty" => json!(
+            ctx.names
+                .resolve_raw(r.read_raw_name_within(value_end, "NameProperty")?)
+        ),
+        "StrProperty" => json!(r.read_fstring_within(value_end, "StrProperty")?),
+        "TextProperty" => parse_text(r, ctx, value_end, 0)?,
         "ObjectProperty" | "ClassProperty" | "WeakObjectProperty" | "ObjectPtrProperty"
         | "ClassPtrProperty" | "InterfaceProperty" => {
-            let idx = r.read_i32()?;
+            let idx = r.read_i32_within(value_end, "object reference")?;
             (ctx.resolve_object)(idx)
         }
         "LazyObjectProperty" => {
             // FLinkerSave::operator<<(FLazyObjectPtr&) writes the 16-byte
             // FUniqueObjectGuid, not a package index.
-            json!({ "lazy_object_guid": r.read_guid()?.to_hex() })
+            json!({
+                "lazy_object_guid": r.read_guid_within(value_end, "LazyObjectProperty")?.to_hex()
+            })
         }
         "DelegateProperty" => {
-            let object = r.read_i32()?;
-            let function = ctx.names.resolve_raw(r.read_raw_name()?);
+            let object = r.read_i32_within(value_end, "delegate object")?;
+            let function = ctx
+                .names
+                .resolve_raw(r.read_raw_name_within(value_end, "delegate function")?);
             json!({ "object": (ctx.resolve_object)(object), "function": function })
         }
         "MulticastInlineDelegateProperty" | "MulticastSparseDelegateProperty" => {
-            let count = r.read_i32()?;
+            let count = r.read_i32_within(value_end, "delegate invocation count")?;
             let remaining = value_end.saturating_sub(r.pos());
             validate_count(count, remaining, 12, "delegate invocation")?;
             let mut arr = Vec::with_capacity(count as usize);
             for _ in 0..count {
-                let object = r.read_i32()?;
-                let function = ctx.names.resolve_raw(r.read_raw_name()?);
+                let object = r.read_i32_within(value_end, "delegate object")?;
+                let function = ctx
+                    .names
+                    .resolve_raw(r.read_raw_name_within(value_end, "delegate function")?);
                 arr.push(json!({ "object": (ctx.resolve_object)(object), "function": function }));
             }
             Value::Array(arr)
         }
-        "SoftObjectProperty" | "SoftClassProperty" => parse_soft_object(r, ctx)?,
+        "SoftObjectProperty" | "SoftClassProperty" => parse_soft_object(r, ctx, value_end)?,
+        // FFieldPath::operator<< writes the FName path array then the owner
+        // UStruct. UE gates the owner on FFortniteMainBranchObjectVersion or
+        // FReleaseObjectVersion reaching FFieldPathOwnerSerialization; every
+        // in-scope UE5 package satisfies both, so it is always present here.
         "FieldPathProperty" => {
-            let count = r.read_i32()?;
-            if !(0..=4096).contains(&count) {
-                bail!("FieldPath length out of range: {count}");
-            }
+            let count = r.read_i32_within(value_end, "FieldPath length")?;
+            let remaining = value_end.saturating_sub(r.pos());
+            validate_count(count, remaining, RAW_NAME_BYTES, "FieldPath segment")?;
             let mut path = Vec::with_capacity(count as usize);
             for _ in 0..count {
-                path.push(ctx.names.resolve_raw(r.read_raw_name()?));
+                path.push(
+                    ctx.names
+                        .resolve_raw(r.read_raw_name_within(value_end, "FieldPath segment")?),
+                );
             }
-            let owner = r.read_i32()?;
+            let owner = r.read_i32_within(value_end, "FieldPath owner")?;
             json!({ "path": path, "owner": (ctx.resolve_object)(owner) })
         }
         "OptionalProperty" => {
@@ -86,7 +108,7 @@ pub(crate) fn parse_value(
             let inner = ty
                 .param(0)
                 .ok_or_else(|| anyhow::anyhow!("OptionalProperty missing inner type"))?;
-            if r.read_bool32()? {
+            if r.read_bool32_within(value_end, "OptionalProperty presence")? {
                 parse_value(r, inner, ctx, prefer_native, value_end)?
             } else {
                 Value::Null
@@ -150,7 +172,7 @@ fn parse_array(
     prefer_native: bool,
     value_end: u64,
 ) -> Result<Value> {
-    let count = r.read_i32()?;
+    let count = r.read_i32_within(value_end, "array element count")?;
     let remaining_in_value = value_end.saturating_sub(r.pos());
     validate_count(count, remaining_in_value, 1, "collection element")?;
     let named_inner = if inner_array_tag_is_serialized(ctx, inner) {
@@ -180,7 +202,7 @@ fn parse_collection(
     prefer_native: bool,
     value_end: u64,
 ) -> Result<Value> {
-    let count = r.read_i32()?;
+    let count = r.read_i32_within(value_end, "collection element count")?;
     let remaining_in_value = value_end.saturating_sub(r.pos());
     validate_count(count, remaining_in_value, 1, "collection element")?;
     read_elements(r, inner, ctx, prefer_native, value_end, count)
@@ -213,7 +235,7 @@ fn discard_removed_elements(
     value_end: u64,
     label: &str,
 ) -> Result<()> {
-    let num_to_remove = r.read_i32()?;
+    let num_to_remove = r.read_i32_within(value_end, "removed element count")?;
     let remaining = value_end.saturating_sub(r.pos());
     validate_count(num_to_remove, remaining, 1, label)?;
     for _ in 0..num_to_remove {
@@ -232,7 +254,7 @@ fn parse_map(
     value_end: u64,
 ) -> Result<Value> {
     discard_removed_elements(r, key_ty, ctx, prefer_native, value_end, "Map removed key")?;
-    let count = r.read_i32()?;
+    let count = r.read_i32_within(value_end, "map element count")?;
     let remaining_in_value = value_end.saturating_sub(r.pos());
     validate_count(count, remaining_in_value, 2, "Map element")?;
     let mut arr = Vec::with_capacity(count as usize);
@@ -254,7 +276,7 @@ fn parse_struct(
     value_end: u64,
 ) -> Result<Value> {
     if struct_name == "SoftObjectPath" || struct_name == "SoftClassPath" {
-        return parse_soft_object(r, ctx);
+        return parse_soft_object(r, ctx, value_end);
     }
     if let Some(v) = parse_native_struct(r, struct_name, ctx, value_end)? {
         return Ok(v);
@@ -262,18 +284,40 @@ fn parse_struct(
     if prefer_native_for_unknown && !is_tagged_fallback_struct(struct_name) {
         bail!("unknown native struct: {struct_name}");
     }
-    let nested = parse_properties(r, ctx, value_end);
-    Ok(json!({ "@struct": struct_name, "properties": entries_to_values(&nested) }))
+    // The block has to have parsed. Its failure paths seek to `value_end`, so
+    // without consulting the status the caller sees a cursor that looks like a
+    // clean decode and records an opaque payload as a decoded empty struct.
+    //
+    // Only the status, not the position: a struct whose serializer writes its own
+    // data after the tagged block ends cleanly short of `value_end`, and the tag
+    // loop already reports that gap as `property_value_incomplete` while keeping
+    // the properties that did decode. Demanding exact consumption here threw that
+    // evidence away instead.
+    let nested = parse_properties_report(r, ctx, value_end, "/properties");
+    ensure_tagged_payload_parsed(&nested.status, struct_name)?;
+    Ok(json!({ "@struct": struct_name, "properties": entries_to_values(&nested.entries) }))
 }
 
 /// Decode an `FSoftObjectPath` value. When the package carries a soft-object-path
 /// list the reference serializes as an int32 index into that list; otherwise the
 /// path is written inline (see [`read_soft_object_path`]).
-pub(crate) fn parse_soft_object(r: &mut Reader, ctx: &ParseCtx) -> Result<Value> {
+pub(crate) fn parse_soft_object(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Value> {
+    // A package whose header declared a soft-object-path list but whose table
+    // could not be read is not the same as a package without one. UE keys the
+    // same choice on the loaded list (FLinkerLoad::operator<<(FSoftObjectPath&)),
+    // but a table it cannot read is a critical load error, so the "list present
+    // yet empty" state never reaches this decision there. Decoding the 4-byte
+    // index as an inline path would silently misread every soft reference, so the
+    // value stays opaque with a reason instead.
+    if ctx.soft_object_paths_unavailable {
+        bail!(
+            "the package declares a soft object path list that could not be read, so the int32 index this value serializes as cannot be resolved"
+        );
+    }
     // When the package has a soft object path list, soft references serialize as
     // an int32 index into that list; otherwise the path is serialized inline.
     if !ctx.soft_object_paths.is_empty() {
-        let index = r.read_i32()?;
+        let index = r.read_i32_within(value_end, "soft object path index")?;
         let index = usize::try_from(index)
             .map_err(|_| anyhow::anyhow!("soft object path index out of range: {index}"))?;
         return ctx
@@ -282,7 +326,7 @@ pub(crate) fn parse_soft_object(r: &mut Reader, ctx: &ParseCtx) -> Result<Value>
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("soft object path index out of range: {index}"));
     }
-    read_soft_object_path(r, ctx.names, ctx.file_version_ue5)
+    read_soft_object_path(r, ctx.names, ctx.file_version_ue5, value_end)
 }
 
 /// Decode an inline `FSoftObjectPath` (`SerializePathWithoutFixup`). Before
@@ -293,19 +337,22 @@ pub(crate) fn read_soft_object_path(
     r: &mut Reader,
     names: &NameMap,
     file_version_ue5: i32,
+    value_end: u64,
 ) -> Result<Value> {
     let asset_path = if file_version_ue5 >= ue5::FSOFTOBJECTPATH_REMOVE_ASSET_PATH_FNAMES {
-        let package_name = names.resolve_raw(r.read_raw_name()?);
-        let asset_name = names.resolve_raw(r.read_raw_name()?);
+        let package_name =
+            names.resolve_raw(r.read_raw_name_within(value_end, "soft object package name")?);
+        let asset_name =
+            names.resolve_raw(r.read_raw_name_within(value_end, "soft object asset name")?);
         if asset_name.is_empty() || asset_name == "None" {
             package_name
         } else {
             format!("{package_name}.{asset_name}")
         }
     } else {
-        names.resolve_raw(r.read_raw_name()?)
+        names.resolve_raw(r.read_raw_name_within(value_end, "soft object path")?)
     };
-    let sub_path = r.read_fstring()?;
+    let sub_path = r.read_fstring_within(value_end, "soft object sub path")?;
     if sub_path.is_empty() {
         Ok(json!({ "asset_path": asset_path }))
     } else {
