@@ -70,7 +70,7 @@ pub struct ProjectArgs {
 
     #[arg(
         long,
-        help = "Return a partial report with exit code 0 when mapped assets fail"
+        help = "Return a partial report with exit code 0 when a mapped asset fails to read, index or parse, or when --focus matches nothing"
     )]
     pub allow_partial: bool,
 

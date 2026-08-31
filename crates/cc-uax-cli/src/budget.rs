@@ -18,13 +18,27 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-/// Headroom reserved for the `output` block once elision has begun, when the
-/// block is carrying one entry per tier and its final size is not yet known.
+/// Fallback headroom for the `output` block when it cannot be measured at all.
 ///
-/// Before any elision the block is measured exactly instead: charging this
-/// reserve up front made every budget behave as if it were 512 bytes smaller, so
-/// a report that already fit still lost detail and was labelled truncated.
+/// Before any elision the block is measured exactly instead: charging a reserve
+/// up front made every budget behave as if it were that much smaller, so a report
+/// that already fit still lost detail and was labelled truncated.
 const OUTPUT_BLOCK_RESERVE: usize = 512;
+
+/// Every label the elision tiers can report, in the order they run.
+///
+/// The reserve is measured from this list rather than guessed, so it stays an
+/// upper bound when a tier is added. A flat guess was a compact-sized number
+/// applied to pretty output too, where the same block is roughly twice as large —
+/// which is how a pretty render could exceed the budget it was given.
+const ELISION_TIER_LABELS: [&str; 6] = [
+    "property_values",
+    "pins",
+    "graph_elements",
+    "section_truncation",
+    "sections",
+    "reachability_sets",
+];
 
 /// A named elision tier: a label plus the transform it applies to the report.
 type ElisionTier = (&'static str, fn(&mut Value) -> usize);
@@ -60,11 +74,12 @@ pub(crate) fn render_within_budget<T: Serialize>(
         return render(&root, compact);
     }
 
-    // Past this point elision is happening, so the block will carry entries and a
-    // fixed reserve is both simpler and stable: recomputing the target between
-    // tiers lets a larger budget skip an early tier and then lose more to a later
-    // one, which is not monotonic in the budget.
-    let target = budget.saturating_sub(OUTPUT_BLOCK_RESERVE);
+    // Past this point elision is happening, so the block will carry entries whose
+    // final size is not yet known. Reserve the largest block any run could write:
+    // recomputing the target between tiers lets a larger budget skip an early tier
+    // and then lose more to a later one, which is not monotonic in the budget,
+    // while a reserve smaller than the block actually written overshoots the cap.
+    let target = budget.saturating_sub(worst_case_block_size(compact));
     let detail_steps: [ElisionTier; 3] = [
         ("property_values", tier_property_values),
         ("pins", tier_pins),
@@ -115,22 +130,40 @@ pub(crate) fn render_within_budget<T: Serialize>(
     render(&root, compact)
 }
 
-/// How large the report may be before the `output` block is appended.
+/// What appending the `output` block costs a real document, for a given set of
+/// elided entries.
 ///
-/// Measured from the block that will actually be written, since its size depends
-/// on how many tiers have run and on whether the render is compact or pretty.
-fn elision_target(budget: usize, compact: bool, elided: &[Value]) -> usize {
+/// Measured rather than assumed, since it depends on how many tiers reported and
+/// on whether the render is compact or pretty.
+fn output_block_size(budget: usize, compact: bool, elided: &[Value]) -> usize {
     let mut probe = json!({});
     insert_output_block(&mut probe, true, budget, budget, elided);
     let measured = measure(&probe, compact);
-    // The probe is `{ "output": … }`, so subtracting the wrapping braces leaves
-    // what appending the block costs a real document.
-    let block = if measured == usize::MAX {
+    if measured == usize::MAX {
         OUTPUT_BLOCK_RESERVE
     } else {
+        // The probe is `{ "output": … }`, so subtracting the wrapping braces
+        // leaves the cost of appending the block to a real document.
         measured.saturating_sub(2)
-    };
-    budget.saturating_sub(block)
+    }
+}
+
+/// How large the report may be before the `output` block is appended.
+fn elision_target(budget: usize, compact: bool, elided: &[Value]) -> usize {
+    budget.saturating_sub(output_block_size(budget, compact, elided))
+}
+
+/// An upper bound on the `output` block: every tier reporting, with the widest
+/// numbers any of its fields could hold.
+///
+/// Independent of the budget on purpose, so the reserve — and therefore how much
+/// detail a given budget keeps — stays monotonic in the budget.
+fn worst_case_block_size(compact: bool) -> usize {
+    let elided: Vec<Value> = ELISION_TIER_LABELS
+        .iter()
+        .map(|label| json!({ "section": label, "dropped_elements": usize::MAX }))
+        .collect();
+    output_block_size(usize::MAX, compact, &elided)
 }
 
 fn insert_output_block(
@@ -527,6 +560,52 @@ mod tests {
         assert_eq!(parsed["coverage"]["exports_total"], 2);
         assert_eq!(parsed["capabilities"][0]["kind"], "tagged_properties");
         assert_eq!(parsed["known_opaque"][0]["kind"], "capability");
+    }
+
+    /// `--max-output-bytes N` must actually cap the render at N in both modes.
+    ///
+    /// Pretty is the default, and its `output` block is roughly twice the size of
+    /// the compact one, so a reserve sized for compact let the elision path
+    /// overshoot the cap by a margin that grew with the budget. The only budgets
+    /// allowed to exceed N are those below the irreducible skeleton.
+    #[test]
+    fn budget_caps_the_render_in_both_compact_and_pretty() {
+        let report = sample_report();
+        for compact in [true, false] {
+            // The cap can only bind once the budget holds the irreducible skeleton
+            // *and* the largest `output` block that could be appended to it; below
+            // that the contract deliberately emits valid JSON over budget instead
+            // of stripping evidence.
+            let floor = render_within_budget(&report, 1, compact).unwrap().len()
+                + worst_case_block_size(compact);
+            for budget in [
+                floor,
+                floor + 1,
+                floor + 64,
+                floor + 512,
+                floor * 2,
+                floor * 3,
+                floor * 4,
+                7_000,
+                9_000,
+                10_000,
+                12_000,
+                14_000,
+                18_000,
+            ] {
+                if budget < floor {
+                    continue;
+                }
+                let text = render_within_budget(&report, budget, compact).unwrap();
+                assert!(
+                    text.len() <= budget,
+                    "compact={compact} budget={budget} rendered {} bytes ({} over)",
+                    text.len(),
+                    text.len() - budget
+                );
+                serde_json::from_str::<Value>(&text).expect("budgeted output must stay valid JSON");
+            }
+        }
     }
 
     #[test]
