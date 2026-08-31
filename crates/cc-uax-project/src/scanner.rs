@@ -6,6 +6,8 @@ use crate::{
     ProjectLayout, ProjectReachability, ProjectReachabilityRoot, RootResolution, ScanDiagnostic,
     ScanFailure, ScanFailureStage, ScanStats, package_path_from_relative, strip_asset_extension,
 };
+use rayon::prelude::*;
+
 use cc_uax_core::{
     AnalysisStatus, AssetAnalysis, AssetView, PackageView, collect_package_paths_from_value,
 };
@@ -74,45 +76,59 @@ impl ProjectScanner {
         let mut records = Vec::new();
         let mut seen_packages = HashMap::<String, PathBuf>::new();
 
+        // Three passes, because reading and analyzing a package is the only
+        // expensive part and the only one that is independent per file.
+        //
+        // 1. Plan, in order: package path, duplicate rejection, extension, stat
+        //    and cache lookup. All cheap, and all order-dependent — duplicate
+        //    rejection in particular must keep the first file in scan order.
+        // 2. Read and analyze the leftovers in parallel.
+        // 3. Fold the results back in the original order, so the index is
+        //    byte-identical to a serial scan.
+        let mut steps = Vec::with_capacity(files.len());
         for file in files {
             let package_path =
                 match package_path_from_relative(&file.relative_path, &file.package_root) {
                     Ok(package_path) => package_path,
                     Err(error) => {
-                        failures.push(ScanFailure::new(
+                        steps.push(ScanStep::settled(SettledStep::failure(ScanFailure::new(
                             &file.path,
                             ScanFailureStage::Index,
                             error.to_string(),
-                        ));
+                        ))));
                         continue;
                     }
                 };
             let duplicate_key = package_path.to_ascii_lowercase();
             if let Some(previous) = seen_packages.get(&duplicate_key) {
-                failures.push(ScanFailure::new(
+                steps.push(ScanStep::settled(SettledStep::failure(ScanFailure::new(
                     &file.path,
                     ScanFailureStage::Index,
                     format!(
                         "duplicate package path {package_path}; first seen at {}",
                         previous.display()
                     ),
-                ));
+                ))));
                 continue;
             }
             seen_packages.insert(duplicate_key, file.path.clone());
 
             let Some(asset_kind) = asset_kind(&file.path) else {
-                failures.push(ScanFailure::new(
+                steps.push(ScanStep::settled(SettledStep::failure(ScanFailure::new(
                     &file.path,
                     ScanFailureStage::Index,
                     "mapped file has no supported asset extension",
-                ));
+                ))));
                 continue;
             };
             let (mtime, size) = match file_stamp(&file.path) {
                 Ok(stamp) => stamp,
                 Err(error) => {
-                    failures.push(ScanFailure::new(&file.path, ScanFailureStage::Read, error));
+                    steps.push(ScanStep::settled(SettledStep::failure(ScanFailure::new(
+                        &file.path,
+                        ScanFailureStage::Read,
+                        error,
+                    ))));
                     continue;
                 }
             };
@@ -121,85 +137,125 @@ impl ProjectScanner {
                 .as_ref()
                 .and_then(|cache| cache.lookup(&cache_key, mtime, size))
                 .cloned();
-            match cached {
-                Some(entry) => {
-                    // Counted per branch, not up front: a fresh `Ok` entry with no
-                    // stored analysis still needs a full re-read, and calling that
-                    // a hit made warm-cache stats claim work that did not happen.
-                    match entry.parse {
-                        CachedParse::Ok => {
-                            if let Some(analysis) = entry.analysis.clone() {
-                                cache_hits += 1;
-                                records.push(AssetRecord {
-                                    package_path,
-                                    mount_root: file.package_root,
-                                    file_path: file.path,
-                                    relative_path: file.relative_path.clone(),
-                                    asset_kind,
-                                    ownership: classify_ownership(&file.relative_path),
-                                    forward_references: entry.references.iter().cloned().collect(),
-                                    value_references: analysis.value_only_packages(),
-                                    owned_sublevels: entry
-                                        .owned_sublevels
-                                        .iter()
-                                        .cloned()
-                                        .collect(),
-                                    analysis,
-                                });
-                                current_cache.insert(cache_key, entry);
-                                continue;
-                            }
-                        }
-                        CachedParse::Unsupported => {
-                            cache_hits += 1;
-                            records.push(AssetRecord {
+            if let Some(entry) = cached {
+                // Counted per branch, not up front: a fresh `Ok` entry with no
+                // stored analysis still needs a full re-read, and calling that
+                // a hit made warm-cache stats claim work that did not happen.
+                match entry.parse {
+                    CachedParse::Ok => {
+                        if let Some(analysis) = entry.analysis.clone() {
+                            let record = AssetRecord {
                                 package_path,
                                 mount_root: file.package_root,
                                 file_path: file.path,
                                 relative_path: file.relative_path.clone(),
                                 asset_kind,
                                 ownership: classify_ownership(&file.relative_path),
-                                forward_references: BTreeSet::new(),
-                                value_references: BTreeSet::new(),
-                                owned_sublevels: BTreeSet::new(),
-                                analysis: AssetAnalysisSummary::unsupported(
-                                    entry
-                                        .reason
-                                        .clone()
-                                        .unwrap_or_else(unsupported_package_fallback_reason),
-                                ),
-                            });
-                            current_cache.insert(cache_key, entry);
+                                forward_references: entry.references.iter().cloned().collect(),
+                                value_references: analysis.value_only_packages(),
+                                owned_sublevels: entry.owned_sublevels.iter().cloned().collect(),
+                                analysis,
+                            };
+                            steps.push(ScanStep::settled(
+                                SettledStep::record(record)
+                                    .with_cache(cache_key, entry)
+                                    .with_cache_hit(),
+                            ));
                             continue;
                         }
-                        CachedParse::Failed => {
-                            cache_hits += 1;
-                            cached_parse_failures += 1;
-                            failures.push(ScanFailure::new(
-                                &file.path,
-                                ScanFailureStage::Parse,
+                    }
+                    CachedParse::Unsupported => {
+                        let record = AssetRecord {
+                            package_path,
+                            mount_root: file.package_root,
+                            file_path: file.path,
+                            relative_path: file.relative_path.clone(),
+                            asset_kind,
+                            ownership: classify_ownership(&file.relative_path),
+                            forward_references: BTreeSet::new(),
+                            value_references: BTreeSet::new(),
+                            owned_sublevels: BTreeSet::new(),
+                            analysis: AssetAnalysisSummary::unsupported(
                                 entry
                                     .reason
                                     .clone()
-                                    .unwrap_or_else(|| "cached package parse failure".to_string()),
-                            ));
-                            current_cache.insert(cache_key, entry);
-                            continue;
-                        }
+                                    .unwrap_or_else(unsupported_package_fallback_reason),
+                            ),
+                        };
+                        steps.push(ScanStep::settled(
+                            SettledStep::record(record)
+                                .with_cache(cache_key, entry)
+                                .with_cache_hit(),
+                        ));
+                        continue;
                     }
-                    // Fresh entry that carried no analysis: re-read it, and count
-                    // the miss, since that is the work actually done.
-                    if cache.is_some() {
-                        cache_misses += 1;
+                    CachedParse::Failed => {
+                        let failure = ScanFailure::new(
+                            &file.path,
+                            ScanFailureStage::Parse,
+                            entry
+                                .reason
+                                .clone()
+                                .unwrap_or_else(|| "cached package parse failure".to_string()),
+                        );
+                        steps.push(ScanStep::settled(
+                            SettledStep::failure(failure)
+                                .with_cache(cache_key, entry)
+                                .with_cache_hit()
+                                .with_cached_parse_failure(),
+                        ));
+                        continue;
                     }
                 }
-                None => {
-                    if cache.is_some() {
-                        cache_misses += 1;
+                // Fresh entry that carried no analysis: fall through to re-read it.
+            }
+            if cache.is_some() {
+                cache_misses += 1;
+            }
+            steps.push(ScanStep::Pending(PendingRead {
+                file,
+                package_path,
+                asset_kind,
+                mtime,
+                size,
+                cache_key,
+            }));
+        }
+
+        let parsed_assets = read_pending_assets(&steps);
+
+        let caching = cache.is_some();
+        let mut parsed_assets = parsed_assets.into_iter();
+        for step in steps {
+            let pending = match step {
+                ScanStep::Settled(settled) => {
+                    if settled.cache_hit {
+                        cache_hits += 1;
                     }
+                    if settled.cached_parse_failure {
+                        cached_parse_failures += 1;
+                    }
+                    if let Some((key, entry)) = settled.cache {
+                        current_cache.insert(key, entry);
+                    }
+                    records.extend(settled.record);
+                    failures.extend(settled.failure);
+                    continue;
                 }
+                ScanStep::Pending(pending) => pending,
             };
-            let parsed = match read_asset(&file.path) {
+            let parsed = parsed_assets
+                .next()
+                .expect("one parse result per pending read");
+            let PendingRead {
+                file,
+                package_path,
+                asset_kind,
+                mtime,
+                size,
+                cache_key,
+            } = pending;
+            let parsed = match parsed {
                 Ok(parsed) => parsed,
                 Err(ParseFileError::Read(message)) => {
                     failures.push(ScanFailure::new(
@@ -215,7 +271,7 @@ impl ProjectScanner {
                         ScanFailureStage::Parse,
                         &message,
                     ));
-                    if cache.is_some() {
+                    if caching {
                         current_cache.insert(
                             cache_key,
                             CacheEntry {
@@ -235,7 +291,7 @@ impl ProjectScanner {
                 // `unsupported` evidence about a real asset, not a scan failure,
                 // so it is indexed instead of aborting a strict scan.
                 Err(ParseFileError::Unsupported(message)) => {
-                    if cache.is_some() {
+                    if caching {
                         current_cache.insert(
                             cache_key.clone(),
                             CacheEntry {
@@ -264,7 +320,7 @@ impl ProjectScanner {
                     continue;
                 }
             };
-            if cache.is_some() {
+            if caching {
                 current_cache.insert(
                     cache_key,
                     CacheEntry {
@@ -317,13 +373,100 @@ impl ProjectScanner {
         index.stats.cache_hits = cache_hits;
         index.stats.cache_misses = cache_misses;
         index.stats.cached_parse_failures = cached_parse_failures;
-        if options.mode == ScanMode::Strict && (fatal_cache_error || !index.failures.is_empty()) {
+        let hard_failure = index.failures.iter().any(|failure| failure.stage.is_hard());
+        if options.mode == ScanMode::Strict && (fatal_cache_error || hard_failure) {
             return Err(ProjectScanError {
                 index: Box::new(index),
             });
         }
         Ok(index)
     }
+}
+
+/// A mapped file after the ordered, cheap part of the scan has run.
+enum ScanStep {
+    Settled(Box<SettledStep>),
+    Pending(PendingRead),
+}
+
+impl ScanStep {
+    fn settled(settled: SettledStep) -> Self {
+        Self::Settled(Box::new(settled))
+    }
+}
+
+/// A file resolved without reading it: rejected during indexing, or served whole
+/// from the cache.
+#[derive(Default)]
+struct SettledStep {
+    record: Option<AssetRecord>,
+    failure: Option<ScanFailure>,
+    cache: Option<(String, CacheEntry)>,
+    cache_hit: bool,
+    cached_parse_failure: bool,
+}
+
+impl SettledStep {
+    fn record(record: AssetRecord) -> Self {
+        Self {
+            record: Some(record),
+            ..Self::default()
+        }
+    }
+
+    fn failure(failure: ScanFailure) -> Self {
+        Self {
+            failure: Some(failure),
+            ..Self::default()
+        }
+    }
+
+    fn with_cache(mut self, key: String, entry: CacheEntry) -> Self {
+        self.cache = Some((key, entry));
+        self
+    }
+
+    fn with_cache_hit(mut self) -> Self {
+        self.cache_hit = true;
+        self
+    }
+
+    fn with_cached_parse_failure(mut self) -> Self {
+        self.cached_parse_failure = true;
+        self
+    }
+}
+
+/// A file that still has to be read, parsed and analyzed.
+struct PendingRead {
+    file: MountedFile,
+    package_path: String,
+    asset_kind: AssetKind,
+    mtime: i64,
+    size: i64,
+    cache_key: String,
+}
+
+/// Reads and analyzes every pending file, in parallel, returning one result per
+/// pending step in step order.
+///
+/// This is the whole cost of a cold scan — on a 10,000-asset project the serial
+/// version spent minutes here — and each file is independent: it is read from
+/// disk, parsed and analyzed with no shared state. Ordering is restored by the
+/// caller, which folds these results back in step order, so the index does not
+/// depend on how the work was scheduled.
+fn read_pending_assets(steps: &[ScanStep]) -> Vec<Result<ParsedAsset, ParseFileError>> {
+    let pending: Vec<&PendingRead> = steps
+        .iter()
+        .filter_map(|step| match step {
+            ScanStep::Pending(pending) => Some(pending),
+            ScanStep::Settled(_) => None,
+        })
+        .collect();
+    pending
+        .into_par_iter()
+        .map(|pending| read_asset(&pending.file.path))
+        .collect()
 }
 
 #[derive(Debug)]
@@ -1088,15 +1231,26 @@ fn classify_ownership(relative_path: &str) -> AssetOwnership {
     }
 }
 
+/// Attaches each World Partition external package to the asset that owns it: the
+/// longest scanned path in the same mount that is a path-prefix of the external's
+/// own path.
+///
+/// Found by shortening the external's path one segment at a time and looking each
+/// candidate up, rather than by scanning every record in the mount. The scan
+/// comparison was quadratic — a map with a few thousand `__ExternalActors__`
+/// entries made it tens of millions of prefix comparisons after the parse work
+/// was already done.
 fn resolve_external_ownership(records: &mut [AssetRecord], failures: &mut Vec<ScanFailure>) {
-    let mut owner_index: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    // Keyed by mount and lower-cased path so lookup is case-insensitive the way
+    // the prefix comparison was. Later records overwrite earlier ones, which is
+    // the tie-break the previous `max_by_key` had for equal-length matches.
+    let mut owner_index: HashMap<(String, String), String> = HashMap::new();
     for record in records.iter() {
-        let key = record.mount_root.to_ascii_lowercase();
-        let relative = strip_asset_extension(&record.relative_path).to_string();
-        owner_index
-            .entry(key)
-            .or_default()
-            .push((relative, record.package_path.clone()));
+        let key = (
+            record.mount_root.to_ascii_lowercase(),
+            strip_asset_extension(&record.relative_path).to_ascii_lowercase(),
+        );
+        owner_index.insert(key, record.package_path.clone());
     }
 
     for record in records.iter_mut().filter(|record| record.is_external()) {
@@ -1106,17 +1260,21 @@ fn resolve_external_ownership(records: &mut [AssetRecord], failures: &mut Vec<Sc
             .map(|(_, tail)| tail)
             .unwrap_or_default();
         let mount_key = record.mount_root.to_ascii_lowercase();
-        let candidates = owner_index.get(&mount_key);
-        let owner = candidates.and_then(|candidates| {
-            candidates
-                .iter()
-                .filter(|(relative, package)| {
-                    !package.eq_ignore_ascii_case(&record.package_path)
-                        && path_has_prefix(tail, relative)
-                })
-                .max_by_key(|(relative, _)| relative.len())
-                .map(|(_, package)| package.clone())
-        });
+        let mut owner = None;
+        let mut candidate = strip_asset_extension(tail);
+        loop {
+            if let Some(package) =
+                owner_index.get(&(mount_key.clone(), candidate.to_ascii_lowercase()))
+                && !package.eq_ignore_ascii_case(&record.package_path)
+            {
+                owner = Some(package.clone());
+                break;
+            }
+            let Some((shorter, _)) = candidate.rsplit_once('/') else {
+                break;
+            };
+            candidate = shorter;
+        }
         let AssetOwnership::External { owner_package, .. } = &mut record.ownership else {
             continue;
         };
@@ -1165,6 +1323,12 @@ fn attach_sublevel_ownership(
     assets: &BTreeMap<String, AssetRecord>,
     closures: &mut BTreeMap<String, BTreeSet<String>>,
 ) {
+    // Built once: the case-insensitive fallback used to re-scan every scanned
+    // package for each sub-level reference.
+    let by_lowercase: HashMap<String, &String> = assets
+        .keys()
+        .map(|package| (package.to_ascii_lowercase(), package))
+        .collect();
     let nested = closures.clone();
     for record in assets.values() {
         if record.owned_sublevels.is_empty() {
@@ -1177,7 +1341,7 @@ fn attach_sublevel_ownership(
         let entry = closures.entry(root.clone()).or_default();
         entry.insert(root);
         for sublevel in &record.owned_sublevels {
-            let Some(resolved) = resolve_scanned_package(sublevel, assets) else {
+            let Some(resolved) = resolve_scanned_package(sublevel, assets, &by_lowercase) else {
                 continue;
             };
             entry.insert(resolved.clone());
@@ -1191,21 +1355,14 @@ fn attach_sublevel_ownership(
 fn resolve_scanned_package(
     package: &str,
     assets: &BTreeMap<String, AssetRecord>,
+    by_lowercase: &HashMap<String, &String>,
 ) -> Option<String> {
     if assets.contains_key(package) {
         return Some(package.to_string());
     }
-    assets
-        .keys()
-        .find(|key| key.eq_ignore_ascii_case(package))
-        .cloned()
-}
-
-fn path_has_prefix(path: &str, prefix: &str) -> bool {
-    path.eq_ignore_ascii_case(prefix)
-        || path.get(prefix.len()..).is_some_and(|tail| {
-            tail.starts_with('/') && path[..prefix.len()].eq_ignore_ascii_case(prefix)
-        })
+    by_lowercase
+        .get(&package.to_ascii_lowercase())
+        .map(|package| (*package).clone())
 }
 
 fn normalized_path(path: &Path) -> String {

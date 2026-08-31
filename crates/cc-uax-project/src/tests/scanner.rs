@@ -219,6 +219,49 @@ fn world_partition_ownership_is_isolated_by_mount_root() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// An external actor whose owning map is gone must not fail an otherwise
+/// complete scan.
+///
+/// Every file still reads, parses and indexes; what is missing is the map that
+/// once owned the actor, which happens whenever a World Partition map is renamed
+/// or deleted. The gap is reported as an `Ownership` failure and counted in
+/// `unowned_external_packages`, but strict mode reserves a non-zero exit for
+/// stages that mean the scan could not do its job.
+#[test]
+fn an_orphaned_external_actor_is_reported_without_failing_strict_mode() {
+    let root = temp_project("world_partition_orphan");
+    let content = root.join("Content");
+    // No Maps/Gone.umap: the owning map was deleted.
+    let actor = content.join("__ExternalActors__/Maps/Gone/0/AA/Actor.uasset");
+    std::fs::create_dir_all(actor.parent().unwrap()).unwrap();
+    std::fs::write(&actor, minimal_package()).unwrap();
+
+    let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
+    let index = scanner
+        .scan(scan_options(ScanMode::Strict))
+        .expect("an unresolved owner must not fail the scan");
+
+    assert_eq!(index.stats.indexed, 1);
+    assert_eq!(index.stats.failed, 0);
+    assert_eq!(index.stats.unowned_external_packages, 1);
+    assert!(
+        index
+            .failures
+            .iter()
+            .any(|failure| failure.stage == ScanFailureStage::Ownership),
+        "the gap must still be reported: {:#?}",
+        index.failures
+    );
+    assert!(
+        !index.failures.iter().any(|failure| failure.stage.is_hard()),
+        "nothing here should be a hard failure: {:#?}",
+        index.failures
+    );
+    assert_scan_accounting(&index);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn resolves_world_partition_actor_and_object_ownership_closure() {
     let root = temp_project("world_partition");

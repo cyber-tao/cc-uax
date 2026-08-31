@@ -135,6 +135,27 @@ pub enum ScanFailureStage {
     Focus,
 }
 
+impl ScanFailureStage {
+    /// Whether a failure at this stage means the scan did not do what it was
+    /// asked to do, and so must fail the process in strict mode.
+    ///
+    /// The split exists because "any failure is fatal" made two recoverable
+    /// conditions abort an otherwise complete scan. A `Discovery` error means one
+    /// directory entry could not be read; an `Ownership` error means a World
+    /// Partition external package outlived the map that owned it — common after a
+    /// map is renamed or deleted, and already reported as
+    /// `stats.unowned_external_packages`. In both cases every asset the scan could
+    /// reach is still indexed, so the evidence is reported and the run succeeds.
+    pub fn is_hard(self) -> bool {
+        match self {
+            Self::Mount | Self::Read | Self::Parse | Self::Index | Self::Cache | Self::Focus => {
+                true
+            }
+            Self::Config | Self::Discovery | Self::Ownership => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanDiagnosticSeverity {

@@ -8,6 +8,10 @@ pub struct ProjectLayout {
     project_root: PathBuf,
     content_root: PathBuf,
     project_file: Option<PathBuf>,
+    /// The sibling `.uproject` files that made the descriptor ambiguous, when
+    /// more than one was found. Empty otherwise.
+    #[serde(default)]
+    ambiguous_project_files: Vec<PathBuf>,
 }
 
 /// A plugin content root as Unreal would mount it.
@@ -80,6 +84,7 @@ impl ProjectLayout {
             project_root,
             content_root,
             project_file: Some(project_file),
+            ambiguous_project_files: Vec::new(),
         })
     }
 
@@ -135,6 +140,11 @@ impl ProjectLayout {
         self.project_file.as_deref()
     }
 
+    /// The sibling `.uproject` files that left the descriptor unresolved, if any.
+    pub fn ambiguous_project_files(&self) -> &[PathBuf] {
+        &self.ambiguous_project_files
+    }
+
     /// Plugin content roots under `Plugins/`, mounted the way Unreal mounts them.
     ///
     /// Without these, plugin packages are invisible to inventory, adjacency,
@@ -177,21 +187,27 @@ impl ProjectLayout {
             .filter(|path| path.is_file() && has_extension(path, "uproject"))
             .collect::<Vec<_>>();
         project_files.sort_by_key(|path| normalized_path(path));
+        // Which Content tree to scan is not in doubt — the caller named it, or it
+        // is the one Content directory under this root. Only which descriptor
+        // supplies entry points and cook roots is, and platform variants sharing
+        // one Content tree (`Game.uproject`, `Game_Steam.uproject`, ...) are a
+        // normal layout. Failing the whole scan over that made those projects
+        // unscannable by their Content path, so the ambiguity is reported as
+        // missing entry-point evidence instead. Naming a `.uproject` explicitly
+        // still resolves it.
         if project_files.len() > 1 {
-            return Err(ProjectLayoutError::Invalid(format!(
-                "multiple .uproject files found under {}: {}",
-                project_root.display(),
-                project_files
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )));
+            return Ok(Self {
+                project_root,
+                content_root,
+                project_file: None,
+                ambiguous_project_files: project_files,
+            });
         }
         Ok(Self {
             project_root,
             content_root,
             project_file: project_files.pop(),
+            ambiguous_project_files: Vec::new(),
         })
     }
 }

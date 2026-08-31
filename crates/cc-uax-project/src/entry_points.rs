@@ -74,6 +74,26 @@ pub(crate) fn load_project_entry_points(
     let mut cook = CookRoots::default();
     let config_root = layout.project_root().join("Config");
 
+    // The Config tree is still read — platform variants share it — but with no
+    // single descriptor the scan cannot say which target's settings apply, so the
+    // gap is stated rather than left implicit in a thinner root set.
+    let ambiguous = layout.ambiguous_project_files();
+    if !ambiguous.is_empty() {
+        let names = ambiguous
+            .iter()
+            .filter_map(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(", ");
+        diagnostics.push(config_warning(
+            layout.project_root(),
+            format!(
+                "{} .uproject files share this Content tree ({names}); entry points are read from the shared Config only. Pass one .uproject explicitly to resolve its target-specific settings.",
+                ambiguous.len()
+            ),
+        ));
+    }
+
     for name in ["DefaultEngine.ini", "DefaultGame.ini"] {
         let path = config_root.join(name);
         let source = format!("Config/{name}");

@@ -10,6 +10,46 @@ fn scan(root: &std::path::Path) -> crate::ProjectIndex {
         .unwrap()
 }
 
+/// A Content tree shared by several platform `.uproject` files must scan, with
+/// the unresolved descriptor reported rather than aborting the run.
+#[test]
+fn a_content_tree_shared_by_several_uprojects_still_scans() {
+    let root = temp_project("entry_points_ambiguous");
+    for name in ["Game.uproject", "Game_Steam.uproject", "Game_Pico.uproject"] {
+        std::fs::write(root.join(name), b"{}").unwrap();
+    }
+    std::fs::create_dir_all(root.join("Config")).unwrap();
+    std::fs::write(
+        root.join("Config/DefaultEngine.ini"),
+        "[/Script/EngineSettings.GameMapsSettings]\nGameDefaultMap=/Game/Maps/Boot.Boot\n",
+    )
+    .unwrap();
+
+    let index = scan(&root);
+
+    // The shared Config is still read, so entry points are not lost outright.
+    assert_eq!(
+        index
+            .entry_points
+            .reference("GameDefaultMap")
+            .unwrap()
+            .package_path,
+        "/Game/Maps/Boot"
+    );
+    let diagnostic = index
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.stage == ScanFailureStage::Config)
+        .unwrap_or_else(|| panic!("expected a config diagnostic: {:#?}", index.diagnostics));
+    assert!(
+        diagnostic.message.contains("Game_Steam.uproject"),
+        "the diagnostic must name the candidates: {}",
+        diagnostic.message
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn parses_crlf_section_last_wins_and_generated_class_suffixes() {
     let root = temp_project("entry_points_crlf");

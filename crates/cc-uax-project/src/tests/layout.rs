@@ -24,20 +24,39 @@ fn discovers_project_root_content_and_project_file() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// Platform variants sharing one Content tree must stay scannable.
+///
+/// Which tree to scan is unambiguous; only which descriptor supplies entry points
+/// is not. Discovery therefore records the ambiguity instead of failing, and
+/// naming one `.uproject` still resolves it.
 #[test]
-fn rejects_ambiguous_project_files() {
+fn ambiguous_project_files_leave_the_descriptor_unresolved_not_the_scan_failed() {
     let root = temp_project("ambiguous");
     std::fs::write(root.join("One.uproject"), b"{}").unwrap();
     std::fs::write(root.join("Two.uproject"), b"{}").unwrap();
 
-    let error = ProjectLayout::discover(&root).unwrap_err();
-    assert!(error.to_string().contains("multiple .uproject"));
+    for layout in [
+        ProjectLayout::discover(&root).unwrap(),
+        ProjectLayout::discover(root.join("Content")).unwrap(),
+    ] {
+        assert!(
+            layout.project_file().is_none(),
+            "no single descriptor can be chosen"
+        );
+        assert_eq!(
+            layout.ambiguous_project_files().len(),
+            2,
+            "both candidates must be retained so the scan can name them"
+        );
+        assert!(layout.content_root().ends_with("Content"));
+    }
 
     let from_file = ProjectLayout::discover(root.join("One.uproject")).unwrap();
     assert_eq!(
         from_file.project_file().unwrap(),
         std::fs::canonicalize(root.join("One.uproject")).unwrap()
     );
+    assert!(from_file.ambiguous_project_files().is_empty());
 
     std::fs::remove_dir_all(root).unwrap();
 }
