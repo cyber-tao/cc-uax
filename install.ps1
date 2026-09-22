@@ -90,18 +90,59 @@ function Confirm-RemoveOther([string[]]$Others, [string]$Consequence) {
     return ($ans -match '^[yY]([eE][sS])?$')
 }
 
-# Run the sibling installer in a child process -- `exit` in that script
+# Drop the cargo/dev binary without a checkout. `irm | iex` has no sibling
+# dev-install.ps1; the other copy is still just cc-uax.exe under ~/.cargo/bin
+# (or a copied dev build). cargo uninstall covers `cargo install`; a plain
+# copy is removed as a file. A CC_UAX_DEV_BIN override is a sandbox -- never
+# cargo-uninstall the caller's real ~/.cargo/bin in that case.
+function Remove-OtherCargoCopy {
+    $dir = Get-DefaultCargoBinDir
+    $removed = $false
+    $realCargo = if ($env:CARGO_HOME) { Join-Path $env:CARGO_HOME 'bin' } else { Join-Path $env:USERPROFILE '.cargo\bin' }
+    if (-not $env:CC_UAX_DEV_BIN -and (Test-SamePath $dir $realCargo) -and (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & cargo uninstall cc-uax-cli *> $null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok 'cargo uninstall cc-uax-cli'
+                $removed = $true
+            }
+        } catch {
+            # A missing cargo package is not a failure; the file delete below is the fallback.
+        } finally {
+            $ErrorActionPreference = $prev
+        }
+    }
+    try {
+        foreach ($name in @('cc-uax.exe', 'cc-uax')) {
+            $p = Join-Path $dir $name
+            if (Test-Path -LiteralPath $p) {
+                Remove-Item -LiteralPath $p -Force
+                Write-Ok "removed $p"
+                $removed = $true
+            }
+        }
+    } catch {
+        Write-WarnMsg $_.Exception.Message
+        return $false
+    }
+    return $removed
+}
+
+# Prefer the sibling dev installer when this script is a checkout: it also
+# drops skill junctions. A one-line install has no sibling, so remove the
+# binary directly. Run a sibling in a child process -- `exit` in that script
 # would otherwise terminate this one. Clear this script's INSTALL_DIR so
 # the child uninstalls ~/.cargo/bin, not the release destination.
 function Invoke-DevUninstall {
-    if (-not $PSScriptRoot) {
-        Write-WarnMsg 'cannot invoke dev-install.ps1 (not running from a checkout); leaving the other copy in place.'
-        return $false
+    $script = $null
+    if ($PSScriptRoot) {
+        $candidate = Join-Path $PSScriptRoot 'dev-install.ps1'
+        if (Test-Path -LiteralPath $candidate) { $script = $candidate }
     }
-    $script = Join-Path $PSScriptRoot 'dev-install.ps1'
-    if (-not (Test-Path -LiteralPath $script)) {
-        Write-WarnMsg 'cannot invoke dev-install.ps1 (not next to this script); leaving the other copy in place.'
-        return $false
+    if (-not $script) {
+        return (Remove-OtherCargoCopy)
     }
     $saved = @{
         INSTALL_DIR   = $env:INSTALL_DIR
@@ -215,12 +256,12 @@ if ($otherBins.Count -gt 0) {
     $consequence = @"
 This installer prepends $InstallDir to User PATH, so the new release
 binary will run instead of the cargo/dev copy. Keeping both leaves an
-unused binary in ~/.cargo/bin. Uninstalling the cargo/dev copy runs
-dev-install.ps1 -Uninstall; this installer then refreshes skills.
+unused binary in ~/.cargo/bin. Uninstalling removes that binary;
+this installer then refreshes skills.
 "@
     if (Confirm-RemoveOther $otherBins $consequence) {
         if (-not (Invoke-DevUninstall)) {
-            Write-WarnMsg 'keeping both -- could not run dev-install.ps1 -Uninstall.'
+            Write-WarnMsg 'keeping both -- could not remove the other copy.'
         }
     } else {
         Write-WarnMsg 'keeping both -- the release copy will win on PATH after install.'

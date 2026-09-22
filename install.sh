@@ -128,20 +128,49 @@ confirm_remove_other() {
     esac
 }
 
+# Drop the cargo/dev binary without a checkout. `curl | bash` has no sibling
+# dev-install.sh; the other copy is still just `cc-uax` under ~/.cargo/bin.
+# cargo uninstall covers `cargo install`; a plain copy is removed as a file.
+# CC_UAX_DEV_BIN is a sandbox -- never cargo-uninstall the real ~/.cargo/bin.
+remove_other_cargo_bin() {
+    local dir real_cargo removed=0 name
+    dir="$(other_cargo_bin)"
+    if [ -n "${CARGO_HOME:-}" ]; then
+        real_cargo="${CARGO_HOME}/bin"
+    else
+        real_cargo="${HOME}/.cargo/bin"
+    fi
+    if [ -z "${CC_UAX_DEV_BIN:-}" ] && [ "$dir" = "$real_cargo" ] && command -v cargo >/dev/null 2>&1; then
+        if cargo uninstall cc-uax-cli >/dev/null 2>&1; then
+            ok "cargo uninstall cc-uax-cli"
+            removed=1
+        fi
+    fi
+    for name in cc-uax cc-uax.exe; do
+        if [ -e "${dir}/${name}" ] || [ -L "${dir}/${name}" ]; then
+            rm -f "${dir}/${name}" || return 1
+            ok "removed ${dir}/${name}"
+            removed=1
+        fi
+    done
+    [ "$removed" = "1" ]
+}
+
 invoke_dev_uninstall() {
     local script="${SCRIPT_DIR}/dev-install.sh"
-    if [ ! -f "$script" ]; then
-        warn "cannot invoke dev-install.sh (not running from a checkout); leaving the other copy in place."
-        return 1
+    if [ -f "$script" ]; then
+        # Sibling dev installer also drops skill links. A one-line install has none.
+        if [ -n "${CC_UAX_DEV_BIN:-}" ]; then
+            env -u REPLACE_OTHER -u KEEP_BOTH -u UNINSTALL \
+                INSTALL_DIR="$CC_UAX_DEV_BIN" \
+                bash "$script" uninstall
+        else
+            env -u REPLACE_OTHER -u KEEP_BOTH -u UNINSTALL -u INSTALL_DIR \
+                bash "$script" uninstall
+        fi
+        return
     fi
-    if [ -n "${CC_UAX_DEV_BIN:-}" ]; then
-        env -u REPLACE_OTHER -u KEEP_BOTH -u UNINSTALL \
-            INSTALL_DIR="$CC_UAX_DEV_BIN" \
-            bash "$script" uninstall
-    else
-        env -u REPLACE_OTHER -u KEEP_BOTH -u UNINSTALL -u INSTALL_DIR \
-            bash "$script" uninstall
-    fi
+    remove_other_cargo_bin
 }
 
 show_path_winner() {
@@ -197,10 +226,10 @@ if [ -n "$other_list" ]; then
         printf "    %s\n" "$p"
     done
     printf "Depending on PATH order, that cargo/dev copy may still run instead of\n"
-    printf "%s/cc-uax. Uninstalling it runs dev-install.sh uninstall;\n" "$INSTALL_DIR"
+    printf "%s/cc-uax. Uninstalling removes that binary;\n" "$INSTALL_DIR"
     printf "this installer then refreshes skills.\n"
     if confirm_remove_other; then
-        invoke_dev_uninstall || warn "keeping both -- could not run dev-install.sh uninstall."
+        invoke_dev_uninstall || warn "keeping both -- could not remove the other copy."
     else
         warn "keeping both -- check PATH if \`cc-uax --version\` is not the release you just installed."
     fi
