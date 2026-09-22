@@ -407,6 +407,27 @@ impl Package {
                 );
             }
 
+            // A `*Node` export owned by a `*Graph` export that no node rule
+            // recognised would have its pin stream filed as class payload and the
+            // graph reported complete without it. Say so instead.
+            if options.pins
+                && !is_node
+                && !is_rigvm_link
+                && serial_window.is_some()
+                && looks_like_unrecognized_graph_node(self, exp, &class_full)
+            {
+                diagnostics.push(
+                    Diagnostic::warning(
+                        "graph_node_class_unrecognized",
+                        format!("{export_path}/pins"),
+                        format!(
+                            "{class_full} is owned by a graph and named like a node but is not a known UEdGraphNode class; its pins were not decoded"
+                        ),
+                    )
+                    .with_context(json!({ "class": class_full })),
+                );
+            }
+
             if options.pins
                 && let Some(window) = serial_window
             {
@@ -649,6 +670,39 @@ fn consume_object_guid_tail(reader: &mut Reader, end: u64, export: &mut DecodedE
             let _ = reader.seek(start);
         }
     }
+}
+
+/// An export whose class name ends in `Node`, whose outer is an export of a class
+/// named `*Graph`, and which no node rule claimed. `UEdGraph` owns its nodes
+/// directly, so this is the shape a missing entry in the node-class list takes.
+/// Sub-graphs (`*Graph` inside a graph) and members that are not nodes (MetaSound
+/// graph members, comment metadata) do not end in `Node` and are not flagged.
+fn looks_like_unrecognized_graph_node(
+    package: &Package,
+    exp: &crate::object::ObjectExport,
+    class_full: &str,
+) -> bool {
+    let simple = class_full.rsplit(['.', '/']).next().unwrap_or(class_full);
+    if !simple.ends_with("Node") {
+        return false;
+    }
+    // PCG and RigVM model nodes live under a `*Graph` too, but they are model
+    // objects read by their own adapters, not `UEdGraphNode`s with a pin stream.
+    if is_pcg_model_object_class(class_full) || is_rigvm_model_object_class(class_full) {
+        return false;
+    }
+    let outer = exp.outer_index.0;
+    if outer <= 0 {
+        return false;
+    }
+    let Some(outer_export) = package.exports.get((outer - 1) as usize) else {
+        return false;
+    };
+    let outer_class = package.resolve_full_name(outer_export.class_index.0);
+    outer_class
+        .rsplit(['.', '/'])
+        .next()
+        .is_some_and(|name| name.ends_with("Graph"))
 }
 
 /// Classes whose `Serialize` never calls `Super::Serialize`, so their export

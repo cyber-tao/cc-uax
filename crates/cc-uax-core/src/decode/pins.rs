@@ -190,8 +190,57 @@ pub(super) fn decode_pins_for_export(
     }
 }
 
+/// `UEdGraphNode` subclasses whose names none of the patterns below match.
+///
+/// Enumerated from UE5.8 source (`class U* : public UEdGraphNode` and every
+/// class deriving from those, 429 in all); these 26 are the ones a name test
+/// cannot find. They matter: `AnimStateNode`/`AnimStateTransitionNode` *are* an
+/// Animation Blueprint's state machine, and treating their pin stream as class
+/// payload reported the machine as `complete` with no nodes and no edges.
+const GRAPH_NODE_CLASSES: &[&str] = &[
+    // AnimGraph state machines (UAnimStateNodeBase : UEdGraphNode).
+    "AnimStateNodeBase",
+    "AnimStateNode",
+    "AnimStateAliasNode",
+    "AnimStateConduitNode",
+    "AnimStateEntryNode",
+    "AnimStateTransitionNode",
+    // Scene State machines (USceneStateMachineNode : UEdGraphNode; the two
+    // transition nodes derive from UK2Node and UK2Node_EditablePinBase).
+    "SceneStateMachineNode",
+    "SceneStateMachineConduitNode",
+    "SceneStateMachineEntryNode",
+    "SceneStateMachineExitNode",
+    "SceneStateMachineStateNode",
+    "SceneStateMachineTaskNode",
+    "SceneStateMachineTransitionNode",
+    "SceneStateTransitionParametersNode",
+    "SceneStateTransitionResultNode",
+    // MetaSound (UMetasoundEditorGraphNode : UEdGraphNode); the pattern below
+    // needs `GraphNode` and these carry `GraphExternalNode`/`GraphMemberNode`.
+    "MetasoundEditorGraphExternalNode",
+    "MetasoundEditorGraphMemberNode",
+    "MetasoundEditorGraphInputNode",
+    "MetasoundEditorGraphOutputNode",
+    "MetasoundEditorGraphVariableNode",
+    "MetasoundEditorGraphCommentNode",
+    // Comment nodes derived from UEdGraphNode_Comment under other names.
+    "ObjectTreeGraphCommentNode",
+    "RigMapperCommentNode",
+    // Dataflow, Data Link, Dataprep, Mutable, PCG.
+    "DataflowEdNode",
+    "DataLinkEdNode",
+    "DataprepGraphActionStepNode",
+    "DataprepGraphRecipeNode",
+    "CustomizableObjectNode",
+    "PCGEditorGraphGetUserParameter",
+];
+
 pub(crate) fn is_graph_node_class(class_full: &str) -> bool {
     let simple = class_full.rsplit(['.', '/']).next().unwrap_or(class_full);
+    if GRAPH_NODE_CLASSES.contains(&simple) {
+        return true;
+    }
     // A plugin that defines Blueprint nodes prefixes them with its module name
     // (`GameplayTagsK2Node_SwitchGameplayTag`, `MVVMK2Node_LoadSoftTexture`), and
     // 25 of UE5.8's 239 `K2Node_` classes are named that way. Anchoring on the
@@ -216,6 +265,9 @@ pub(crate) fn is_graph_node_class(class_full: &str) -> bool {
     simple.contains("GraphNode")
 }
 
+/// Every `UK2Node_EditablePinBase` descendant in UE5.8 (enumerated from source):
+/// each inherits `Serialize`'s `TArray<FUserPinInfo>` after the pins, so a
+/// subclass missing here leaves at least the 4-byte count as a trailing region.
 const EDITABLE_PIN_CLASSES: &[&str] = &[
     "K2Node_EditablePinBase",
     "K2Node_FunctionTerminator",
@@ -226,16 +278,22 @@ const EDITABLE_PIN_CLASSES: &[&str] = &[
     "K2Node_Tunnel",
     "K2Node_MacroInstance",
     "K2Node_Composite",
+    "K2Node_MathExpression",
+    "K2Node_SnapContainer",
     "K2Node_ComponentBoundEvent",
     "K2Node_GeneratedBoundEvent",
     "K2Node_ActorBoundEvent",
     "K2Node_InputActionEvent",
     "K2Node_InputAxisEvent",
     "K2Node_InputAxisKeyEvent",
+    "K2Node_InputDebugKeyEvent",
     "K2Node_InputTouchEvent",
     "K2Node_InputKeyEvent",
+    "K2Node_InputVectorAxisEvent",
     "K2Node_EnhancedInputActionEvent",
     "K2Node_GameplayCueEvent",
+    "K2Node_WidgetAnimationEvent",
+    "SceneStateTransitionParametersNode",
 ];
 
 pub(crate) fn is_editable_pin_class(class_full: &str) -> bool {
@@ -251,7 +309,11 @@ pub(crate) fn consume_known_node_tail(
     path: &str,
 ) -> Result<(), Diagnostic> {
     let simple = class_full.rsplit(['.', '/']).next().unwrap_or(class_full);
-    if simple == "K2Node_DynamicCast"
+    // `UK2Node_DynamicCast::Serialize` writes `PureState` after the pins; the
+    // override is inherited, so `UK2Node_ClassDynamicCast` (K2Node_ClassDynamicCast.h)
+    // carries the byte too. Matching the base class alone left one trailing byte on
+    // every class cast node.
+    if matches!(simple, "K2Node_DynamicCast" | "K2Node_ClassDynamicCast")
         && ctx.serialization.fortnite_main_version >= custom::DYNAMIC_CAST_NODES_USE_PURE_STATE_ENUM
     {
         let offset = reader.pos();

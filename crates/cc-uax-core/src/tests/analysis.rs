@@ -313,6 +313,61 @@ fn rigvm_link_exports_are_not_run_through_the_tagged_property_decoder() {
     assert_eq!(analysis.status, AnalysisStatus::Complete);
 }
 
+/// A `*Node` export owned by a `*Graph` export that no node rule claims is the
+/// shape a missing entry in the node-class list takes. It must be reported, not
+/// filed silently as class payload with the graph still `complete`.
+#[test]
+fn an_unrecognized_node_under_a_graph_is_reported() {
+    let base = Package::parse(&build_minimal_package_with_version(1009, 5, 3)).unwrap();
+    let mut data = Vec::new();
+    push_raw_name(&mut data, 3); // graph export: empty tagged block
+    let graph_len = data.len() as i64;
+    let node_start = data.len();
+    push_raw_name(&mut data, 3); // node export: empty tagged block
+    data.extend_from_slice(&[0u8; 4]); // and whatever else it wrote
+
+    let mut node = test_export(6, (data.len() - node_start) as i64, 0, 0);
+    node.serial_offset = node_start as i64;
+    node.class_index = PackageIndex(-3);
+    node.outer_index = PackageIndex(1);
+    let mut graph = test_export(5, graph_len, 0, 0);
+    graph.class_index = PackageIndex(-2);
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "/Script/SomePlugin".into(), // 0
+                "SomeGraph".into(),          // 1
+                "SomeNode".into(),           // 2
+                "None".into(),               // 3
+                "Class".into(),              // 4
+                "Graph_0".into(),            // 5
+                "Node_0".into(),             // 6
+                "Package".into(),            // 7
+            ],
+        },
+        imports: vec![
+            test_import(7, 0, 0, 0),
+            test_import(4, 1, -1, 0),
+            test_import(4, 2, -1, 0),
+        ],
+        exports: vec![graph, node],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Logic);
+    let diagnostic = analysis
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "graph_node_class_unrecognized")
+        .unwrap_or_else(|| panic!("{:#?}", analysis.diagnostics));
+    assert_eq!(diagnostic.path, "/exports/2/pins");
+    assert_eq!(analysis.status, AnalysisStatus::Partial);
+}
+
 /// Byte conservation is computed from the spans each decoder actually claimed.
 /// When the tag loop stops early and the pin decoder starts at the declared
 /// property end, the bytes in between were consumed by nobody: they are reported

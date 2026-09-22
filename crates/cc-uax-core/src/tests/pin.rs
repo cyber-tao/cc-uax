@@ -108,6 +108,37 @@ fn module_prefixed_k2_nodes_are_graph_nodes() {
     assert!(!is_graph_node_class("/Script/Engine.MyK2NodeRegistry"));
 }
 
+// UAnimStateNodeBase derives from UEdGraphNode without any of the name markers,
+// and its subclasses are the whole of an Animation Blueprint's state machine.
+// Treating their pin stream as class payload reported the machine as complete
+// with no nodes and no edges; the same holds for the other UE5.8 node classes a
+// name test cannot find.
+#[test]
+fn edgraphnode_subclasses_without_a_name_marker_are_listed_explicitly() {
+    use crate::decode::pins::is_graph_node_class;
+    for class in [
+        "/Script/AnimGraph.AnimStateNode",
+        "/Script/AnimGraph.AnimStateTransitionNode",
+        "/Script/AnimGraph.AnimStateEntryNode",
+        "/Script/AnimGraph.AnimStateConduitNode",
+        "/Script/AnimGraph.AnimStateAliasNode",
+        "/Script/SceneStateBlueprintEditor.SceneStateMachineStateNode",
+        "/Script/SceneStateBlueprintEditor.SceneStateTransitionResultNode",
+        "/Script/MetasoundEditor.MetasoundEditorGraphExternalNode",
+        "/Script/MetasoundEditor.MetasoundEditorGraphMemberNode",
+        "/Script/DataflowEditor.DataflowEdNode",
+    ] {
+        assert!(is_graph_node_class(class), "{class} is a UEdGraphNode");
+    }
+    // Graph members that are not nodes stay out.
+    assert!(!is_graph_node_class(
+        "/Script/MetasoundEditor.MetasoundEditorGraphInput"
+    ));
+    assert!(!is_graph_node_class(
+        "/Script/AnimGraph.AnimationStateMachineGraph"
+    ));
+}
+
 #[test]
 fn node_pin_array_decodes() {
     let names = NameMap {
@@ -827,6 +858,10 @@ fn editable_pin_descendants_include_bound_events_and_macro_nodes() {
         "/Script/BlueprintGraph.K2Node_MacroInstance",
         "/Script/BlueprintGraph.K2Node_Composite",
         "/Script/EnhancedInputEditor.K2Node_EnhancedInputActionEvent",
+        // UK2Node_Event descendants outside BlueprintGraph inherit the
+        // FUserPinInfo array too (K2Node_WidgetAnimationEvent.h).
+        "/Script/UMGEditor.K2Node_WidgetAnimationEvent",
+        "/Script/BlueprintGraph.K2Node_MathExpression",
     ] {
         assert!(
             is_editable_pin_class(class),
@@ -857,16 +892,34 @@ fn dynamic_cast_pure_state_tail_is_version_gated_and_bounded() {
         nested_diagnostics: Default::default(),
     };
     let bytes = [2u8];
+    // UK2Node_ClassDynamicCast inherits the Serialize override, so it carries
+    // the same trailing byte (K2Node_ClassDynamicCast.h).
+    for class in [
+        "/Script/BlueprintGraph.K2Node_DynamicCast",
+        "/Script/BlueprintGraph.K2Node_ClassDynamicCast",
+    ] {
+        let mut reader = Reader::new(&bytes);
+        consume_known_node_tail(
+            &mut reader,
+            bytes.len() as u64,
+            &context,
+            class,
+            "/exports/0/pins",
+        )
+        .expect("PureState should consume exactly one byte");
+        assert_eq!(reader.pos(), 1, "{class}");
+    }
+    // A sibling cast-like node without the override leaves the byte alone.
     let mut reader = Reader::new(&bytes);
     consume_known_node_tail(
         &mut reader,
         bytes.len() as u64,
         &context,
-        "/Script/BlueprintGraph.K2Node_DynamicCast",
+        "/Script/BlueprintGraph.K2Node_CastByteToEnum",
         "/exports/0/pins",
     )
-    .expect("PureState should consume exactly one byte");
-    assert_eq!(reader.pos(), 1);
+    .unwrap();
+    assert_eq!(reader.pos(), 0);
 
     let mut truncated = Reader::new(&[]);
     let diagnostic = consume_known_node_tail(
