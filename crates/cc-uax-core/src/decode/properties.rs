@@ -14,7 +14,7 @@ pub(super) fn decode_properties_for_export(
     reader: &mut Reader,
     ctx: &ParseCtx,
     window: ExportSerialWindow,
-    export_i: usize,
+    export_path: &str,
     class_full: &str,
     capture_properties: bool,
     diagnostics: &mut Vec<Diagnostic>,
@@ -33,7 +33,7 @@ pub(super) fn decode_properties_for_export(
         return;
     }
 
-    let prop_path = format!("/exports/{export_i}/properties");
+    let prop_path = format!("{export_path}/properties");
     let parsed = parse_object_properties_report(reader, ctx, end, &prop_path);
     let PropertyParse {
         entries,

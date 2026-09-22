@@ -47,13 +47,13 @@ pub(crate) fn is_rigvm_model_object_class(class_full: &str) -> bool {
 pub(super) fn decode_rigvm_link_for_export(
     reader: &mut Reader<'_>,
     window: ExportSerialWindow,
-    export_i: usize,
+    export_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
     export: &mut DecodedExport,
 ) {
     let start = window.property_start;
     let end = window.serial_end;
-    let path = format!("/exports/{export_i}/rigvm_link");
+    let path = format!("{export_path}/rigvm_link");
     if end < start {
         diagnostics.push(
             Diagnostic::error(
@@ -104,7 +104,7 @@ pub(super) fn decode_rigvm_link_for_export(
         Err(err) => {
             record_link_decode_failure(
                 start,
-                export_i,
+                export_path,
                 format!("failed to decode source pin path: {err:#}"),
                 diagnostics,
             );
@@ -116,7 +116,7 @@ pub(super) fn decode_rigvm_link_for_export(
         Err(err) => {
             record_link_decode_failure(
                 start,
-                export_i,
+                export_path,
                 format!("failed to decode target pin path: {err:#}"),
                 diagnostics,
             );
@@ -152,7 +152,7 @@ pub(super) fn decode_rigvm_link_for_export(
 
 fn record_link_decode_failure(
     start: u64,
-    export_i: usize,
+    export_path: &str,
     message: String,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -160,7 +160,7 @@ fn record_link_decode_failure(
     diagnostics.push(
         Diagnostic::error(
             "rigvm_link_decode_failed",
-            format!("/exports/{export_i}/rigvm_link"),
+            format!("{export_path}/rigvm_link"),
             message,
         )
         .with_offset(start),
@@ -207,7 +207,7 @@ mod tests {
                 has_declared_property_range: false,
                 writes_tagged_block: false,
             },
-            0,
+            "/exports/1",
             &mut diagnostics,
             &mut export,
         );
@@ -242,7 +242,7 @@ mod tests {
                 has_declared_property_range: false,
                 writes_tagged_block: false,
             },
-            0,
+            "/exports/1",
             &mut diagnostics,
             &mut export,
         );

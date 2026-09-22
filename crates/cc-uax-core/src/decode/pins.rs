@@ -19,7 +19,7 @@ pub(super) fn decode_pins_for_export(
     pin_ctx: &PinSerCtx,
     has_script: bool,
     window: ExportSerialWindow,
-    export_i: usize,
+    export_path: &str,
     class_full: &str,
     diagnostics: &mut Vec<Diagnostic>,
     export: &mut DecodedExport,
@@ -27,7 +27,7 @@ pub(super) fn decode_pins_for_export(
     if !is_graph_node_class(class_full) {
         return;
     }
-    let path = format!("/exports/{export_i}/pins");
+    let path = format!("{export_path}/pins");
     let pin_start = if has_script {
         window.property_end
     } else {
@@ -177,7 +177,7 @@ pub(super) fn decode_pins_for_export(
         diagnostics.push(
             Diagnostic::warning(
                 "pins_unparsed_bytes",
-                format!("/exports/{export_i}/pins"),
+                format!("{export_path}/pins"),
                 format!("pin parser could not decode {pin_bytes} byte(s)"),
             )
             .with_context(json!({

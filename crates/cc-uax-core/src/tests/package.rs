@@ -605,7 +605,9 @@ fn invalid_script_window_is_structured() {
     let analysis = analyze_package(&package, &[0; 4], AssetView::Properties);
     let diagnostic = diagnostic_with_code(&analysis.diagnostics, "serial_window_invalid");
     assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
-    assert_eq!(diagnostic.path, "/exports/0");
+    // Paths key on the package index, the same number `exports[].index` carries.
+    assert_eq!(diagnostic.path, "/exports/1");
+    assert_eq!(analysis.exports[0].index, 1);
     assert!(diagnostic.message.contains("outside serial size"));
     assert!(analysis.exports[0].properties.is_empty());
 }
@@ -1005,8 +1007,13 @@ fn non_tagged_property_payload_is_reported_as_status() {
     // consumer nothing about which export is missing or why.
     assert_eq!(analysis.status, AnalysisStatus::Partial);
     let diagnostic = diagnostic_with_code(&analysis.diagnostics, "export_payload_not_tagged");
-    assert_eq!(diagnostic.path, "/exports/0/properties");
+    assert_eq!(diagnostic.path, "/exports/1/properties");
     assert_eq!(diagnostic.offset, Some(0));
+    // The opaque region for the same bytes must point at the same export.
+    assert_eq!(
+        analysis.known_opaque[0].path,
+        "/exports/1/post_property_tail"
+    );
     assert_eq!(analysis.coverage.property_exports_total, 1);
     assert_eq!(analysis.coverage.property_exports_complete, 0);
     assert_eq!(analysis.coverage.property_exports_not_tagged, 1);

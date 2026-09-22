@@ -111,10 +111,22 @@ impl DecodedExport {
 
 #[derive(Debug, Clone)]
 pub(crate) struct DecodedExportIdentity {
+    /// The export's `FPackageIndex` (1-based), the same number `exports[].index`
+    /// carries in the report.
     pub(crate) index: i32,
     pub(crate) name: String,
     pub(crate) class: String,
     pub(crate) is_asset: bool,
+}
+
+impl DecodedExportIdentity {
+    /// The report path prefix for everything about this export. Diagnostics,
+    /// opaque regions and `exports[].index` all key on the package index, so a
+    /// consumer can join them; a second convention here (an array position)
+    /// pointed the same byte range at two different exports.
+    pub(crate) fn path(&self) -> String {
+        format!("/exports/{}", self.index)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -257,6 +269,7 @@ impl Package {
                 unclassified_bytes: 0,
             };
 
+            let export_path = export.identity.path();
             let serial_window = match export_serial_window(
                 exp,
                 has_script,
@@ -266,7 +279,7 @@ impl Package {
                 Ok(w) => w,
                 Err(err) => {
                     diagnostics.push(
-                        Diagnostic::error("serial_window_invalid", format!("/exports/{i}"), err)
+                        Diagnostic::error("serial_window_invalid", export_path.clone(), err)
                             .with_context(json!({
                                 "export_index": pkg_index,
                                 "serial_offset": exp.serial_offset,
@@ -287,7 +300,13 @@ impl Package {
                 && (options.properties || options.pins)
                 && let Some(window) = serial_window
             {
-                decode_rigvm_link_for_export(&mut reader, window, i, diagnostics, &mut export);
+                decode_rigvm_link_for_export(
+                    &mut reader,
+                    window,
+                    &export_path,
+                    diagnostics,
+                    &mut export,
+                );
             } else if let Some(window) = serial_window
                 && !window.writes_tagged_block
             {
@@ -300,7 +319,7 @@ impl Package {
                     window,
                     &class_full,
                     &script_ctx,
-                    i,
+                    &export_path,
                     diagnostics,
                     &mut export,
                 );
@@ -313,7 +332,7 @@ impl Package {
                     &mut reader,
                     &ctx,
                     window,
-                    i,
+                    &export_path,
                     &class_full,
                     options.properties || capture_adapter_properties,
                     diagnostics,
@@ -331,7 +350,7 @@ impl Package {
                     &pin_ctx,
                     has_script,
                     window,
-                    i,
+                    &export_path,
                     &class_full,
                     diagnostics,
                     &mut export,
@@ -344,7 +363,7 @@ impl Package {
                     window,
                     &class_full,
                     &script_ctx,
-                    i,
+                    &export_path,
                     diagnostics,
                     &mut export,
                 );
@@ -365,7 +384,7 @@ fn account_export_tail(
     window: ExportSerialWindow,
     class_full: &str,
     script_ctx: &ScriptStructContext<'_>,
-    export_index: usize,
+    export_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
     export: &mut DecodedExport,
 ) {
@@ -420,7 +439,7 @@ fn account_export_tail(
                     if let Some(failure) = &code.failure {
                         diagnostics.push(Diagnostic::warning(
                             "script_bytecode_undecoded",
-                            format!("/exports/{export_index}"),
+                            export_path.to_string(),
                             format!(
                                 "compiled script bytecode could not be disassembled: {failure}"
                             ),
@@ -431,7 +450,7 @@ fn account_export_tail(
                         // wrong even though it consumed the right file bytes.
                         diagnostics.push(Diagnostic::warning(
                             "script_bytecode_size_mismatch",
-                            format!("/exports/{export_index}"),
+                            export_path.to_string(),
                             format!(
                                 "disassembly accounted for {} in-memory byte(s) but the struct declares {}",
                                 code.summary.as_ref().map_or(0, |summary| summary.icode),
@@ -445,7 +464,7 @@ fn account_export_tail(
             Err(error) => {
                 diagnostics.push(Diagnostic::warning(
                     "script_struct_undecoded",
-                    format!("/exports/{export_index}"),
+                    export_path.to_string(),
                     format!("{class_full} script serializer could not be decoded: {error:#}"),
                 ));
             }

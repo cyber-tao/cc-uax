@@ -3,7 +3,7 @@ use crate::PackageView;
 use crate::analysis::analyze_package;
 use crate::model::{
     ASSET_ANALYSIS_SCHEMA_VERSION, AnalysisStatus, AssetAnalysis, AssetView, CapabilityKind,
-    DecodedValue, DiagnosticSeverity, KnownOpaqueKind, ParseCoverage,
+    DecodedValue, DiagnosticSeverity, KnownOpaqueKind, ParseCoverage, PropertyDecodeStatus,
 };
 use crate::name::NameMap;
 use crate::object::{ObjectImport, PackageIndex};
@@ -97,6 +97,78 @@ fn classified_opaque_tail_is_recorded_without_forcing_partial() {
         analysis.exports[0].properties[0].value,
         DecodedValue::Integer(42)
     ));
+}
+
+/// Diagnostics and opaque regions both name the export they belong to in their
+/// `path`, and `exports[].index` is what a consumer joins them on. The decoders
+/// once used the array position while the opaque collector used the package
+/// index, so the same byte range pointed at two different exports; a two-export
+/// package where the interesting one is second is the cheapest way to notice.
+#[test]
+fn every_export_path_resolves_to_the_export_it_describes() {
+    let base = Package::parse(&build_minimal_package_with_version(1009, 5, 3)).unwrap();
+    // Export 1: a clean legacy IntProperty block. Export 2: not a tagged block at
+    // all, so it produces both a diagnostic and an opaque region.
+    let mut data = Vec::new();
+    push_legacy_tag_header(&mut data, 1, 2, 4);
+    push_legacy_tag_tail(&mut data, 1009);
+    push_i32(&mut data, 42);
+    push_raw_name(&mut data, 3);
+    let first_len = data.len() as i64;
+    let second_start = data.len();
+    data.extend_from_slice(&[0xF0, 0x0F, 0xAA, 0x55, 0x01]);
+
+    let mut second = test_export(0, (data.len() - second_start) as i64, 0, 0);
+    second.serial_offset = second_start as i64;
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "Obj".into(),
+                "Value".into(),
+                "IntProperty".into(),
+                "None".into(),
+            ],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, first_len, 0, 0), second],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert_eq!(analysis.exports[1].index, 2);
+    let export_number = |path: &str| -> i32 {
+        path.strip_prefix("/exports/")
+            .and_then(|rest| rest.split('/').next())
+            .and_then(|number| number.parse().ok())
+            .unwrap_or_else(|| panic!("path {path} does not name an export"))
+    };
+    let diagnostic_exports: Vec<i32> = analysis
+        .diagnostics
+        .iter()
+        .map(|diagnostic| export_number(&diagnostic.path))
+        .collect();
+    let opaque_exports: Vec<i32> = analysis
+        .known_opaque
+        .iter()
+        .map(|region| export_number(&region.path))
+        .collect();
+    assert_eq!(diagnostic_exports, [2], "{:#?}", analysis.diagnostics);
+    assert_eq!(opaque_exports, [2], "{:#?}", analysis.known_opaque);
+    for number in diagnostic_exports.into_iter().chain(opaque_exports) {
+        let export = analysis
+            .exports
+            .iter()
+            .find(|export| export.index == number)
+            .unwrap_or_else(|| panic!("no export with index {number}"));
+        assert_eq!(
+            export.property_status,
+            Some(PropertyDecodeStatus::NonTaggedPayload)
+        );
+    }
 }
 
 #[test]
