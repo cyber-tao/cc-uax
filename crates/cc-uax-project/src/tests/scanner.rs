@@ -648,8 +648,18 @@ fn cache_identity_change_discards_stored_analysis() {
 fn unavailable_system_cache_warns_without_failing_strict_scan() {
     let root = temp_project("system_cache_warning");
     std::fs::write(root.join("Content/A.uasset"), minimal_package()).unwrap();
+    // Redirect the System policy into the temp tree: this test blocks the cache
+    // directory with a file, which must never happen under the developer's real
+    // profile. The variable is process-wide, and the only other test that
+    // resolves the System policy asserts nothing about where it lands.
+    let cache_root = root.join("cache-root");
+    // SAFETY: tests in this binary run in one process; no other test reads this
+    // variable for a value-dependent assertion, and the OS environment is only
+    // ever redirected to a directory owned by this test.
+    unsafe { std::env::set_var(crate::cache::CACHE_ROOT_ENV, &cache_root) };
     let layout = ProjectLayout::discover(&root).unwrap();
     let cache_file = CachePathPolicy::System.resolve(&layout).unwrap().unwrap();
+    assert!(cache_file.starts_with(&cache_root));
     let cache_directory = cache_file.parent().unwrap();
     std::fs::create_dir_all(cache_directory.parent().unwrap()).unwrap();
     std::fs::write(cache_directory, b"blocks cache directory creation").unwrap();

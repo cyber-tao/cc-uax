@@ -70,4 +70,4 @@ Project analysis is **strict by default**. A mapped asset that cannot be read, i
 
 `--allow-partial` downgrades a hard scan failure to a zero exit. It does not rewrite `status`, `failures`, or coverage. Exit `1` means no report could be produced at all.
 
-Project cache data defaults to the operating system's cache directory, never the analyzed project. Use `--cache-file` for an explicit location or `--no-cache` for a cache-free run.
+Project cache data defaults to the operating system's cache directory, never the analyzed project. Use `--cache-file` for an explicit location or `--no-cache` for a cache-free run. Setting `CC_UAX_CACHE_ROOT` redirects the default location's root (for CI or sandboxed runs); the per-project subdirectory beneath it is unchanged.

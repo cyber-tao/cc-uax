@@ -11,7 +11,6 @@ use rayon::prelude::*;
 use cc_uax_core::{
     AnalysisStatus, AssetAnalysis, AssetView, PackageView, collect_package_paths_from_value,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -19,15 +18,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
+// Run options are inputs, never part of a report or a cache row, so they carry
+// no serde derives; adding one back would quietly widen the JSON contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScanMode {
     #[default]
     Strict,
     AllowPartial,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ScanOptions {
     pub mode: ScanMode,
     pub cache: CachePathPolicy,
@@ -40,7 +40,10 @@ pub struct ProjectScanner {
 }
 
 impl ProjectScanner {
-    pub fn new(layout: ProjectLayout) -> Self {
+    /// A scanner over the default mount set; production callers resolve their
+    /// mounts explicitly through [`Self::with_mounts`].
+    #[cfg(test)]
+    pub(crate) fn new(layout: ProjectLayout) -> Self {
         let mounts = MountTable::default_for(&layout);
         Self { layout, mounts }
     }

@@ -50,11 +50,17 @@ pub struct ProjectEntryPoints {
 }
 
 impl ProjectEntryPoints {
-    pub fn reference(&self, key: &str) -> Option<&ConfigReference> {
+    #[cfg(test)]
+    pub(crate) fn reference(&self, key: &str) -> Option<&ConfigReference> {
         lookup_reference(&self.defaults, key)
     }
 
-    pub fn reference_for_platform(&self, platform: &str, key: &str) -> Option<&ConfigReference> {
+    #[cfg(test)]
+    pub(crate) fn reference_for_platform(
+        &self,
+        platform: &str,
+        key: &str,
+    ) -> Option<&ConfigReference> {
         if let Some((_, references)) = self
             .platforms
             .iter()
@@ -515,6 +521,7 @@ fn is_valid_package_path(value: &str) -> bool {
             .all(|component| !component.is_empty() && component != "." && component != "..")
 }
 
+#[cfg(test)]
 fn lookup_reference<'a>(
     references: &'a BTreeMap<String, ConfigReference>,
     key: &str,

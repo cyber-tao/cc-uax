@@ -88,7 +88,7 @@ impl ProjectLayout {
         })
     }
 
-    pub fn from_project_root(path: impl AsRef<Path>) -> Result<Self, ProjectLayoutError> {
+    pub(crate) fn from_project_root(path: impl AsRef<Path>) -> Result<Self, ProjectLayoutError> {
         let project_root = canonicalize(path.as_ref(), "project root")?;
         if !project_root.is_dir() {
             return Err(ProjectLayoutError::Invalid(format!(
@@ -105,7 +105,7 @@ impl ProjectLayout {
         Self::finish(project_root, content_root)
     }
 
-    pub fn from_content_root(path: impl AsRef<Path>) -> Result<Self, ProjectLayoutError> {
+    pub(crate) fn from_content_root(path: impl AsRef<Path>) -> Result<Self, ProjectLayoutError> {
         let content_root = canonicalize(path.as_ref(), "Content root")?;
         if !content_root.is_dir() {
             return Err(ProjectLayoutError::Invalid(format!(

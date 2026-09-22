@@ -134,11 +134,10 @@ pub(super) fn collect_property_bag_gaps(exports: &[AssetExport]) -> Vec<KnownOpa
     let mut seen_paths = BTreeSet::new();
     for export in exports {
         for property in &export.properties {
-            let path = format!(
-                "/exports/{}/properties/{}",
-                export.index,
-                json_pointer_segment(&property.name)
-            );
+            // Same shape as every other property path in the report (diagnostics,
+            // `known_opaque` from the value walk): raw names, no pointer escaping,
+            // so the same gap dedupes against the same region.
+            let path = format!("/exports/{}/properties/{}", export.index, property.name);
             if property.type_name.contains(PROPERTY_BAG_TYPE)
                 && has_serialized_payload(&property.value)
             {
@@ -171,7 +170,7 @@ fn collect_nested_property_bags(
                 && type_name.contains(PROPERTY_BAG_TYPE)
                 && has_serialized_payload(value)
             {
-                let path = format!("{parent_path}/{}", json_pointer_segment(name));
+                let path = format!("{parent_path}/{name}");
                 push_property_bag_gap(&path, value, seen_paths, opaque);
                 return;
             }
@@ -230,9 +229,4 @@ fn serialized_payload_range(value: &DecodedValue) -> Option<OpaqueByteRange> {
             .unwrap_or_default()
             .to_owned(),
     })
-}
-
-/// Escapes a property name for use as one RFC 6901 JSON-pointer segment.
-fn json_pointer_segment(name: &str) -> String {
-    name.replace('~', "~0").replace('/', "~1")
 }

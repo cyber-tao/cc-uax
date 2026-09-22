@@ -1,6 +1,5 @@
 use crate::{AssetAnalysisSummary, ProjectLayout};
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fmt;
@@ -34,8 +33,7 @@ fn cache_identity() -> String {
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(tag = "policy", content = "path", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum CachePathPolicy {
     Disabled,
     #[default]
@@ -332,7 +330,15 @@ impl ProjectCache {
     }
 }
 
+/// Overrides the operating-system cache root for the `System` policy. Meant for
+/// CI and tests, which must not write under the user's real profile; the
+/// per-project subdirectory and file name are unchanged beneath it.
+pub const CACHE_ROOT_ENV: &str = "CC_UAX_CACHE_ROOT";
+
 fn system_cache_root() -> Result<PathBuf, CachePathError> {
+    if let Some(root) = env_path(CACHE_ROOT_ENV) {
+        return Ok(root);
+    }
     if cfg!(target_os = "windows") {
         return env_path("LOCALAPPDATA").ok_or_else(|| unavailable("LOCALAPPDATA"));
     }

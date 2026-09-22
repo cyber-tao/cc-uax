@@ -70,4 +70,4 @@ Configured root 同时来自 `GameMapsSettings` 和 `ProjectPackagingSettings` �
 
 `--allow-partial` 只是把 hard scan failure 降级为零退出，不会改写 `status`、`failures` 或 coverage。退出码 `1` 表示根本没能产出报告。
 
-项目缓存默认放在操作系统缓存目录，不写入被分析项目。使用 `--cache-file` 指定位置，或用 `--no-cache` 完全禁用缓存。
+项目缓存默认放在操作系统缓存目录，不写入被分析项目。使用 `--cache-file` 指定位置，或用 `--no-cache` 完全禁用缓存。设置环境变量 `CC_UAX_CACHE_ROOT` 可以改写默认位置的根目录（适用于 CI 或沙箱运行），其下按项目划分的子目录保持不变。

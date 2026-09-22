@@ -161,7 +161,6 @@ impl ScanFailureStage {
 pub enum ScanDiagnosticSeverity {
     Info,
     Warning,
-    Error,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

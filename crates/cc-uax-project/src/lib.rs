@@ -22,7 +22,7 @@ pub use analysis_summary::{
     KnownOpaqueGroup, KnownOpaqueSummary, PcgGraphSummary, ProjectAnalysisSummary,
     ProjectCapabilityCount, ProjectReferenceEvidence, RigVmGraphSummary, StateTreeGraphSummary,
 };
-pub use cache::{CachePathError, CachePathPolicy};
+pub use cache::{CACHE_ROOT_ENV, CachePathError, CachePathPolicy};
 pub use entry_points::{ConfigReference, ProjectEntryPoints};
 pub use layout::{PluginContentRoot, ProjectLayout, ProjectLayoutError};
 pub use model::{

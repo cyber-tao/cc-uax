@@ -69,7 +69,10 @@ impl MountTable {
         Self { mounts }
     }
 
-    pub fn parse(layout: &ProjectLayout, value: &str) -> Result<Self, MountTableError> {
+    /// Parses a comma-separated `PACKAGE=DIR,?` list; the CLI resolves repeated
+    /// `--mount` values through [`Self::resolve`] instead.
+    #[cfg(test)]
+    pub(crate) fn parse(layout: &ProjectLayout, value: &str) -> Result<Self, MountTableError> {
         let mut mounts = Vec::new();
         for raw in value.split(',') {
             if let Some(spec) = parse_mount_token(layout, raw)? {
