@@ -1,6 +1,7 @@
 use super::common::*;
 use crate::analysis::analyze_package;
 use crate::name::NameMap;
+use crate::object::ObjectExport;
 use crate::reader::Reader;
 use crate::{
     AnalysisDiagnostic, AnalysisStatus, AssetView, CapabilityKind, DiagnosticSeverity,
@@ -609,11 +610,20 @@ fn invalid_script_window_is_structured() {
     assert!(analysis.exports[0].properties.is_empty());
 }
 
+/// From `SCRIPT_SERIALIZATION_OFFSET` on, `UObject::SerializeScriptProperties` is
+/// what records the export's script range, and a written block is never shorter
+/// than its 8-byte `None` terminator. A zero range is therefore UE saying the
+/// class never called `Super::Serialize` (`SavePackage2.cpp` asserts it, and
+/// `LinkerLoad.cpp` uses it to skip tagged serialization for `URigHierarchy`).
+/// Parsing such a payload as tags fabricated properties out of whatever bytes
+/// happened to resolve to a name; the whole payload is class data instead.
 #[test]
-fn zero_script_window_uses_serial_range() {
+fn zero_script_window_means_the_class_wrote_no_tagged_block() {
     let base = Package::parse(&build_minimal_package()).unwrap();
+    // Bytes that would read as a plausible control byte and a tag if anyone
+    // tried: a real URigHierarchy payload opens with its own version int.
     let mut data = Vec::new();
-    data.push(0);
+    push_i32(&mut data, 0x26);
     push_raw_name(&mut data, 1);
     push_raw_name(&mut data, 2);
     push_i32(&mut data, 0);
@@ -640,11 +650,150 @@ fn zero_script_window_uses_serial_range() {
         soft_package_reference_error: None,
     };
 
-    let analysis = analyze_package(&package, &data, AssetView::Properties);
-    let properties = &analysis.exports[0].properties;
-    assert_eq!(properties.len(), 1);
-    assert_eq!(properties[0].name, "Value");
-    assert_eq!(properties[0].value.as_i64(), Some(42));
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert_native_only_payload(&analysis, data.len() as u64);
+}
+
+/// Before `SCRIPT_SERIALIZATION_OFFSET` the export table cannot say whether a
+/// tagged block exists, so the classes UE source shows never write one are known
+/// by name. `URigHierarchy::Serialize` (ControlRig, 5.0–5.8) is `Save`/`Load` only.
+#[test]
+fn known_native_only_class_is_classified_without_a_script_range() {
+    let base = Package::parse(&build_minimal_package_with_version(1007, 5, 1)).unwrap();
+    let mut data = Vec::new();
+    // Opens with what a legacy tag loop would accept as a name and a type.
+    push_raw_name(&mut data, 3);
+    push_raw_name(&mut data, 4);
+    data.extend_from_slice(&[0x00, 0x00, 0x00, 0x40, 0xFF, 0xFF, 0xFF, 0xBF]);
+
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "/Script/ControlRig".to_string(),
+                "RigHierarchy".to_string(),
+                "Package".to_string(),
+                "AimItem".to_string(),
+                "DefaultGizmoLibrary".to_string(),
+                "Class".to_string(),
+            ],
+        },
+        imports: vec![
+            test_import(2, 0, 0, 0),  // -1: Package /Script/ControlRig
+            test_import(5, 1, -1, 0), // -2: Class RigHierarchy, outer -1
+        ],
+        exports: vec![ObjectExport {
+            class_index: crate::object::PackageIndex(-2),
+            ..test_export(0, data.len() as i64, 0, 0)
+        }],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert_eq!(analysis.exports[0].class, "/Script/ControlRig.RigHierarchy");
+    assert_native_only_payload(&analysis, data.len() as u64);
+}
+
+fn assert_native_only_payload(analysis: &crate::AssetAnalysis, payload_len: u64) {
+    assert_eq!(
+        analysis.exports[0].property_status,
+        Some(PropertyDecodeStatus::NativeOnly)
+    );
+    assert!(analysis.exports[0].properties.is_empty());
+    // Not a gap: no diagnostic, no tagged-property export counted, and the
+    // payload is class data rather than an unattributed tail.
+    assert!(
+        analysis.diagnostics.is_empty(),
+        "{:#?}",
+        analysis.diagnostics
+    );
+    assert_eq!(analysis.status, AnalysisStatus::Complete);
+    assert_eq!(analysis.coverage.property_exports_total, 0);
+    assert_eq!(analysis.coverage.property_exports_native_only, 1);
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+    assert_eq!(analysis.coverage.class_payload_bytes, payload_len);
+    assert_eq!(analysis.coverage.unattributed_tail_bytes, 0);
+    let region = analysis
+        .known_opaque
+        .iter()
+        .find(|opaque| opaque.kind == KnownOpaqueKind::ClassPayload)
+        .expect("class payload region");
+    assert_eq!(region.path, "/exports/1/class_payload");
+    assert_eq!(region.byte_range.as_ref().unwrap().size, payload_len);
+    assert!(region.reason.contains("does not call UObject::Serialize"));
+    assert!(
+        analysis
+            .known_opaque
+            .iter()
+            .all(|opaque| opaque.kind != KnownOpaqueKind::PostPropertyTail)
+    );
+}
+
+/// A payload whose first bytes happen to resolve to a name is still not a tagged
+/// block when the "type" they name is not a property class. Nothing decoded, so
+/// the verdict is the window's, and the control byte read ahead of it was never a
+/// control byte — reporting overridable serialization from it would be wrong.
+#[test]
+fn a_first_tag_with_a_non_property_type_is_a_non_tagged_payload() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut data = Vec::new();
+    data.push(0x02); // would be EClassSerializationControlExtension::Overridable
+    data.push(0x00); // would be EOverriddenPropertyOperation
+    push_raw_name(&mut data, 1); // "AimItem" as the tag name
+    push_raw_name(&mut data, 2); // "/ControlRig/Controls/DefaultGizmoLibrary" as its type
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 0);
+    data.extend_from_slice(&[0x00, 0xF0, 0x3F, 0x00, 0x00, 0x00]);
+
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "Obj".to_string(),
+                "AimItem".to_string(),
+                "/ControlRig/Controls/DefaultGizmoLibrary".to_string(),
+            ],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, data.len() as i64)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert_eq!(
+        analysis.exports[0].property_status,
+        Some(PropertyDecodeStatus::NonTaggedPayload)
+    );
+    assert!(analysis.exports[0].properties.is_empty());
+    let codes: Vec<&str> = analysis
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code.as_str())
+        .collect();
+    assert_eq!(
+        codes,
+        ["export_payload_not_tagged"],
+        "{:#?}",
+        analysis.diagnostics
+    );
+    let tail = analysis
+        .known_opaque
+        .iter()
+        .find(|opaque| opaque.kind == KnownOpaqueKind::PostPropertyTail)
+        .expect("unattributed payload");
+    assert!(
+        tail.reason
+            .contains("does not open with a tagged-property block"),
+        "{}",
+        tail.reason
+    );
+    assert_eq!(analysis.coverage.unattributed_tail_bytes, data.len() as u64);
 }
 
 #[test]
@@ -669,7 +818,7 @@ fn pre_complete_typename_version_decodes_legacy_properties() {
             ],
         },
         imports: Vec::new(),
-        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        exports: vec![test_export(0, data.len() as i64, 0, data.len() as i64)],
         soft_object_paths: Vec::new(),
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
@@ -702,6 +851,7 @@ fn post_property_tail_is_classified_with_its_byte_range() {
     data.push(0);
     push_i32(&mut data, 123);
     push_raw_name(&mut data, 3);
+    let tagged_end = data.len();
     data.extend_from_slice(&[1, 2, 3, 4]);
 
     let package = Package {
@@ -715,7 +865,7 @@ fn post_property_tail_is_classified_with_its_byte_range() {
             ],
         },
         imports: Vec::new(),
-        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        exports: vec![test_export(0, data.len() as i64, 0, tagged_end as i64)],
         soft_object_paths: Vec::new(),
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
@@ -745,13 +895,17 @@ fn post_property_tail_is_classified_with_its_byte_range() {
 // separable, and compiled bytecode must be named rather than anonymous.
 #[test]
 fn export_tails_separate_class_payloads_from_unattributed_bytes() {
-    let single_export = |data: &[u8]| Package {
+    let single_export = |data: &[u8], tagged_end: usize| Package {
         summary: Package::parse(&build_minimal_package()).unwrap().summary,
         names: NameMap {
-            names: vec!["Prop".to_string(), "None".to_string()],
+            names: vec![
+                "Prop".to_string(),
+                "None".to_string(),
+                "IntProperty".to_string(),
+            ],
         },
         imports: Vec::new(),
-        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        exports: vec![test_export(0, data.len() as i64, 0, tagged_end as i64)],
         soft_object_paths: Vec::new(),
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
@@ -772,10 +926,15 @@ fn export_tails_separate_class_payloads_from_unattributed_bytes() {
     let mut closed = Vec::new();
     closed.push(0); // EClassSerializationControlExtension: no extensions
     push_raw_name(&mut closed, 1); // None terminator, so the block is empty
+    let closed_tagged_end = closed.len();
     push_i32(&mut closed, 0); // PossiblySerializeObjectGuid: absent
     closed.extend_from_slice(&[1, 2, 3, 4]); // the class's own payload
 
-    let analysis = analyze_package(&single_export(&closed), &closed, AssetView::Full);
+    let analysis = analyze_package(
+        &single_export(&closed, closed_tagged_end),
+        &closed,
+        AssetView::Full,
+    );
     assert!(
         tail_of(&analysis).contains("class-owned serializer data"),
         "{}",
@@ -788,10 +947,21 @@ fn export_tails_separate_class_payloads_from_unattributed_bytes() {
     // the decoder cannot say what they are, which is the case worth watching.
     let mut unresolved = Vec::new();
     unresolved.push(0);
-    push_raw_name(&mut unresolved, 0); // "Prop": a tag, not the terminator
+    push_raw_name(&mut unresolved, 0); // "Prop"
+    push_raw_name(&mut unresolved, 2); // IntProperty
+    push_i32(&mut unresolved, 0); // no type parameters
+    push_i32(&mut unresolved, 4); // size
+    unresolved.push(0); // flags
+    push_i32(&mut unresolved, 7);
+    let decoded_end = unresolved.len();
+    push_raw_name(&mut unresolved, 0); // a second tag, not the terminator
     unresolved.extend_from_slice(&[1, 2, 3, 4]); // truncated tag header
 
-    let analysis = analyze_package(&single_export(&unresolved), &unresolved, AssetView::Full);
+    let analysis = analyze_package(
+        &single_export(&unresolved, unresolved.len()),
+        &unresolved,
+        AssetView::Full,
+    );
     assert!(
         tail_of(&analysis).contains("did not close cleanly"),
         "{}",
@@ -800,15 +970,16 @@ fn export_tails_separate_class_payloads_from_unattributed_bytes() {
     assert_eq!(analysis.coverage.class_payload_bytes, 0);
     assert_eq!(
         analysis.coverage.unattributed_tail_bytes,
-        unresolved.len() as u64
+        (unresolved.len() - decoded_end) as u64
     );
 }
 
 #[test]
 fn non_tagged_property_payload_is_reported_as_status() {
-    let base = Package::parse(&build_minimal_package()).unwrap();
-    let mut data = vec![0];
-    data.extend_from_slice(&[1, 2, 3, 4]);
+    // Below SCRIPT_SERIALIZATION_OFFSET nothing in the export table says whether a
+    // tagged block exists, so the bytes decide.
+    let base = Package::parse(&build_minimal_package_with_version(1009, 5, 3)).unwrap();
+    let data = vec![0, 1, 2, 3, 4];
     let package = Package {
         summary: base.summary,
         names: NameMap {

@@ -117,6 +117,13 @@ pub struct ParseCoverage {
     /// the properties before the failure are evidence and the rest is opaque.
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub property_exports_failed: usize,
+    /// Exports that never wrote a tagged-property block because their class does
+    /// not call `UObject::Serialize` (UE records a zero script-serialization range
+    /// for them from `FileVersionUE5` 1010 on). Their payload is class data, so
+    /// they are excluded from [`Self::property_exports_total`] rather than counted
+    /// as a gap.
+    #[serde(skip_serializing_if = "is_zero_usize")]
+    pub property_exports_native_only: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub properties_decoded: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
@@ -227,6 +234,7 @@ impl AddAssign<&ParseCoverage> for ParseCoverage {
             property_exports_complete,
             property_exports_not_tagged,
             property_exports_failed,
+            property_exports_native_only,
             properties_decoded,
             graph_nodes_total,
             graph_nodes_decoded,
@@ -284,6 +292,9 @@ impl AddAssign<&ParseCoverage> for ParseCoverage {
         self.property_exports_failed = self
             .property_exports_failed
             .saturating_add(*property_exports_failed);
+        self.property_exports_native_only = self
+            .property_exports_native_only
+            .saturating_add(*property_exports_native_only);
         self.properties_decoded = self.properties_decoded.saturating_add(*properties_decoded);
         self.graph_nodes_total = self.graph_nodes_total.saturating_add(*graph_nodes_total);
         self.graph_nodes_decoded = self
@@ -641,8 +652,14 @@ pub struct ExportSerialization {
 pub enum PropertyDecodeStatus {
     Complete,
     Empty,
+    /// The window did not open with a readable property tag and the class is not
+    /// known to skip `UObject::Serialize`; the bytes are retained unattributed.
     NonTaggedPayload,
     FailedAfterEntries,
+    /// The export never wrote a tagged block (zero script-serialization range, or
+    /// a class known not to call `Super::Serialize`); the whole payload is the
+    /// class's own serializer data and is classified as such.
+    NativeOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -728,6 +745,10 @@ pub enum KnownOpaqueKind {
     PropertyValue,
     PreScriptRegion,
     PostPropertyTail,
+    /// The entire export payload, for a class that never writes a tagged block.
+    /// Expected class data (counted in `coverage.class_payload_bytes`), reported
+    /// separately from a tail so it is never mistaken for a block that failed.
+    ClassPayload,
     Metadata,
     Capability,
 }

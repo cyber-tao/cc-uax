@@ -93,6 +93,20 @@ impl DecodedExport {
     pub(crate) fn advance_decoded_end(&mut self, pos: u64) {
         self.decoded_end = Some(self.decoded_end.map_or(pos, |current| current.max(pos)));
     }
+
+    /// The export never wrote a tagged-property block, so its whole payload is
+    /// the class's own serializer data (see `PropertyParseStatus::NativeOnly`).
+    pub(crate) fn is_native_only_payload(&self) -> bool {
+        self.property_status == Some(PropertyParseStatus::NativeOnly)
+    }
+
+    /// Whether the bytes left after every decoder ran are attributable to the
+    /// class's own `Serialize`: either they follow a cleanly closed property
+    /// block, or the class never wrote one. Anything else is unattributed and
+    /// points at a decoding gap.
+    pub(crate) fn tail_is_class_payload(&self) -> bool {
+        self.property_block_closed || self.is_native_only_payload()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -243,7 +257,12 @@ impl Package {
                 unclassified_bytes: 0,
             };
 
-            let serial_window = match export_serial_window(exp, has_script, file_len) {
+            let serial_window = match export_serial_window(
+                exp,
+                has_script,
+                file_len,
+                is_native_only_payload_class(&class_full),
+            ) {
                 Ok(w) => w,
                 Err(err) => {
                     diagnostics.push(
@@ -269,6 +288,24 @@ impl Package {
                 && let Some(window) = serial_window
             {
                 decode_rigvm_link_for_export(&mut reader, window, i, diagnostics, &mut export);
+            } else if let Some(window) = serial_window
+                && !window.writes_tagged_block
+            {
+                // No tagged block means no property, pin, GUID or script decoder
+                // has anything to read: every byte is the class's own serializer
+                // data, classified as such by the tail step.
+                export.property_status = Some(PropertyParseStatus::NativeOnly);
+                account_export_tail(
+                    &mut reader,
+                    window,
+                    &class_full,
+                    &script_ctx,
+                    i,
+                    diagnostics,
+                    &mut export,
+                );
+                decoded.push(export);
+                continue;
             } else if (options.properties || is_node || capture_adapter_properties)
                 && let Some(window) = serial_window
             {
@@ -463,6 +500,23 @@ fn consume_object_guid_tail(reader: &mut Reader, end: u64, export: &mut DecodedE
             let _ = reader.seek(start);
         }
     }
+}
+
+/// Classes whose `Serialize` never calls `Super::Serialize`, so their export
+/// payload contains no tagged-property block at all.
+///
+/// From `FileVersionUE5` 1010 the export table says this directly (a zero script
+/// range, see [`window::ExportSerialWindow::writes_tagged_block`]); this list is
+/// what stands in for it on older packages. Each entry is verified against UE
+/// source, 5.0 through 5.8:
+/// - `URigHierarchy::Serialize` (`RigHierarchy.cpp`): `Save(Ar)`/`Load(Ar)` only.
+/// - `URigVM::Serialize` (`RigVM.cpp`): calls `Super::Serialize` only for
+///   reference collectors and memory counting, never for a linker archive.
+pub(crate) fn is_native_only_payload_class(class: &str) -> bool {
+    matches!(
+        class,
+        "/Script/ControlRig.RigHierarchy" | "/Script/RigVM.RigVM"
+    )
 }
 
 fn is_pcg_model_object_class(class: &str) -> bool {

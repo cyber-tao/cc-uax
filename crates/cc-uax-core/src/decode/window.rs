@@ -21,12 +21,23 @@ pub(super) struct ExportSerialWindow {
     /// ends, so callers must not compare a decoder's high-water mark against
     /// `property_end` to decide whether the block closed cleanly.
     pub has_declared_property_range: bool,
+    /// Whether the export wrote a tagged-property block at all.
+    ///
+    /// `UObject::SerializeScriptProperties` is what marks the script range, so a
+    /// class whose `Serialize` never calls `Super::Serialize` leaves both offsets
+    /// at zero (`SavePackage2.cpp` asserts exactly that, and `LinkerLoad.cpp`
+    /// uses the zero range to skip tagged serialization for `URigHierarchy`).
+    /// Before `SCRIPT_SERIALIZATION_OFFSET` the same fact comes from a class list.
+    /// When false, the whole payload is the class's own serializer data and no
+    /// tagged-property decoder may run on it.
+    pub writes_tagged_block: bool,
 }
 
 pub(super) fn export_serial_window(
     exp: &ObjectExport,
     has_script: bool,
     file_len: u64,
+    native_only_class: bool,
 ) -> std::result::Result<Option<ExportSerialWindow>, String> {
     if exp.serial_size < 0 {
         return Err(format!("negative serial size {}", exp.serial_size));
@@ -58,6 +69,7 @@ pub(super) fn export_serial_window(
         property_end: serial_end,
         serial_end,
         has_declared_property_range: false,
+        writes_tagged_block: !native_only_class,
     };
     if !has_script {
         return Ok(Some(whole_payload));
@@ -66,7 +78,12 @@ pub(super) fn export_serial_window(
     let script_start = exp.script_serialization_start_offset;
     let script_end = exp.script_serialization_end_offset;
     if script_start == 0 && script_end == 0 {
-        return Ok(Some(whole_payload));
+        // A written block is never empty on disk (the `None` terminator alone is
+        // 8 bytes), so a zero range is UE saying no block exists for this export.
+        return Ok(Some(ExportSerialWindow {
+            writes_tagged_block: false,
+            ..whole_payload
+        }));
     }
     if script_start < 0 || script_end < script_start || script_end > exp.serial_size {
         return Err(format!(
@@ -85,6 +102,7 @@ pub(super) fn export_serial_window(
             .ok_or_else(|| "script serialization end overflows u64".to_string())?,
         serial_end,
         has_declared_property_range: true,
+        writes_tagged_block: true,
     }))
 }
 

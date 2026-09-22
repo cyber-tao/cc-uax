@@ -63,8 +63,16 @@ pub(crate) enum PropertyParseStatus {
     #[default]
     Complete,
     Empty,
+    /// The window did not open with a readable property tag and the class is not
+    /// known to skip `UObject::Serialize`, so the bytes cannot be attributed.
     NonTaggedPayload,
     FailedAfterEntries,
+    /// The export never wrote a tagged-property block: either UE recorded a zero
+    /// script-serialization range for it (`FileVersionUE5` ≥ 1010), or the class
+    /// is one whose `Serialize` is known not to call `Super::Serialize`. The
+    /// whole payload is the class's own serializer data, which is expected and
+    /// not a tagged-property gap.
+    NativeOnly,
 }
 
 impl PropertyParseStatus {
@@ -74,6 +82,7 @@ impl PropertyParseStatus {
             PropertyParseStatus::Empty => "empty",
             PropertyParseStatus::NonTaggedPayload => "non_tagged_payload",
             PropertyParseStatus::FailedAfterEntries => "failed_after_entries",
+            PropertyParseStatus::NativeOnly => "native_only",
         }
     }
 
@@ -175,7 +184,11 @@ pub fn parse_object_properties_report(
         }
     }
     let mut parsed = parse_properties_report(r, ctx, end_limit, path);
-    if !control_diagnostics.is_empty() {
+    // The control byte was read before anything proved a tagged block exists. When
+    // the first tag turns out not to be one, that byte was payload of a class that
+    // never called UObject::Serialize, and reporting overridable serialization
+    // from it would be a diagnostic about bytes that were never a control byte.
+    if !control_diagnostics.is_empty() && parsed.status != PropertyParseStatus::NonTaggedPayload {
         control_diagnostics.append(&mut parsed.diagnostics);
         parsed.diagnostics = control_diagnostics;
     }

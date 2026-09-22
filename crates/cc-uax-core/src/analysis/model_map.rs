@@ -228,6 +228,7 @@ pub(super) fn property_status_to_model(status: PropertyParseStatus) -> PropertyD
         PropertyParseStatus::Empty => PropertyDecodeStatus::Empty,
         PropertyParseStatus::NonTaggedPayload => PropertyDecodeStatus::NonTaggedPayload,
         PropertyParseStatus::FailedAfterEntries => PropertyDecodeStatus::FailedAfterEntries,
+        PropertyParseStatus::NativeOnly => PropertyDecodeStatus::NativeOnly,
     }
 }
 

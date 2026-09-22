@@ -4,10 +4,12 @@
 //! unclassified_bytes staying zero is what makes coverage an account rather
 //! than a counter.
 
+use crate::decode::rigvm::is_rigvm_link_class;
 use crate::decode::{
     DecodeReport, DecodedExport, is_niagara_compiled_class, is_script_bytecode_class,
 };
 use crate::model::{KnownOpaque, KnownOpaqueKind, OpaqueByteRange};
+use crate::property::PropertyParseStatus;
 use crate::structured_value::{Map, Value};
 use std::collections::BTreeSet;
 
@@ -21,6 +23,18 @@ use std::collections::BTreeSet;
 /// gigabytes of bulk asset data, so sharing one reason with the second made the
 /// opaque byte total unreadable.
 pub(super) fn tail_reason(export: &DecodedExport) -> &'static str {
+    if export.is_native_only_payload() {
+        return "the class does not call UObject::Serialize, so the whole payload is its own serializer data and no tagged-property block exists";
+    }
+    if export.property_status == Some(PropertyParseStatus::NonTaggedPayload) {
+        return "the export payload does not open with a tagged-property block and the class is not known to skip UObject::Serialize, so the bytes cannot be attributed";
+    }
+    if is_rigvm_link_class(&export.identity.class) {
+        // URigVMLink never writes a tagged block, so a leftover here is either a
+        // decode failure of its two FStrings or bytes after them; the diagnostic
+        // says which, but the tail must not claim a property block ever existed.
+        return "bytes were not consumed by the URigVMLink source/target path layout";
+    }
     if !export.property_block_closed {
         return "bytes follow a tagged-property block that did not close cleanly, so they cannot be attributed";
     }
@@ -66,9 +80,20 @@ pub(super) fn collect_known_opaque(
         if let Some(tail) = &export.post_property_tail
             && tail.size > 0
         {
+            let (path, kind) = if export.is_native_only_payload() {
+                (
+                    format!("{export_path}/class_payload"),
+                    KnownOpaqueKind::ClassPayload,
+                )
+            } else {
+                (
+                    format!("{export_path}/post_property_tail"),
+                    KnownOpaqueKind::PostPropertyTail,
+                )
+            };
             opaque.push(KnownOpaque {
-                path: format!("{export_path}/post_property_tail"),
-                kind: KnownOpaqueKind::PostPropertyTail,
+                path,
+                kind,
                 type_name: Some(export.identity.class.clone()),
                 reason: tail_reason(export).into(),
                 byte_range: Some(OpaqueByteRange {
@@ -209,8 +234,9 @@ pub(super) fn opaque_kind_rank(kind: KnownOpaqueKind) -> u8 {
         KnownOpaqueKind::PropertyValue => 0,
         KnownOpaqueKind::PreScriptRegion => 1,
         KnownOpaqueKind::PostPropertyTail => 2,
-        KnownOpaqueKind::Metadata => 3,
-        KnownOpaqueKind::Capability => 4,
+        KnownOpaqueKind::ClassPayload => 3,
+        KnownOpaqueKind::Metadata => 4,
+        KnownOpaqueKind::Capability => 5,
     }
 }
 

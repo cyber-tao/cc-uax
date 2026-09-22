@@ -131,6 +131,9 @@ pub struct KnownOpaqueSummary {
     pub pre_script_regions: usize,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub post_property_tails: usize,
+    /// Whole-payload regions of classes that never write a tagged block.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub class_payloads: usize,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub metadata: usize,
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -462,6 +465,7 @@ impl KnownOpaqueSummary {
                 KnownOpaqueKind::PropertyValue => summary.property_values += 1,
                 KnownOpaqueKind::PreScriptRegion => summary.pre_script_regions += 1,
                 KnownOpaqueKind::PostPropertyTail => summary.post_property_tails += 1,
+                KnownOpaqueKind::ClassPayload => summary.class_payloads += 1,
                 KnownOpaqueKind::Metadata => summary.metadata += 1,
                 KnownOpaqueKind::Capability => summary.capabilities += 1,
             }

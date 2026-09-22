@@ -196,7 +196,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         .fold(
             (0u64, 0u64),
             |(class_bytes, unattributed), (export, tail)| {
-                if export.property_block_closed {
+                if export.tail_is_class_payload() {
                     (class_bytes.saturating_add(tail.size), unattributed)
                 } else {
                     (class_bytes, unattributed.saturating_add(tail.size))
@@ -218,6 +218,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         property_exports_complete: property_coverage.exports_complete,
         property_exports_not_tagged: property_coverage.exports_not_tagged,
         property_exports_failed: property_coverage.exports_failed,
+        property_exports_native_only: property_coverage.exports_native_only,
         properties_decoded: property_coverage.properties_decoded,
         graph_nodes_total: graph_coverage.nodes_total,
         graph_nodes_decoded: graph_coverage.nodes_decoded,

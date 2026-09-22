@@ -84,6 +84,56 @@ pub(super) fn read_inner_array_struct_name(
     }
 }
 
+/// The `FProperty` class names a tag's type may carry (`FPropertyTag::Type`,
+/// UE5.0–5.8). Kept in one list so the tag loop can tell a real tag from bytes
+/// that merely resolved to a name.
+const PROPERTY_TYPE_NAMES: &[&str] = &[
+    "BoolProperty",
+    "Int8Property",
+    "Int16Property",
+    "IntProperty",
+    "Int64Property",
+    "ByteProperty",
+    "UInt16Property",
+    "UInt32Property",
+    "UInt64Property",
+    "FloatProperty",
+    "DoubleProperty",
+    "EnumProperty",
+    "NameProperty",
+    "StrProperty",
+    "Utf8StrProperty",
+    "AnsiStrProperty",
+    "TextProperty",
+    "ObjectProperty",
+    "ClassProperty",
+    "WeakObjectProperty",
+    "ObjectPtrProperty",
+    "ClassPtrProperty",
+    "InterfaceProperty",
+    "LazyObjectProperty",
+    "SoftObjectProperty",
+    "SoftClassProperty",
+    "DelegateProperty",
+    "MulticastDelegateProperty",
+    "MulticastInlineDelegateProperty",
+    "MulticastSparseDelegateProperty",
+    "FieldPathProperty",
+    "OptionalProperty",
+    "StructProperty",
+    "ArrayProperty",
+    "SetProperty",
+    "MapProperty",
+    "VerseValueProperty",
+    "VerseStringProperty",
+    "VerseFunctionProperty",
+    "VerseDynamicProperty",
+];
+
+pub(crate) fn is_property_type_name(name: &str) -> bool {
+    PROPERTY_TYPE_NAMES.contains(&name)
+}
+
 fn fallback_code(unnamed_inner_struct: bool) -> &'static str {
     if unnamed_inner_struct {
         "property_tag_missing_inner_struct_name"
@@ -271,6 +321,16 @@ pub(crate) fn parse_properties_report(
                 break;
             }
         };
+        // A payload that never was a tagged block can still yield a "tag" when its
+        // first bytes happen to be a valid name index: on real Control Rig assets
+        // the fabricated tag was named after a gizmo library path. A tag whose type
+        // is not a property class is not a tag, and while nothing has decoded yet
+        // that is the whole window's verdict rather than one bad entry.
+        if entries.is_empty() && !is_property_type_name(&tag.type_name.name) {
+            status = PropertyParseStatus::NonTaggedPayload;
+            let _ = r.seek(end_limit);
+            break;
+        }
         let prop_path = format!("{path}/{}", tag.name);
 
         if tag.size < 0 {

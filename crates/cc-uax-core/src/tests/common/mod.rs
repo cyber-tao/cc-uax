@@ -195,6 +195,32 @@ fn build_minimal_package_header_with_chunks(
     d
 }
 
+/// An import-table row with `class_package` left as name 0; `outer_index` is a
+/// `FPackageIndex` (negative for another import).
+pub fn test_import(
+    class_name: i32,
+    object_name: i32,
+    outer_index: i32,
+    class_package: i32,
+) -> crate::object::ObjectImport {
+    crate::object::ObjectImport {
+        class_package: RawName {
+            index: class_package,
+            number: 0,
+        },
+        class_name: RawName {
+            index: class_name,
+            number: 0,
+        },
+        outer_index: PackageIndex(outer_index),
+        object_name: RawName {
+            index: object_name,
+            number: 0,
+        },
+        package_name: None,
+    }
+}
+
 pub fn test_export(
     object_name: i32,
     serial_size: i64,

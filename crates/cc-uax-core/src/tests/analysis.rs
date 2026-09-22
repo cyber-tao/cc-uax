@@ -49,6 +49,7 @@ fn classified_opaque_tail_is_recorded_without_forcing_partial() {
     data.push(0); // property tag flags
     push_i32(&mut data, 42);
     push_raw_name(&mut data, 3); // None
+    let tagged_end = data.len();
     data.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
 
     let package = Package {
@@ -62,7 +63,7 @@ fn classified_opaque_tail_is_recorded_without_forcing_partial() {
             ],
         },
         imports: Vec::new(),
-        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        exports: vec![test_export(0, data.len() as i64, 0, tagged_end as i64)],
         soft_object_paths: Vec::new(),
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
@@ -172,9 +173,10 @@ fn pre_and_post_script_regions_are_classified_with_zero_unclassified() {
 
 #[test]
 fn non_tagged_payload_is_classified_as_one_opaque_region() {
-    let base = Package::parse(&build_minimal_package()).unwrap();
-    let mut data = vec![0]; // object property serialization control
-    data.extend_from_slice(&[1, 2, 3, 4]); // not a decodable tagged-property layout
+    // Below SCRIPT_SERIALIZATION_OFFSET the export table cannot say whether a
+    // tagged block exists, so the decoder has to find out from the bytes.
+    let base = Package::parse(&build_minimal_package_with_version(1009, 5, 3)).unwrap();
+    let data = vec![0, 1, 2, 3, 4]; // not a decodable tagged-property layout
 
     let package = Package {
         summary: base.summary,
@@ -219,6 +221,7 @@ fn parse_coverage_add_assign_doubles_every_serialized_field() {
         property_exports_complete: 6,
         property_exports_not_tagged: 7,
         property_exports_failed: 8,
+        property_exports_native_only: 49,
         properties_decoded: 9,
         graph_nodes_total: 10,
         graph_nodes_decoded: 11,
@@ -270,7 +273,7 @@ fn parse_coverage_add_assign_doubles_every_serialized_field() {
     let doubled_obj = doubled_map.as_object().unwrap();
     assert_eq!(
         base_obj.len(),
-        48,
+        49,
         "every coverage field must be non-zero here"
     );
     for (key, value) in base_obj {
@@ -363,14 +366,25 @@ fn object_guid_after_tagged_properties_is_decoded() {
 /// Builds an export payload of one IntProperty plus a `None` terminator, then
 /// whatever `tail` the caller wants after the tagged-property block. Returns the
 /// bytes and the offset where the property block ends.
-fn export_with_property_tail(tail: &[u8]) -> (Vec<u8>, usize) {
+/// The object serialization-control byte exists only from
+/// `PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION`, and the tag layout is
+/// legacy below `PROPERTY_TAG_COMPLETE_TYPE_NAME`.
+fn export_with_property_tail_at(file_version_ue5: i32, tail: &[u8]) -> (Vec<u8>, usize) {
     let mut data = Vec::new();
-    data.push(0); // object property serialization control
-    push_raw_name(&mut data, 1); // Value
-    push_raw_name(&mut data, 2); // IntProperty
-    push_i32(&mut data, 0);
-    push_i32(&mut data, 4);
-    data.push(0);
+    if file_version_ue5 >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
+    {
+        data.push(0); // object property serialization control
+    }
+    if file_version_ue5 >= crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME {
+        push_raw_name(&mut data, 1); // Value
+        push_raw_name(&mut data, 2); // IntProperty
+        push_i32(&mut data, 0);
+        push_i32(&mut data, 4);
+        data.push(0);
+    } else {
+        push_legacy_tag_header(&mut data, 1, 2, 4);
+        push_legacy_tag_tail(&mut data, file_version_ue5);
+    }
     push_i32(&mut data, 42);
     push_raw_name(&mut data, 3); // None
     let tagged_end = data.len();
@@ -393,23 +407,31 @@ fn guid_tail_names() -> NameMap {
 /// `SerializeScriptProperties` returns (Obj.cpp), *before* any subclass override
 /// appends its own data. So a real GUID need not land on the export end, and the
 /// flag must be read whether or not UE declared an explicit property range —
-/// without a declared range `property_end` is just `serial_end` and carries no
-/// information about where the property block closed.
+/// packages before `SCRIPT_SERIALIZATION_OFFSET` have none, and there
+/// `property_end` is just `serial_end` and carries no information about where the
+/// property block closed.
 #[test]
 fn object_guid_is_read_after_the_property_block_in_both_window_shapes() {
-    let base = Package::parse(&build_minimal_package()).unwrap();
     let mut tail = Vec::new();
     push_i32(&mut tail, 1); // bSerializeObjectGuid = true
     tail.extend_from_slice(&[0x01, 0, 0, 0, 0x02, 0, 0, 0, 0x03, 0, 0, 0, 0x04, 0, 0, 0]);
     tail.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // subclass Serialize payload
-    let (data, tagged_end) = export_with_property_tail(&tail);
 
-    // `script_end = 0` is the shape UE writes for every export that does not need
-    // an explicit property range, which is the overwhelming majority.
-    for (label, script_end) in [
-        ("declared property range", tagged_end as i64),
-        ("no declared property range", 0),
+    for (label, file_version_ue5) in [
+        ("declared property range", crate::version::ue5::HIGHEST),
+        (
+            "no declared property range",
+            crate::version::ue5::SCRIPT_SERIALIZATION_OFFSET - 1,
+        ),
     ] {
+        let base =
+            Package::parse(&build_minimal_package_with_version(file_version_ue5, 5, 3)).unwrap();
+        let (data, tagged_end) = export_with_property_tail_at(file_version_ue5, &tail);
+        let script_end = if file_version_ue5 >= crate::version::ue5::SCRIPT_SERIALIZATION_OFFSET {
+            tagged_end as i64
+        } else {
+            0
+        };
         let package = Package {
             summary: base.summary.clone(),
             names: guid_tail_names(),
@@ -443,11 +465,11 @@ fn object_guid_is_read_after_the_property_block_in_both_window_shapes() {
 /// consumed as a presence flag.
 #[test]
 fn a_tail_whose_flag_is_not_a_serialized_bool_stays_opaque() {
-    let base = Package::parse(&build_minimal_package()).unwrap();
+    let base = Package::parse(&build_minimal_package_with_version(1009, 5, 3)).unwrap();
     let mut tail = Vec::new();
     push_i32(&mut tail, 0x4433_2211); // not 0 or 1
     tail.extend_from_slice(&[0x55, 0x66, 0x77, 0x88]);
-    let (data, _) = export_with_property_tail(&tail);
+    let (data, _) = export_with_property_tail_at(1009, &tail);
 
     let package = Package {
         summary: base.summary,
@@ -474,11 +496,11 @@ fn a_tail_whose_flag_is_not_a_serialized_bool_stays_opaque() {
 /// wrote after it stays classified opaque.
 #[test]
 fn a_cleared_guid_flag_is_consumed_without_a_declared_property_range() {
-    let base = Package::parse(&build_minimal_package()).unwrap();
+    let base = Package::parse(&build_minimal_package_with_version(1009, 5, 3)).unwrap();
     let mut tail = Vec::new();
     push_i32(&mut tail, 0); // bSerializeObjectGuid = false
     tail.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
-    let (data, _) = export_with_property_tail(&tail);
+    let (data, _) = export_with_property_tail_at(1009, &tail);
 
     let package = Package {
         summary: base.summary,
@@ -505,10 +527,10 @@ fn a_cleared_guid_flag_is_consumed_without_a_declared_property_range() {
 /// on every plain UObject export.
 #[test]
 fn a_cleared_guid_flag_that_ends_the_export_leaves_no_opaque_tail() {
-    let base = Package::parse(&build_minimal_package()).unwrap();
+    let base = Package::parse(&build_minimal_package_with_version(1009, 5, 3)).unwrap();
     let mut tail = Vec::new();
     push_i32(&mut tail, 0);
-    let (data, _) = export_with_property_tail(&tail);
+    let (data, _) = export_with_property_tail_at(1009, &tail);
 
     let package = Package {
         summary: base.summary,
@@ -553,7 +575,7 @@ fn overridable_serialization_is_declared_unsupported() {
             ],
         },
         imports: Vec::new(),
-        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        exports: vec![test_export(0, data.len() as i64, 0, data.len() as i64)],
         soft_object_paths: Vec::new(),
         soft_object_path_error: None,
         soft_package_references: Vec::new(),

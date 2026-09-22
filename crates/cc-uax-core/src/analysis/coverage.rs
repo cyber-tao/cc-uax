@@ -219,6 +219,9 @@ pub(super) struct PropertyCoverage {
     pub(super) exports_complete: usize,
     pub(super) exports_not_tagged: usize,
     pub(super) exports_failed: usize,
+    /// Exports with no tagged block to decode; reported but not part of
+    /// `exports_total`, because there is no tagged-property evidence to miss.
+    pub(super) exports_native_only: usize,
     pub(super) properties_decoded: usize,
 }
 
@@ -238,6 +241,7 @@ pub(super) fn compute_property_coverage(
         exports_complete: 0,
         exports_not_tagged: 0,
         exports_failed: 0,
+        exports_native_only: 0,
         properties_decoded: 0,
     };
     if !wants_properties {
@@ -246,6 +250,10 @@ pub(super) fn compute_property_coverage(
     for (export, raw) in report.exports.iter().zip(&package.exports) {
         coverage.properties_decoded += export.properties.as_ref().map_or(0, Vec::len);
         if raw.serial_size <= 0 || is_rigvm_link_class(&export.identity.class) {
+            continue;
+        }
+        if export.is_native_only_payload() {
+            coverage.exports_native_only += 1;
             continue;
         }
         coverage.exports_total += 1;
@@ -258,7 +266,8 @@ pub(super) fn compute_property_coverage(
             }
             Some(PropertyParseStatus::NonTaggedPayload) => coverage.exports_not_tagged += 1,
             Some(PropertyParseStatus::FailedAfterEntries) => coverage.exports_failed += 1,
-            None => {}
+            // Handled above; listed so a new status cannot fall through silently.
+            Some(PropertyParseStatus::NativeOnly) | None => {}
         }
     }
     coverage
