@@ -195,6 +195,17 @@ impl ObjectExport {
     }
 }
 
+#[cfg(test)]
+impl ObjectExport {
+    /// The on-disk width of one export row for this version pair; the test
+    /// package builder lays payloads out right after the table with it.
+    pub(crate) fn entry_bytes(ue4v: i32, ue5v: i32) -> u64 {
+        export_entry_min_bytes(ue4v, ue5v)
+    }
+}
+
+/// Every field of `FObjectExport::Serialize` is fixed-width, so the minimum entry
+/// size is the exact row width.
 fn export_entry_min_bytes(ue4v: i32, ue5v: i32) -> u64 {
     const I32: u64 = 4;
     const GUID: u64 = 16;

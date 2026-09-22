@@ -304,6 +304,8 @@ function Measure-Project {
         unattributed_tail_bytes = & $number $coverage 'unattributed_tail_bytes'
         known_opaque_regions  = & $number $coverage 'known_opaque_regions'
         unclassified_bytes    = & $number $coverage 'unclassified_bytes'
+        diagnostic_errors     = & $number $coverage 'diagnostic_errors'
+        diagnostic_warnings   = & $number $coverage 'diagnostic_warnings'
         grouped_regions       = $analysis.grouped_opaque_regions
         grouped_bytes         = $analysis.grouped_opaque_bytes
         unexplained_partials  = $analysis.partial_assets_without_explanation
@@ -407,10 +409,20 @@ function Test-AgainstBaseline {
     param([string] $Name, $Result, $Baseline)
 
     $problems = @()
-    foreach ($key in 'exit_code', 'status', 'discovered', 'indexed', 'assets', 'unsupported_assets') {
+    foreach ($key in 'exit_code', 'discovered', 'indexed', 'assets', 'unsupported_assets') {
         if ($Result.$key -ne $Baseline.$key) {
             $problems += "$key changed: $($Baseline.$key) -> $($Result.$key)"
         }
+    }
+    # Status is ordered evidence: a report moving towards `complete` is the
+    # improvement this harness exists to allow, so only the other direction fails.
+    $statusRank = @{ complete = 0; partial = 1; unsupported = 2 }
+    $before = $statusRank[[string] $Baseline.status]
+    $after = $statusRank[[string] $Result.status]
+    if ($null -eq $before -or $null -eq $after) {
+        $problems += "status is not a report status: $($Baseline.status) -> $($Result.status)"
+    } elseif ($after -gt $before) {
+        $problems += "status degraded: $($Baseline.status) -> $($Result.status)"
     }
     if ($Result.failed -gt $Baseline.failed) {
         $problems += "failed assets rose: $($Baseline.failed) -> $($Result.failed)"
@@ -418,11 +430,15 @@ function Test-AgainstBaseline {
     if ($Result.complete_assets -lt $Baseline.complete_assets) {
         $problems += "complete assets fell: $($Baseline.complete_assets) -> $($Result.complete_assets)"
     }
-    if ($Result.known_opaque_regions -gt $Baseline.known_opaque_regions) {
-        $problems += "opaque regions rose: $($Baseline.known_opaque_regions) -> $($Result.known_opaque_regions)"
+    # Opaque bytes as a whole are allowed to move either way: correctly classifying
+    # a payload that used to be *misread* as properties raises them, which is an
+    # improvement. What may never rise is the part the decoder cannot attribute,
+    # or the number of errors it raises.
+    if ($Result.unattributed_tail_bytes -gt $Baseline.unattributed_tail_bytes) {
+        $problems += "unattributed tail bytes rose: $($Baseline.unattributed_tail_bytes) -> $($Result.unattributed_tail_bytes)"
     }
-    if ($Result.opaque_bytes -gt $Baseline.opaque_bytes) {
-        $problems += "opaque bytes rose: $($Baseline.opaque_bytes) -> $($Result.opaque_bytes)"
+    if ($Result.diagnostic_errors -gt $Baseline.diagnostic_errors) {
+        $problems += "diagnostic errors rose: $($Baseline.diagnostic_errors) -> $($Result.diagnostic_errors)"
     }
     # Losing a mount means losing whole content roots from the scan.
     if ($Result.mounts -lt $Baseline.mounts) {

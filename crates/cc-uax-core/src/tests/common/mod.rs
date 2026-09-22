@@ -195,6 +195,205 @@ fn build_minimal_package_header_with_chunks(
     d
 }
 
+/// One import row for [`PackageBuilder`], by name-table index.
+pub struct ImportSpec {
+    pub class_package: usize,
+    pub class_name: usize,
+    pub outer_index: i32,
+    pub object_name: usize,
+}
+
+/// One export for [`PackageBuilder`]: its identity and the payload bytes that
+/// become its serial window. `script_range` is the tagged-property range
+/// relative to the payload, which is also how UE writes
+/// `ScriptSerializationStart/EndOffset`: `FLinkerSave` records absolute `Tell()`
+/// positions and `SavePackage2.cpp` subtracts `SerialOffset` before the export
+/// table is written.
+pub struct ExportSpec {
+    pub class_index: i32,
+    pub outer_index: i32,
+    pub object_name: usize,
+    pub payload: Vec<u8>,
+    pub script_range: Option<(u64, u64)>,
+}
+
+/// Builds a complete package — summary, name table, import table, export table
+/// and export payloads — for any supported `FileVersionUE5`, so a test can go
+/// through `PackageView::parse` and exercise the header offsets, table readers
+/// and export windows together instead of hand-assembling a `Package`.
+///
+/// The header fields are written zeroed by the summary builder and patched here,
+/// so the summary layout lives in exactly one place. `FilterEditorOnly` is set,
+/// the engine version is `major.minor`, and there are no custom versions.
+pub struct PackageBuilder {
+    pub file_version_ue5: i32,
+    pub engine: (u16, u16),
+    pub names: Vec<String>,
+    pub imports: Vec<ImportSpec>,
+    pub exports: Vec<ExportSpec>,
+}
+
+impl PackageBuilder {
+    pub fn new(file_version_ue5: i32, engine: (u16, u16)) -> Self {
+        Self {
+            file_version_ue5,
+            engine,
+            names: Vec::new(),
+            imports: Vec::new(),
+            exports: Vec::new(),
+        }
+    }
+
+    pub fn name(&mut self, name: &str) -> usize {
+        if let Some(index) = self.names.iter().position(|existing| existing == name) {
+            return index;
+        }
+        self.names.push(name.to_string());
+        self.names.len() - 1
+    }
+
+    /// Adds a `/Script/<module>` package import and a class import under it,
+    /// returning the class's `FPackageIndex` (negative).
+    pub fn script_class(&mut self, module: &str, class: &str) -> i32 {
+        let package_name = self.name("Package");
+        let class_name = self.name("Class");
+        let core = self.name("/Script/CoreUObject");
+        let module_name = self.name(module);
+        let class_object = self.name(class);
+        self.imports.push(ImportSpec {
+            class_package: core,
+            class_name: package_name,
+            outer_index: 0,
+            object_name: module_name,
+        });
+        let package_index = -(self.imports.len() as i32);
+        self.imports.push(ImportSpec {
+            class_package: core,
+            class_name,
+            outer_index: package_index,
+            object_name: class_object,
+        });
+        -(self.imports.len() as i32)
+    }
+
+    pub fn build(&self) -> Vec<u8> {
+        use crate::version::{ue4, ue5};
+        let fv = self.file_version_ue5;
+        let ue4v = 522;
+        let filter_editor_only = true;
+        let mut d = build_minimal_package_with_version(fv, self.engine.0, self.engine.1);
+        let header_len = d.len();
+
+        // The header builder writes fixed-width zeros for every count/offset; find
+        // each field by re-walking the prefix it wrote, which is the same walk the
+        // parser does. `TestPkg` is the only variable-width field before them.
+        let mut cursor = 4 + 4 + 4 + 4 + 4 + 4; // tag, legacy, ue3, ue4, ue5, licensee
+        if fv >= ue5::PACKAGE_SAVED_HASH {
+            cursor += 20 + 4; // saved hash, total header size
+        }
+        cursor += 4; // custom version count
+        if fv < ue5::PACKAGE_SAVED_HASH {
+            cursor += 4; // total header size
+        }
+        cursor += 4 + "TestPkg".len() + 1; // package name FString
+        cursor += 4; // package flags
+        let name_count_pos = cursor;
+        let name_offset_pos = cursor + 4;
+        cursor += 8;
+        if fv >= ue5::ADD_SOFTOBJECTPATH_LIST {
+            cursor += 8;
+        }
+        cursor += 8; // gatherable text data
+        let export_count_pos = cursor;
+        let export_offset_pos = cursor + 4;
+        let import_count_pos = cursor + 8;
+        let import_offset_pos = cursor + 12;
+
+        // Name table: FString plus the two 16-bit hashes NAME_HASHES_SERIALIZED adds.
+        let name_offset = d.len();
+        for name in &self.names {
+            push_fstring(&mut d, name);
+            push_u32(&mut d, 0);
+        }
+        // Import table.
+        let import_offset = d.len();
+        let has_package_name =
+            ue4v >= ue4::NON_OUTER_PACKAGE_IMPORT && (!filter_editor_only || self.engine >= (5, 8));
+        for import in &self.imports {
+            push_raw_name(&mut d, import.class_package as i32);
+            push_raw_name(&mut d, import.class_name as i32);
+            push_i32(&mut d, import.outer_index);
+            push_raw_name(&mut d, import.object_name as i32);
+            if has_package_name {
+                push_raw_name(&mut d, 0);
+            }
+            if fv >= ue5::OPTIONAL_RESOURCES {
+                push_i32(&mut d, 0); // bImportOptional
+            }
+        }
+        // Export table, with payloads laid out right after it.
+        let export_offset = d.len();
+        let row_len = crate::object::ObjectExport::entry_bytes(ue4v, fv);
+        let payload_base = export_offset + self.exports.len() * row_len as usize;
+        let mut payload_cursor = payload_base as u64;
+        for export in &self.exports {
+            let serial_offset = payload_cursor;
+            payload_cursor += export.payload.len() as u64;
+            push_i32(&mut d, export.class_index);
+            push_i32(&mut d, 0); // super
+            push_i32(&mut d, 0); // template
+            push_i32(&mut d, export.outer_index);
+            push_raw_name(&mut d, export.object_name as i32);
+            push_u32(&mut d, 0); // object flags
+            push_i64(&mut d, export.payload.len() as i64);
+            push_i64(&mut d, serial_offset as i64);
+            push_i32(&mut d, 0); // forced export
+            push_i32(&mut d, 0); // not for client
+            push_i32(&mut d, 0); // not for server
+            if fv < ue5::REMOVE_OBJECT_EXPORT_PACKAGE_GUID {
+                push_guid(&mut d, 0, 0, 0, 0);
+            }
+            if fv >= ue5::TRACK_OBJECT_EXPORT_IS_INHERITED {
+                push_i32(&mut d, 0);
+            }
+            push_u32(&mut d, 0); // package flags
+            push_i32(&mut d, 0); // not always loaded for editor game
+            push_i32(&mut d, 0); // is asset
+            if fv >= ue5::OPTIONAL_RESOURCES {
+                push_i32(&mut d, 0); // generate public hash
+            }
+            for _ in 0..5 {
+                push_i32(&mut d, 0); // preload dependency fields
+            }
+            if fv >= ue5::SCRIPT_SERIALIZATION_OFFSET {
+                let (start, end) = export.script_range.unwrap_or((0, 0));
+                push_i64(&mut d, start as i64);
+                push_i64(&mut d, end as i64);
+            }
+        }
+        assert_eq!(
+            d.len(),
+            payload_base,
+            "export row width drifted from the parser"
+        );
+        for export in &self.exports {
+            d.extend_from_slice(&export.payload);
+        }
+
+        let put = |d: &mut Vec<u8>, pos: usize, value: i32| {
+            d[pos..pos + 4].copy_from_slice(&value.to_le_bytes());
+        };
+        put(&mut d, name_count_pos, self.names.len() as i32);
+        put(&mut d, name_offset_pos, name_offset as i32);
+        put(&mut d, export_count_pos, self.exports.len() as i32);
+        put(&mut d, export_offset_pos, export_offset as i32);
+        put(&mut d, import_count_pos, self.imports.len() as i32);
+        put(&mut d, import_offset_pos, import_offset as i32);
+        let _ = header_len;
+        d
+    }
+}
+
 /// An import-table row with `class_package` left as name 0; `outer_index` is a
 /// `FPackageIndex` (negative for another import).
 pub fn test_import(
