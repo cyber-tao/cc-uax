@@ -3,11 +3,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::AddAssign;
 
-/// Bumped to 8 when exports gained the decoded `script` block: the `UStruct`,
-/// `UFunction` and `UClass` serializers are read as structured fields and the
-/// compiled Kismet bytecode is disassembled, so `blueprint_bytecode` reports what
-/// it recovered instead of naming a gap.
-pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 8;
+/// Bumped to 9 when export paths in `diagnostics` and `known_opaque` switched to
+/// the package index `exports[].index` carries; `property_status` gained
+/// `native_only` and `known_opaque[].kind` gained `class_payload` and
+/// `decoder_gap`; `coverage` gained `property_exports_native_only`; exports
+/// gained `source_files`; and nested decode failures started reaching
+/// `diagnostics` and the tagged-property capability.
+pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 9;
 
 /// serde `skip_serializing_if` helper: drop `false` booleans from the rendered
 /// report so only set flags are emitted.

@@ -16,12 +16,14 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-/// Bumped to 9 when `coverage` gained the script-struct and bytecode counters
-/// that come with disassembling compiled Blueprint script, which also moves
-/// `blueprint_bytecode` from an unsupported capability to a reported one.
+/// Bumped to 10 alongside asset schema 9: the per-asset `known_opaque` summary
+/// gained the `class_payloads`/`decoder_gaps` kinds, `coverage` gained
+/// `property_exports_native_only`, and the tagged-property capability and
+/// status now account for opaque property values, so inventory statuses and
+/// capability histograms are not comparable with earlier reports.
 ///
 /// Public so tests assert against the constant rather than a copied literal.
-pub const PROJECT_REPORT_SCHEMA_VERSION: u32 = 9;
+pub const PROJECT_REPORT_SCHEMA_VERSION: u32 = 10;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {

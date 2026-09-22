@@ -11,7 +11,11 @@ mod scanner;
 /// Distinct from the CLI's report schema: this one also gates cache reuse, so any
 /// change to what a cached `AssetAnalysisSummary` means must bump it or a warm
 /// scan will replay summaries built under the old meaning.
-pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 4;
+///
+/// 5: cached summaries built before native-only payload classification, decoder
+/// span accounting, the import-data prefix decoder, the TextConst layout gate and
+/// the widened graph-node list carry different statuses and counters.
+pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 5;
 
 pub use analysis_summary::{
     AnalysisDiagnosticSummary, AssetAnalysisSummary, CapabilitySummary, GraphSummary,
