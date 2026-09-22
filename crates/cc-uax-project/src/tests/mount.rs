@@ -49,7 +49,7 @@ fn scans_game_plugin_and_engine_mounts_once() {
 
     assert_eq!(index.stats.discovered, 3);
     assert_eq!(index.stats.indexed, 3);
-    assert_eq!(index.stats.skipped, 0);
+    assert_eq!(index.stats.failed, 0);
     assert!(index.asset("/Game/GameAsset").is_some());
     assert!(index.asset("/Plugin/PluginAsset").is_some());
     assert!(index.asset("/Engine/EngineAsset").is_some());
@@ -138,7 +138,7 @@ fn duplicate_disk_root_is_a_structured_mount_failure() {
         .unwrap_err();
 
     assert_eq!(error.index().stats.indexed, 1);
-    assert_eq!(error.index().stats.skipped, 0);
+    assert_eq!(error.index().stats.discovered, 1);
     assert!(
         error
             .index()
@@ -167,7 +167,8 @@ fn overlapping_mounts_that_map_the_same_package_fail_indexing() {
 
     assert_eq!(error.index().stats.discovered, 2);
     assert_eq!(error.index().stats.indexed, 1);
-    assert_eq!(error.index().stats.skipped, 0);
+    // The duplicate is an asset-level failure, so the accounting still balances.
+    assert_eq!(error.index().stats.failed, 1);
     assert!(error.index().failures.iter().any(|failure| {
         failure.stage == ScanFailureStage::Index
             && failure.message.contains("duplicate package path")

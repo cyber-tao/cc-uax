@@ -25,7 +25,6 @@ fn assert_scan_accounting(index: &ProjectIndex) {
         .map(|failure| failure.path.clone())
         .collect::<BTreeSet<_>>()
         .len();
-    assert_eq!(index.stats.skipped, 0);
     assert_eq!(
         index.stats.discovered,
         index.stats.indexed + failed_asset_count

@@ -15,7 +15,7 @@ A project report also carries the `FileVersionUE5` of each package and an aggreg
 
 ## Establish the project report
 
-1. Locate the `.uproject` or `Content` directory. If several `.uproject` files share one Content tree, pass one file path explicitly; a directory scan still fails when more than one `.uproject` is present. Plugin content roots under `Plugins/` are mounted automatically under their `.uplugin` name — read `mounts` in the report rather than assuming a plugin's directory name.
+1. Locate the `.uproject` or `Content` directory. If several `.uproject` files share one Content tree (platform variants such as `Game.uproject`/`Game_Steam.uproject`), a directory or Content scan still succeeds: it reads the shared `Config/`, leaves `layout.project_file` unset, and records the candidates as a `config` diagnostic. Pass one `.uproject` explicitly only when you need that descriptor's own entry points. Plugin content roots under `Plugins/` are mounted automatically under their `.uplugin` name — read `mounts` in the report rather than assuming a plugin's directory name.
 2. Read the project report's config-derived `entry_points` first. Inspect raw `Config/DefaultEngine.ini`, `DefaultGame.ini`, or platform overrides only when a reported diagnostic or missing key requires it; do not copy unrelated config values into the analysis.
 3. Run exactly one project scan for the investigation:
 

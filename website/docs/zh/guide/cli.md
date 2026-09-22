@@ -52,7 +52,7 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
 cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 ```
 
-显式传入 `.uproject` 文件时，即使同一 Content 树下有多个平台 `.uproject`，也会选中该文件。对目录或 Content 路径，若存在多个 `.uproject` 仍会报错。
+显式传入 `.uproject` 文件时，即使同一 Content 树下有多个平台 `.uproject`，也会选中该文件。对目录或 Content 路径，即使存在多个 `.uproject` 也照常扫描：要扫描哪棵 Content 树从未有疑问，只是由哪个描述文件提供入口点不确定，因此扫描会在 `layout.project_file` 缺省的情况下继续，读取共享的 `Config/`，并把候选文件记录为一条 `config` 诊断。
 
 ### Mounts
 

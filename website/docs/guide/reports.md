@@ -51,8 +51,8 @@ Sparse output: empty or default fields (`null`, `[]`, `false`, `""`, `"None"`, `
   "entry_points": {},
   "reachability": { /* configured roots, reachable packages, closure members, gaps */ },
   "stats": { /* every filesystem/index/cache counter, including zeros */ },
-  "analysis": { /* aggregate coverage, capabilities, and per-asset summaries */ },
-  "inventory": [ /* one compact analysis per package */ ],
+  "analysis": { /* aggregate status, asset counts, summed coverage, capability histogram, FileVersionUE5 distribution */ },
+  "inventory": [ /* one compact per-asset analysis summary per package */ ],
   "focused": { /* full AssetAnalysis for packages matching --focus */ }
 }
 ```

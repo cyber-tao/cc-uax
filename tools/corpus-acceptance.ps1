@@ -290,7 +290,6 @@ function Measure-Project {
         discovered            = $stats.discovered
         indexed               = $stats.indexed
         failed                = $stats.failed
-        skipped               = $stats.skipped
         assets                = $analysis.assets
         complete_assets       = $analysis.complete_assets
         partial_assets        = $analysis.partial_assets
@@ -339,8 +338,10 @@ function Test-Invariants {
     if ($Result.unclassified_bytes -ne 0) {
         $problems += "unclassified_bytes is $($Result.unclassified_bytes); every export byte must be decoded or classified opaque"
     }
-    if ($Result.discovered -ne ($Result.indexed + $Result.failed + $Result.skipped)) {
-        $problems += "scan accounting broken: discovered $($Result.discovered) != indexed $($Result.indexed) + failed $($Result.failed) + skipped $($Result.skipped)"
+    # Every discovered file is either indexed or an asset-level failure. There is
+    # deliberately no remainder term: one made this hold by construction.
+    if ($Result.discovered -ne ($Result.indexed + $Result.failed)) {
+        $problems += "scan accounting broken: discovered $($Result.discovered) != indexed $($Result.indexed) + failed $($Result.failed)"
     }
     if ($Result.assets -ne ($Result.complete_assets + $Result.partial_assets + $Result.unsupported_assets)) {
         $problems += "asset status accounting broken for $($Result.assets) assets"

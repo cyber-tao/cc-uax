@@ -223,10 +223,16 @@ impl ScanFailure {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanStats {
+    /// Mapped `.uasset`/`.umap` files found under the mounts. Every one of them
+    /// is either indexed or an asset-level failure, so
+    /// `discovered == indexed + failed` is a real invariant: a file that fell
+    /// through the planning passes would break it rather than hide in a
+    /// remainder counter.
     pub discovered: usize,
     pub indexed: usize,
     pub failed: usize,
-    pub skipped: usize,
+    /// Symbolic links met during discovery and not followed. These are directory
+    /// entries, not discovered files, so they sit outside the equation above.
     pub skipped_symlinks: usize,
     pub external_actors: usize,
     pub external_objects: usize,

@@ -52,7 +52,7 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
 cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 ```
 
-Passing an explicit `.uproject` file selects that file even when sibling platform `.uproject` files share the same Content tree. A directory or Content path still errors if more than one `.uproject` is present.
+Passing an explicit `.uproject` file selects that file even when sibling platform `.uproject` files share the same Content tree. A directory or Content path with more than one `.uproject` still scans: which Content tree to read was never in doubt, only which descriptor supplies entry points, so the scan proceeds with `layout.project_file` unset, reads the shared `Config/`, and lists the candidates in a `config` diagnostic.
 
 ### Mounts
 

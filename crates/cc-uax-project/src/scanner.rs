@@ -630,11 +630,17 @@ pub(crate) fn build_project_index(
         failed_asset_count,
     );
     // `stats.failed` counts asset-level failures (read/parse/index of a discovered
-    // asset) so the accounting `discovered == indexed + failed + skipped` holds.
+    // asset) so the accounting `discovered == indexed + failed` holds — and can
+    // fail: a discovered file the planning passes neither indexed nor recorded a
+    // failure for shows up as a mismatch, which a remainder counter used to hide.
     // Infrastructure failures (mount/discovery/ownership/cache) are about the scan,
     // not a discovered asset; they stay visible in `failures` and `analysis.scan_failures`.
     stats.failed = failed_asset_count;
-    stats.skipped = discovered.saturating_sub(assets.len() + failed_asset_count);
+    debug_assert_eq!(
+        discovered,
+        assets.len() + failed_asset_count,
+        "every discovered file must be indexed or recorded as a failure"
+    );
     let analysis = ProjectAnalysisSummary::aggregate(
         assets.values().map(|record| &record.analysis),
         failures.len(),

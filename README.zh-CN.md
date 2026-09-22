@@ -360,9 +360,9 @@ cargo run -p cc-uax-cli --release --locked -- asset Content/Blueprints/BP_Player
   },
   "stats": { /* 全部文件系统/索引/缓存计数，含零值 */ },
   "analysis": {
-    /* 聚合 coverage、capabilities 及逐资产摘要 */
+    /* 聚合 status、资产计数、汇总 coverage、capability 直方图与 FileVersionUE5 分布 */
   },
-  "inventory": [ /* 每个包一条紧凑分析 */ ],
+  "inventory": [ /* 每个包一条紧凑的逐资产分析摘要 */ ],
   "focused": { /* 匹配 --focus 的完整 AssetAnalysis */ }
   /* 稀疏输出：空的邻接、failures、diagnostics 和 reachability 集合被省略。 */
 }

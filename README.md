@@ -360,9 +360,9 @@ Reports are typed internally and rendered to JSON only at the CLI boundary. Asse
   },
   "stats": { /* every filesystem/index/cache counter, including zeros */ },
   "analysis": {
-    /* aggregate coverage, capabilities, and per-asset summaries */
+    /* aggregate status, asset counts, summed coverage, the capability histogram, and the FileVersionUE5 distribution */
   },
-  "inventory": [ /* one compact analysis per package */ ],
+  "inventory": [ /* one compact per-asset analysis summary per package */ ],
   "focused": { /* full AssetAnalysis for packages matching --focus */ }
   /* Sparse output: empty adjacency, failures, diagnostics, and reachability sets are omitted. */
 }
