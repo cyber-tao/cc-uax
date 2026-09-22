@@ -50,6 +50,9 @@ pub mod ue4 {
     pub const ADDED_SEARCHABLE_NAMES: i32 = 510;
     pub const SERIALSIZE_64BIT_EXPORTMAP: i32 = 511;
     pub const ADDED_SOFT_OBJECT_PATH: i32 = 514;
+    /// `UAssetImportData` writes its source-file list as a JSON `FString` before
+    /// its tagged properties from this version on (`AssetImportData.cpp`).
+    pub const ASSET_IMPORT_DATA_AS_JSON: i32 = 515;
     pub const ADDED_PACKAGE_SUMMARY_LOCALIZATION_ID: i32 = 516;
     pub const ADDED_PACKAGE_OWNER: i32 = 518;
     pub const NON_OUTER_PACKAGE_IMPORT: i32 = 520;

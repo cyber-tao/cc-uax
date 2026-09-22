@@ -1,8 +1,11 @@
+mod import_data;
 mod member;
 pub(crate) mod pins;
 mod properties;
 pub(crate) mod rigvm;
 mod window;
+
+pub(crate) use import_data::ImportSourceFile;
 
 use crate::diagnostic::{ByteRangePreview, Diagnostic};
 use crate::package::Package;
@@ -16,6 +19,9 @@ use crate::structured_value::{Value, json};
 use crate::version::{SerializationPolicy, custom, ue5};
 use std::collections::HashMap;
 
+use import_data::{
+    decode_import_data_prefix, is_asset_import_data_class, writes_import_data_prefix,
+};
 use pins::{decode_pins_for_export, is_graph_node_class};
 use properties::decode_properties_for_export;
 use rigvm::{
@@ -60,6 +66,13 @@ pub(crate) struct DecodedExport {
     pub(crate) identity: DecodedExportIdentity,
     pub(crate) properties: Option<Vec<PropertyEntry>>,
     pub(crate) property_status: Option<PropertyParseStatus>,
+    /// `UAssetImportData`'s source-file list, decoded from the JSON `FString`
+    /// the class writes before its tagged properties.
+    pub(crate) source_files: Option<Vec<ImportSourceFile>>,
+    /// End of a decoded class prefix (bytes before the tagged block that a
+    /// class-specific decoder consumed). Only the remainder up to
+    /// `property_start`, if any, is an undecoded pre-script region.
+    pub(crate) decoded_prefix_end: Option<u64>,
     pub(crate) pre_script_region: Option<ByteRangePreview>,
     pub(crate) post_property_tail: Option<ByteRangePreview>,
     pub(crate) object_guid: Option<String>,
@@ -277,6 +290,8 @@ impl Package {
                 },
                 properties: None,
                 property_status: None,
+                source_files: None,
+                decoded_prefix_end: None,
                 pre_script_region: None,
                 post_property_tail: None,
                 object_guid: None,
@@ -297,7 +312,7 @@ impl Package {
             };
 
             let export_path = export.identity.path();
-            let serial_window = match export_serial_window(
+            let mut serial_window = match export_serial_window(
                 exp,
                 has_script,
                 file_len,
@@ -352,7 +367,32 @@ impl Package {
                 );
                 decoded.push(export);
                 continue;
-            } else if (options.properties || is_node || capture_adapter_properties)
+            }
+
+            // UAssetImportData writes a JSON FString ahead of its tagged block.
+            // Decoding it is what lets the tag loop start where the block really
+            // starts on packages without a declared range, and turns the
+            // provenance it holds into evidence instead of an opaque prefix.
+            if let Some(window) = serial_window.as_mut()
+                && window.writes_tagged_block
+                && is_asset_import_data_class(&class_full)
+                && writes_import_data_prefix(
+                    self.summary.file_version_ue4,
+                    self.summary.filter_editor_only(),
+                )
+                && let Some((source_files, prefix_end)) =
+                    decode_import_data_prefix(&mut reader, *window)
+            {
+                export.source_files = Some(source_files);
+                export.decoded_prefix_end = Some(prefix_end);
+                if !window.has_declared_property_range {
+                    window.property_start = prefix_end;
+                }
+            }
+
+            // URigVMLink has no tagged block either; its two FStrings were read above.
+            if !is_rigvm_link
+                && (options.properties || is_node || capture_adapter_properties)
                 && let Some(window) = serial_window
             {
                 decode_properties_for_export(
@@ -417,12 +457,15 @@ fn account_export_tail(
 ) {
     let serial_size = window.serial_end.saturating_sub(window.serial_start);
     export.serial_size = serial_size;
-    if window.property_start > window.serial_start {
-        export.pre_script_region = Some(preview_range(
-            reader,
-            window.serial_start,
-            window.property_start,
-        ));
+    // A class prefix a decoder consumed is evidence, not an opaque region; only
+    // what is left between it and the tagged block is undecoded.
+    let prefix_end = export
+        .decoded_prefix_end
+        .unwrap_or(window.serial_start)
+        .clamp(window.serial_start, window.property_start);
+    let prefix_bytes = prefix_end - window.serial_start;
+    if window.property_start > prefix_end {
+        export.pre_script_region = Some(preview_range(reader, prefix_end, window.property_start));
     }
     let mut decoded_end = export
         .decoded_end
@@ -561,6 +604,7 @@ fn account_export_tail(
     let pre = export.pre_script_region.as_ref().map_or(0, |p| p.size);
     let post = export.post_property_tail.as_ref().map_or(0, |p| p.size);
     export.unclassified_bytes = serial_size
+        .saturating_sub(prefix_bytes)
         .saturating_sub(pre)
         .saturating_sub(post)
         .saturating_sub(covered)

@@ -35,6 +35,7 @@ fn export_with_property(name: &str, value: DecodedValue) -> AssetExport {
             value,
             guid: None,
         }],
+        source_files: None,
         metadata: None,
         member: None,
         script: None,

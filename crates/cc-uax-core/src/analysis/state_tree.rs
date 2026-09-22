@@ -701,6 +701,7 @@ mod tests {
             object_guid: None,
             property_status: None,
             properties,
+            source_files: None,
             metadata: None,
             member: None,
             script: None,

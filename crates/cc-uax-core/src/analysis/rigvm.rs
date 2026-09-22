@@ -623,6 +623,8 @@ mod tests {
                 guid: None,
             }]),
             property_status: Some(PropertyParseStatus::Complete),
+            source_files: None,
+            decoded_prefix_end: None,
             pre_script_region: None,
             post_property_tail: None,
             object_guid: None,
@@ -633,9 +635,7 @@ mod tests {
             rigvm_link: None,
             script_struct: None,
             property_block_closed: true,
-
             property_block_end: None,
-
             pins_failed: false,
 
             decoded_spans: Vec::new(),

@@ -125,6 +125,17 @@ pub(super) fn export_to_model(
             .iter()
             .map(property_to_model)
             .collect(),
+        source_files: export.source_files.as_ref().map(|files| {
+            files
+                .iter()
+                .map(|file| ImportSourceFile {
+                    relative_filename: file.relative_filename.clone(),
+                    timestamp: file.timestamp,
+                    file_hash: file.file_hash.clone(),
+                    display_label: file.display_label.clone(),
+                })
+                .collect()
+        }),
         metadata: export.metadata.clone(),
         member: export.member.as_ref().map(|member| MemberReference {
             name: member.name.clone(),

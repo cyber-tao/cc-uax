@@ -700,6 +700,123 @@ fn known_native_only_class_is_classified_without_a_script_range() {
     assert_native_only_payload(&analysis, data.len() as u64);
 }
 
+/// `UAssetImportData::Serialize` writes its source files as a JSON `FString`
+/// *before* `Super::Serialize` (AssetImportData.cpp, UE5.0–5.8). Below
+/// `SCRIPT_SERIALIZATION_OFFSET` nothing in the export table says where the
+/// tagged block begins, so without decoding the string the tag loop started in
+/// the middle of the JSON and every imported asset was `partial`; from 1010 the
+/// string sat in `pre_script_region` as an opaque prefix. Both shapes now yield
+/// the source files and a complete tagged block.
+#[test]
+fn asset_import_data_json_prefix_decodes_in_both_window_shapes() {
+    const JSON: &str = r#"[{ "RelativeFilename" : "../../Src/Bot.fbx", "Timestamp" : "1700000000", "FileMD5" : "00112233445566778899aabbccddeeff", "DisplayLabelName" : "" }]"#;
+    for file_version_ue5 in [1007, 1018] {
+        let base = Package::parse(&build_minimal_editor_package_with_version(
+            file_version_ue5,
+            5,
+            1,
+        ))
+        .unwrap();
+        assert!(!base.summary.filter_editor_only());
+        let mut data = Vec::new();
+        push_fstring(&mut data, JSON);
+        let tagged_start = data.len();
+        if file_version_ue5
+            >= crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
+        {
+            data.push(0); // object serialization control
+        }
+        if file_version_ue5 >= crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME {
+            push_raw_name(&mut data, 3); // bDirty
+            push_raw_name(&mut data, 4); // BoolProperty
+            push_i32(&mut data, 0);
+            push_i32(&mut data, 0);
+            data.push(0x10); // BoolVal = true
+        } else {
+            push_legacy_tag_header(&mut data, 3, 4, 0);
+            data.push(1); // BoolVal
+            push_legacy_tag_tail(&mut data, file_version_ue5);
+        }
+        push_raw_name(&mut data, 5); // None
+        let tagged_end = data.len();
+        push_i32(&mut data, 0); // PossiblySerializeObjectGuid: absent
+
+        let (script_start, script_end) =
+            if file_version_ue5 >= crate::version::ue5::SCRIPT_SERIALIZATION_OFFSET {
+                (tagged_start as i64, tagged_end as i64)
+            } else {
+                (0, 0)
+            };
+        let package = Package {
+            summary: base.summary,
+            names: NameMap {
+                names: vec![
+                    "/Script/Engine".to_string(),
+                    "AssetImportData".to_string(),
+                    "Package".to_string(),
+                    "bDirty".to_string(),
+                    "BoolProperty".to_string(),
+                    "None".to_string(),
+                    "Class".to_string(),
+                ],
+            },
+            imports: vec![test_import(2, 0, 0, 0), test_import(6, 1, -1, 0)],
+            exports: vec![ObjectExport {
+                class_index: crate::object::PackageIndex(-2),
+                ..test_export(1, data.len() as i64, script_start, script_end)
+            }],
+            soft_object_paths: Vec::new(),
+            soft_object_path_error: None,
+            soft_package_references: Vec::new(),
+            soft_package_reference_error: None,
+        };
+
+        let analysis = analyze_package(&package, &data, AssetView::Full);
+        let export = &analysis.exports[0];
+        assert_eq!(
+            export.class, "/Script/Engine.AssetImportData",
+            "{file_version_ue5}"
+        );
+        assert_eq!(
+            export.property_status,
+            Some(PropertyDecodeStatus::Complete),
+            "{file_version_ue5}: {:#?}",
+            analysis.diagnostics
+        );
+        assert_eq!(export.properties.len(), 1, "{file_version_ue5}");
+        let files = export
+            .source_files
+            .as_ref()
+            .unwrap_or_else(|| panic!("{file_version_ue5}: no source files"));
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].relative_filename, "../../Src/Bot.fbx");
+        assert_eq!(files[0].timestamp, Some(1_700_000_000));
+        assert!(
+            analysis.diagnostics.is_empty(),
+            "{:#?}",
+            analysis.diagnostics
+        );
+        assert_eq!(
+            analysis.status,
+            AnalysisStatus::Complete,
+            "{file_version_ue5}"
+        );
+        assert!(
+            analysis
+                .known_opaque
+                .iter()
+                .all(|region| region.kind != KnownOpaqueKind::PreScriptRegion),
+            "{file_version_ue5}: {:#?}",
+            analysis.known_opaque
+        );
+        assert_eq!(
+            analysis.coverage.unclassified_bytes, 0,
+            "{file_version_ue5}"
+        );
+        assert_eq!(analysis.coverage.opaque_bytes, 0, "{file_version_ue5}");
+    }
+}
+
 fn assert_native_only_payload(analysis: &crate::AssetAnalysis, payload_len: u64) {
     assert_eq!(
         analysis.exports[0].property_status,

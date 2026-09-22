@@ -259,6 +259,60 @@ fn nested_decode_failures_reach_the_report_and_its_status() {
     assert_eq!(analysis.coverage.unclassified_bytes, 0);
 }
 
+/// `URigVMLink::Serialize` writes two FStrings and never a tagged block. The link
+/// decoder owns that export; the tagged-property decoder must not run on it
+/// afterwards and report the FStrings as a payload that "does not start with a
+/// tagged property block".
+#[test]
+fn rigvm_link_exports_are_not_run_through_the_tagged_property_decoder() {
+    let base = Package::parse(&build_minimal_package_with_version(1007, 5, 1)).unwrap();
+    let mut data = Vec::new();
+    push_fstring(&mut data, "Source.ExecuteContext");
+    push_fstring(&mut data, "Target.ExecuteContext");
+
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "/Script/RigVMDeveloper".into(),
+                "RigVMLink".into(),
+                "Package".into(),
+                "Class".into(),
+                "RigVMLink_0".into(),
+            ],
+        },
+        imports: vec![test_import(2, 0, 0, 0), test_import(3, 1, -1, 0)],
+        exports: vec![crate::object::ObjectExport {
+            class_index: PackageIndex(-2),
+            ..test_export(4, data.len() as i64, 0, 0)
+        }],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert_eq!(
+        analysis.exports[0].class,
+        "/Script/RigVMDeveloper.RigVMLink"
+    );
+    assert!(
+        analysis.diagnostics.is_empty(),
+        "{:#?}",
+        analysis.diagnostics
+    );
+    assert_eq!(analysis.exports[0].property_status, None);
+    assert_eq!(analysis.coverage.property_exports_total, 0);
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+    assert!(
+        analysis.known_opaque.is_empty(),
+        "{:#?}",
+        analysis.known_opaque
+    );
+    assert_eq!(analysis.status, AnalysisStatus::Complete);
+}
+
 /// Byte conservation is computed from the spans each decoder actually claimed.
 /// When the tag loop stops early and the pin decoder starts at the declared
 /// property end, the bytes in between were consumed by nobody: they are reported

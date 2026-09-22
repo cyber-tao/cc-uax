@@ -1090,6 +1090,8 @@ fn decoded_export(index: i32, name: &str, pins: Option<Vec<Pin>>) -> DecodedExpo
         },
         properties: None,
         property_status: None,
+        source_files: None,
+        decoded_prefix_end: None,
         pre_script_region: None,
         post_property_tail: None,
         object_guid: None,
@@ -1100,13 +1102,9 @@ fn decoded_export(index: i32, name: &str, pins: Option<Vec<Pin>>) -> DecodedExpo
         rigvm_link: None,
         script_struct: None,
         property_block_closed: true,
-
         property_block_end: None,
-
         pins_failed: false,
-
         decoded_spans: Vec::new(),
-
         decoded_gaps: Vec::new(),
         decoded_end: None,
         serial_size: 0,

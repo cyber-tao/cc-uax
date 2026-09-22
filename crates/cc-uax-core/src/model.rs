@@ -515,6 +515,11 @@ pub struct AssetExport {
     pub property_status: Option<PropertyDecodeStatus>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<AssetProperty>,
+    /// `UAssetImportData`'s source-file list: the files this asset was imported
+    /// from, decoded from the JSON the class writes ahead of its properties.
+    /// Present only on `*ImportData` exports; empty when the class recorded none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_files: Option<Vec<ImportSourceFile>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<DecodedValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -524,6 +529,21 @@ pub struct AssetExport {
     /// generated classes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script: Option<ScriptStructInfo>,
+}
+
+/// One source file recorded by `FAssetImportInfo` (`AssetImportData.cpp`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportSourceFile {
+    /// Path as the importer recorded it, relative to the asset's package.
+    pub relative_filename: String,
+    /// Unix timestamp of the source file at import time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<i64>,
+    /// MD5 of the source file at import time, as UE prints it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_label: Option<String>,
 }
 
 /// `UStruct::Serialize`: the reflected shape of a function or generated class,
