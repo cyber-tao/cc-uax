@@ -3,7 +3,8 @@ use super::typed::{
     object_ref_index, object_ref_indices, object_ref_path, property, resolved_object_refs, string,
 };
 use crate::graph_models::{
-    StateTreeCondition, StateTreeGraph, StateTreeState, StateTreeTask, StateTreeTransition,
+    StateTreeCondition, StateTreeGraph, StateTreeState, StateTreeStateLink, StateTreeTask,
+    StateTreeTransition,
 };
 use crate::model::{AssetExport, AssetProperty, DecodedValue, KnownOpaque, PropertyDecodeStatus};
 use std::collections::{BTreeMap, BTreeSet};
@@ -100,8 +101,16 @@ fn build_graph(
         .and_then(|export| property(export, "GlobalTasks"))
         .map(build_node_list)
         .unwrap_or_default();
+    // UE5.6 moved the bag to `RootParameterPropertyBag`; 5.1–5.5 keep it inside
+    // `RootParameters` (`FStateTreeStateParameters::Parameters`). Reading only the
+    // new name reported every older tree as having no parameters.
     let root_parameters = editor_data
-        .and_then(|export| property(export, "RootParameterPropertyBag"))
+        .and_then(|export| {
+            property(export, "RootParameterPropertyBag").or_else(|| {
+                property(export, "RootParameters")
+                    .and_then(|parameters| nested_property(parameters, "Parameters"))
+            })
+        })
         .map(nested_properties)
         .unwrap_or_default();
 
@@ -197,6 +206,12 @@ fn build_state(state: &AssetExport) -> StateTreeState {
             .and_then(string)
             .map(str::to_owned),
         enabled: property(state, "bEnabled").and_then(boolean),
+        linked_subtree: property(state, "LinkedSubtree").map(build_state_link),
+        linked_asset: non_null(property(state, "LinkedAsset")),
+        // UE5.0 evaluators live on the state; from 5.1 they are on the editor data.
+        evaluators: property(state, "Evaluators")
+            .map(build_node_list)
+            .unwrap_or_default(),
         tasks: property(state, "Tasks")
             .and_then(array)
             .into_iter()
@@ -292,33 +307,46 @@ fn build_node_instance(value: &DecodedValue, primary_enabled_field: &str) -> Nod
     }
 }
 
+/// `FStateTreeStateLink`. The kind field was `Type` through UE5.2 and is
+/// `LinkType` from 5.3 (StateTreeTypes.h).
+fn build_state_link(value: &DecodedValue) -> StateTreeStateLink {
+    StateTreeStateLink {
+        name: nested_property(value, "Name")
+            .and_then(string)
+            .map(str::to_owned),
+        id: nested_property(value, "ID")
+            .and_then(string)
+            .map(str::to_owned),
+        link_type: nested_property(value, "LinkType")
+            .or_else(|| nested_property(value, "Type"))
+            .and_then(string)
+            .map(str::to_owned),
+    }
+}
+
 fn build_transition(value: &DecodedValue) -> StateTreeTransition {
     let properties = nested_properties(value);
-    let state_link = asset_property(&properties, "State");
+    let state_link = asset_property(&properties, "State").map(build_state_link);
     StateTreeTransition {
         id: asset_property(&properties, "ID")
             .and_then(string)
             .map(str::to_owned),
+        // `Trigger` from UE5.1; UE5.0 spelled it `Event` (EStateTreeTransitionEvent).
         trigger: asset_property(&properties, "Trigger")
+            .or_else(|| asset_property(&properties, "Event"))
             .and_then(string)
             .map(str::to_owned),
         priority: asset_property(&properties, "Priority")
             .and_then(string)
             .map(str::to_owned),
-        target_name: state_link
-            .and_then(|value| nested_property(value, "Name"))
-            .and_then(string)
-            .map(str::to_owned),
-        target_id: state_link
-            .and_then(|value| nested_property(value, "ID"))
-            .and_then(string)
-            .map(str::to_owned),
-        link_type: state_link
-            .and_then(|value| nested_property(value, "LinkType"))
-            .and_then(string)
-            .map(str::to_owned),
+        target_name: state_link.as_ref().and_then(|link| link.name.clone()),
+        target_id: state_link.as_ref().and_then(|link| link.id.clone()),
+        link_type: state_link.as_ref().and_then(|link| link.link_type.clone()),
         enabled: asset_property(&properties, "bTransitionEnabled").and_then(boolean),
-        delay_seconds: asset_property(&properties, "DelayDuration").and_then(float),
+        // `DelayDuration` from UE5.3; `GateDelay` before.
+        delay_seconds: asset_property(&properties, "DelayDuration")
+            .or_else(|| asset_property(&properties, "GateDelay"))
+            .and_then(float),
         delay_random_variance: asset_property(&properties, "DelayRandomVariance").and_then(float),
         conditions: asset_property(&properties, "Conditions")
             .and_then(array)
@@ -547,6 +575,125 @@ mod tests {
             Some("Only".to_string())
         );
         assert_eq!(state.considerations.len(), 1);
+        assert_eq!(graph.unresolved_state_references, 0);
+    }
+
+    // The field names drifted across releases (StateTreeEditorData.h,
+    // StateTreeState.h, StateTreeTypes.h on each branch): UE5.0 keeps evaluators on
+    // the state and spells a transition's trigger `Event` and its delay
+    // `GateDelay`; the state link's kind is `Type` through 5.2 and `LinkType` from
+    // 5.3; the root parameters are `RootParameters.Parameters` from 5.1 to 5.5 and
+    // `RootParameterPropertyBag` from 5.6; `LinkedSubtree` (5.1) and `LinkedAsset`
+    // (5.5) name what a linked state runs. Reading only the newest spelling
+    // reported every older tree as having no parameters, no evaluators, untimed
+    // transitions and linked states with no target.
+    #[test]
+    fn older_release_layouts_are_read_through_their_own_field_names() {
+        let task = editor_node(
+            "/Script/StateTreeModule.StateTreeDelayTask",
+            "Eval50",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "bTaskEnabled",
+        );
+        let transition_50 = struct_value(
+            "StateTreeTransition",
+            vec![
+                prop(
+                    "Event",
+                    text_value("EStateTreeTransitionEvent::OnCompleted"),
+                ),
+                prop(
+                    "State",
+                    struct_value(
+                        "StateTreeStateLink",
+                        vec![
+                            prop("Name", text_value("Root")),
+                            prop("Type", text_value("EStateTreeTransitionType::GotoState")),
+                        ],
+                    ),
+                ),
+                prop("GateDelay", DecodedValue::Float(1.5)),
+            ],
+        );
+        let exports = vec![
+            export(
+                1,
+                "Tree",
+                STATE_TREE_CLASS,
+                0,
+                vec![prop("EditorData", object_ref(2, "Tree.EditorData"))],
+            ),
+            export(
+                2,
+                "EditorData",
+                STATE_TREE_EDITOR_DATA_CLASS,
+                1,
+                vec![
+                    prop("SubTrees", refs(&[(3, "Tree.EditorData.Root")])),
+                    // 5.1–5.5 shape: the bag nested inside FStateTreeStateParameters.
+                    prop(
+                        "RootParameters",
+                        struct_value(
+                            "StateTreeStateParameters",
+                            vec![prop(
+                                "Parameters",
+                                struct_value(
+                                    "InstancedPropertyBag",
+                                    vec![prop("Speed", DecodedValue::Float(3.0))],
+                                ),
+                            )],
+                        ),
+                    ),
+                ],
+            ),
+            export(
+                3,
+                "State_0",
+                STATE_TREE_STATE_CLASS,
+                2,
+                vec![
+                    prop("Name", text_value("Root")),
+                    prop("Evaluators", DecodedValue::Array(vec![task])),
+                    prop("Transitions", DecodedValue::Array(vec![transition_50])),
+                    prop(
+                        "LinkedSubtree",
+                        struct_value(
+                            "StateTreeStateLink",
+                            vec![
+                                prop("Name", text_value("Sub")),
+                                prop("ID", text_value("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")),
+                                prop(
+                                    "LinkType",
+                                    text_value("EStateTreeTransitionType::GotoState"),
+                                ),
+                            ],
+                        ),
+                    ),
+                    prop("LinkedAsset", object_ref(-1, "/Game/ST_Other.ST_Other")),
+                ],
+            ),
+        ];
+
+        let result = build_state_tree_graphs(&exports);
+        let graph = &result.graphs[0];
+        assert_eq!(graph.root_parameters.len(), 1);
+        assert_eq!(graph.root_parameters[0].name, "Speed");
+        let state = &graph.states[0];
+        assert_eq!(state.evaluators.len(), 1);
+        assert_eq!(state.evaluators[0].name.as_deref(), Some("Eval50"));
+        let transition = &state.transitions[0];
+        assert_eq!(
+            transition.trigger.as_deref(),
+            Some("EStateTreeTransitionEvent::OnCompleted")
+        );
+        assert_eq!(transition.delay_seconds, Some(1.5));
+        assert_eq!(
+            transition.link_type.as_deref(),
+            Some("EStateTreeTransitionType::GotoState")
+        );
+        let linked = state.linked_subtree.as_ref().expect("linked subtree");
+        assert_eq!(linked.name.as_deref(), Some("Sub"));
+        assert!(state.linked_asset.is_some());
         assert_eq!(graph.unresolved_state_references, 0);
     }
 

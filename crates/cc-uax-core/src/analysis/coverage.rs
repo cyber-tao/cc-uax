@@ -372,7 +372,9 @@ pub(super) fn compute_state_tree_coverage(
     // Tree-wide evaluators/global tasks and per-state single tasks are logic too;
     // counting only `Tasks` reported a tree as having fewer nodes than it has.
     let tasks_decoded = states()
-        .map(|state| state.tasks.len() + usize::from(state.single_task.is_some()))
+        .map(|state| {
+            state.tasks.len() + state.evaluators.len() + usize::from(state.single_task.is_some())
+        })
         .sum::<usize>()
         + adapter
             .graphs

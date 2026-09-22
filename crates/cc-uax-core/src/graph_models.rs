@@ -48,8 +48,11 @@ pub struct PcgPin {
     pub direction: PinDirection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// `FPCGPinProperties::AllowedTypes`: an `EPCGDataType` name through UE5.6,
+    /// and from 5.7 the decoded `FPCGDataTypeIdentifier` struct (`Ids`,
+    /// `CustomSubtype`). Kept as the decoded value so neither version is lost.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_types: Option<String>,
+    pub allowed_types: Option<DecodedValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -85,9 +88,9 @@ pub struct StateTreeGraph {
     /// than one state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub global_tasks: Vec<StateTreeTask>,
-    /// `UStateTreeEditorData::RootParameterPropertyBag`, the tree's public
-    /// parameters. Present as decoded properties, or absent when the bag stayed
-    /// opaque.
+    /// The tree's public parameters: `UStateTreeEditorData::RootParameterPropertyBag`
+    /// (UE5.6+) or the bag inside `RootParameters` (UE5.1–5.5). Present as decoded
+    /// properties, or absent when the bag stayed opaque.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub root_parameters: Vec<AssetProperty>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -118,6 +121,18 @@ pub struct StateTreeState {
     pub selection_behavior: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// `UStateTreeState::LinkedSubtree` (UE5.1+): the subtree a `Linked` state
+    /// runs, as its `name`/`id`. Without it a linked state had no target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_subtree: Option<StateTreeStateLink>,
+    /// `UStateTreeState::LinkedAsset` (UE5.5+): the external StateTree a
+    /// `LinkedAsset` state runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_asset: Option<DecodedValue>,
+    /// `UStateTreeState::Evaluators`: UE5.0 kept evaluators per state before they
+    /// moved to the editor data in 5.1.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evaluators: Vec<StateTreeTask>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tasks: Vec<StateTreeTask>,
     /// `UStateTreeState::SingleTask`. A state configured with the single-task
@@ -172,6 +187,18 @@ pub struct StateTreeCondition {
     pub node_properties: Vec<AssetProperty>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instance_properties: Vec<AssetProperty>,
+}
+
+/// `FStateTreeStateLink`: a reference to another state by name and ID, plus the
+/// link kind (`LinkType`, or `Type` before UE5.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateTreeStateLink {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

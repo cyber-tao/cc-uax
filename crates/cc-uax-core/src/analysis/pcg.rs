@@ -188,7 +188,9 @@ fn build_node(
         pins.push(pin);
     }
 
-    let settings = property(node, "SettingsInterface");
+    // `SettingsInterface` from UE5.2; UE5.1 nodes point at `DefaultSettings`.
+    let settings =
+        property(node, "SettingsInterface").or_else(|| property(node, "DefaultSettings"));
     (
         PcgNode {
             index: node.index,
@@ -224,10 +226,12 @@ fn build_pin(
         .and_then(|value| nested_property(value, "Label"))
         .and_then(string)
         .map(str::to_owned);
+    // An enum name through UE5.6, a struct (`FPCGDataTypeIdentifier`) from 5.7;
+    // reading it as a string only dropped every 5.7+ pin's type.
     let allowed_types = pin_properties
         .and_then(|value| nested_property(value, "AllowedTypes"))
-        .and_then(string)
-        .map(str::to_owned);
+        .filter(|value| !matches!(value, DecodedValue::Null))
+        .cloned();
     let status = pin_properties
         .and_then(|value| nested_property(value, "PinStatus"))
         .and_then(string)
