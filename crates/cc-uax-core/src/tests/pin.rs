@@ -216,6 +216,7 @@ fn node_pin_array_decodes() {
         file_version_ue4: crate::version::ue4::HIGHEST,
 
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
 
     let vc = PinSerCtx {
@@ -325,6 +326,7 @@ fn node_pin_parse_failure_reports_diagnostic() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
 
     let mut r = Reader::new(&d);
@@ -424,6 +426,7 @@ fn edgraph_pin_type_map_container_decodes() {
         file_version_ue4: crate::version::ue4::HIGHEST,
 
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
 
     let mut r = Reader::new(&d);
@@ -494,10 +497,18 @@ fn legacy_property_terminator_locates_the_same_pin_stream_as_script_offset() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 1009,
+        nested_diagnostics: Default::default(),
     };
     let script_offset_context = ParseCtx {
+        names: &names,
+        resolve_object: &|_| crate::DecodedValue::Null,
+        pins: pin_context,
+        soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 1010,
-        ..legacy_context
+        nested_diagnostics: Default::default(),
     };
 
     let mut legacy_reader = Reader::new(&data);
@@ -559,6 +570,7 @@ fn locate_legacy_pin_start_after_bool_property_tags() {
             serialization: crate::version::SerializationPolicy::default(),
             file_version_ue4: crate::version::ue4::HIGHEST,
             file_version_ue5: fv,
+            nested_diagnostics: Default::default(),
         };
         let mut reader = Reader::new(&data);
         let located = locate_legacy_pin_start(
@@ -705,6 +717,7 @@ fn pin_friendly_name_consumes_ftext_dev_notes() {
         },
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 1018,
+        nested_diagnostics: Default::default(),
     };
     let mut reader = Reader::new(&data);
     let pins = parse_node_pins(&mut reader, data.len() as u64, &context, &pin_context)
@@ -738,6 +751,7 @@ fn legacy_pin_boundary_is_not_guessed_without_none_terminator() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 1009,
+        nested_diagnostics: Default::default(),
     };
     let mut reader = Reader::new(&data);
     let diagnostic =
@@ -761,6 +775,7 @@ fn user_defined_pins_follow_framework_name_layout() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 1017,
+        nested_diagnostics: Default::default(),
     };
 
     let mut fname_data = Vec::new();
@@ -839,6 +854,7 @@ fn dynamic_cast_pure_state_tail_is_version_gated_and_bounded() {
         serialization,
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::IMPORT_TYPE_HIERARCHIES,
+        nested_diagnostics: Default::default(),
     };
     let bytes = [2u8];
     let mut reader = Reader::new(&bytes);
@@ -1060,19 +1076,6 @@ fn push_minimal_owned_pin(data: &mut Vec<u8>) {
     push_i32(data, 1); // null reference pass-through
 }
 
-fn push_minimal_pin_type(data: &mut Vec<u8>, category: i32, none: i32) {
-    push_raw_name(data, category);
-    push_raw_name(data, none);
-    push_i32(data, 0);
-    data.push(0);
-    push_i32(data, 0);
-    push_i32(data, 0);
-    push_i32(data, 0);
-    push_raw_name(data, none);
-    push_guid(data, 0, 0, 0, 0);
-    push_i32(data, 0);
-}
-
 fn decoded_node(index: i32, name: &str, pins: Vec<Pin>) -> DecodedExport {
     decoded_export(index, name, Some(pins))
 }
@@ -1097,6 +1100,14 @@ fn decoded_export(index: i32, name: &str, pins: Option<Vec<Pin>>) -> DecodedExpo
         rigvm_link: None,
         script_struct: None,
         property_block_closed: true,
+
+        property_block_end: None,
+
+        pins_failed: false,
+
+        decoded_spans: Vec::new(),
+
+        decoded_gaps: Vec::new(),
         decoded_end: None,
         serial_size: 0,
         unclassified_bytes: 0,

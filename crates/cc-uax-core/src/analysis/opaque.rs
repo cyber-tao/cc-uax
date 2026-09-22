@@ -77,6 +77,20 @@ pub(super) fn collect_known_opaque(
                 }),
             });
         }
+        for (gap_index, gap) in export.decoded_gaps.iter().enumerate() {
+            opaque.push(KnownOpaque {
+                path: format!("{export_path}/decoder_gap/{gap_index}"),
+                kind: KnownOpaqueKind::DecoderGap,
+                type_name: Some(export.identity.class.clone()),
+                reason: "bytes between two decoded regions were consumed by neither decoder, so they cannot be attributed".into(),
+                byte_range: Some(OpaqueByteRange {
+                    start: gap.start,
+                    end: gap.end,
+                    size: gap.size,
+                    preview: gap.preview.clone(),
+                }),
+            });
+        }
         if let Some(tail) = &export.post_property_tail
             && tail.size > 0
         {
@@ -176,9 +190,7 @@ pub(super) fn collect_opaque_value(
                 )
             } else if object.contains_key("@struct") && object.contains_key("payload") {
                 Some("custom struct payload is retained without semantic decoding".to_string())
-            } else if object.get("size").is_some_and(Value::is_number)
-                && object.get("preview").is_some_and(Value::is_string)
-            {
+            } else if is_byte_preview_object(object) {
                 Some("byte payload is represented only by a bounded preview".to_string())
             } else {
                 None
@@ -210,6 +222,22 @@ pub(super) fn collect_opaque_value(
     }
 }
 
+/// The shape every bounded byte preview the value decoders emit has: a numeric
+/// `size`, a hex `preview`, and at most a byte range and a reason. Requiring the
+/// key set to be exactly that — not merely to contain `size` and `preview` — is
+/// what keeps a diagnostic's `context` object, or a struct that happens to have
+/// fields by those names, from being mistaken for an opaque region.
+fn is_byte_preview_object(object: &Map) -> bool {
+    object.get("size").is_some_and(Value::is_number)
+        && object.get("preview").is_some_and(Value::is_string)
+        && object.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "size" | "preview" | "start" | "end" | "reason"
+            )
+        })
+}
+
 pub(super) fn normalize_opaque_type_name(type_name: &str) -> String {
     let Some(offset) = type_name.find("StructProperty(") else {
         return type_name.to_string();
@@ -235,8 +263,9 @@ pub(super) fn opaque_kind_rank(kind: KnownOpaqueKind) -> u8 {
         KnownOpaqueKind::PreScriptRegion => 1,
         KnownOpaqueKind::PostPropertyTail => 2,
         KnownOpaqueKind::ClassPayload => 3,
-        KnownOpaqueKind::Metadata => 4,
-        KnownOpaqueKind::Capability => 5,
+        KnownOpaqueKind::DecoderGap => 4,
+        KnownOpaqueKind::Metadata => 5,
+        KnownOpaqueKind::Capability => 6,
     }
 }
 

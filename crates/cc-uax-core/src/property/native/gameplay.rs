@@ -161,11 +161,10 @@ pub(super) fn append_serialized_struct_payload(
     if !parsed.entries.is_empty() {
         out.insert("properties".into(), entries_to_values(&parsed.entries));
     }
+    // The diagnostics themselves reach the report through the enclosing tag loop
+    // (`ParseCtx::nested_diagnostics`); only the status is worth repeating here.
     if parsed.status.is_output_relevant() || !parsed.diagnostics.is_empty() {
         out.insert("property_status".into(), json!(parsed.status.as_str()));
-    }
-    if !parsed.diagnostics.is_empty() {
-        out.insert("property_diagnostics".into(), json!(parsed.diagnostics));
     }
 
     if parsed.entries.is_empty() && parsed.status == PropertyParseStatus::NonTaggedPayload {

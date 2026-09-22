@@ -305,6 +305,21 @@ pub fn push_legacy_tag_tail_with_guid(v: &mut Vec<u8>, file_version_ue5: i32) {
     }
 }
 
+/// A legacy-layout `FEdGraphPinType` with the given category name and no
+/// sub-category, object, container, or member reference.
+pub fn push_minimal_pin_type(data: &mut Vec<u8>, category: i32, none: i32) {
+    push_raw_name(data, category);
+    push_raw_name(data, none);
+    push_i32(data, 0);
+    data.push(0);
+    push_i32(data, 0);
+    push_i32(data, 0);
+    push_i32(data, 0);
+    push_raw_name(data, none);
+    push_guid(data, 0, 0, 0, 0);
+    push_i32(data, 0);
+}
+
 pub fn push_guid(v: &mut Vec<u8>, a: u32, b: u32, c: u32, d: u32) {
     push_u32(v, a);
     push_u32(v, b);

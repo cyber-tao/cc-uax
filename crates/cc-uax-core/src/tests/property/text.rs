@@ -37,6 +37,7 @@ fn text_property_unknown_history_falls_back_to_hex() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, end);
@@ -74,6 +75,7 @@ fn parse_text_property_value(value: &[u8]) -> crate::DecodedValue {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -201,6 +203,7 @@ fn text_ordered_format_decodes() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -248,6 +251,7 @@ fn text_string_table_entry_decodes() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -279,6 +283,7 @@ fn parse_text_bytes(
         serialization,
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(value);
     match crate::property::parse_text(&mut r, &ctx, value.len() as u64, 0) {

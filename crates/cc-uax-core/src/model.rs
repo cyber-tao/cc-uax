@@ -749,6 +749,10 @@ pub enum KnownOpaqueKind {
     /// Expected class data (counted in `coverage.class_payload_bytes`), reported
     /// separately from a tail so it is never mistaken for a block that failed.
     ClassPayload,
+    /// Bytes between two decoded regions of one export that neither decoder
+    /// consumed — the next decoder started past where the previous one stopped.
+    /// Always unattributed: it points at a decoder that stopped short.
+    DecoderGap,
     Metadata,
     Capability,
 }

@@ -134,6 +134,9 @@ pub struct KnownOpaqueSummary {
     /// Whole-payload regions of classes that never write a tagged block.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub class_payloads: usize,
+    /// Bytes between two decoded regions that neither decoder consumed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub decoder_gaps: usize,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub metadata: usize,
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -466,6 +469,7 @@ impl KnownOpaqueSummary {
                 KnownOpaqueKind::PreScriptRegion => summary.pre_script_regions += 1,
                 KnownOpaqueKind::PostPropertyTail => summary.post_property_tails += 1,
                 KnownOpaqueKind::ClassPayload => summary.class_payloads += 1,
+                KnownOpaqueKind::DecoderGap => summary.decoder_gaps += 1,
                 KnownOpaqueKind::Metadata => summary.metadata += 1,
                 KnownOpaqueKind::Capability => summary.capabilities += 1,
             }

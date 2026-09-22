@@ -36,6 +36,13 @@ pub struct ParseCtx<'a> {
     pub serialization: SerializationPolicy,
     pub file_version_ue4: i32,
     pub file_version_ue5: i32,
+    /// Diagnostics raised while decoding a *nested* tagged block — a struct
+    /// value, an `FInstancedStruct` payload, a Niagara type definition — that the
+    /// value decoders cannot return alongside their `Value`. The enclosing tag
+    /// loop drains this after each property and re-roots the paths under that
+    /// property, so a failure three levels down still reaches the report and its
+    /// status instead of being embedded in a value nobody counts.
+    pub nested_diagnostics: std::cell::RefCell<Vec<Diagnostic>>,
 }
 
 #[derive(Debug, Clone)]
@@ -183,7 +190,10 @@ pub fn parse_object_properties_report(
             );
         }
     }
-    let mut parsed = parse_properties_report(r, ctx, end_limit, path);
+    // The object-level loop is the root: nested blocks report through
+    // `ParseCtx::nested_diagnostics`, which this loop drains per property, so its
+    // own diagnostics are returned directly rather than pushed there.
+    let mut parsed = tag::parse_properties_report(r, ctx, end_limit, path);
     // The control byte was read before anything proved a tagged block exists. When
     // the first tag turns out not to be one, that byte was payload of a class that
     // never called UObject::Serialize, and reporting overridable serialization
@@ -210,13 +220,24 @@ pub(crate) fn parse_properties(
     parse_properties_report(r, ctx, end_limit, "/properties").entries
 }
 
+/// Decodes a tagged-property block nested inside a value (a struct payload, an
+/// instanced struct, a Niagara type definition). The diagnostics are returned
+/// *and* handed to the enclosing loop through [`ParseCtx::nested_diagnostics`]:
+/// callers may embed the status in their value, but the report-level accounting
+/// happens through the sink, never through the embedded copy.
 pub fn parse_properties_report(
     r: &mut Reader,
     ctx: &ParseCtx,
     end_limit: u64,
     path: &str,
 ) -> PropertyParse {
-    tag::parse_properties_report(r, ctx, end_limit, path)
+    let parsed = tag::parse_properties_report(r, ctx, end_limit, path);
+    if !parsed.diagnostics.is_empty() {
+        ctx.nested_diagnostics
+            .borrow_mut()
+            .extend(parsed.diagnostics.iter().cloned());
+    }
+    parsed
 }
 
 pub(crate) fn validate_count(

@@ -171,6 +171,195 @@ fn every_export_path_resolves_to_the_export_it_describes() {
     }
 }
 
+/// A failure inside a nested tagged block (a struct value's own properties) used
+/// to be embedded in the value and dropped from the report: the asset stayed
+/// `complete` with an `@unparsed` payload nobody counted. The enclosing tag loop
+/// now re-roots those diagnostics under the property that holds them, and an
+/// opaque property value downgrades the tagged-property capability.
+#[test]
+fn nested_decode_failures_reach_the_report_and_its_status() {
+    let base = Package::parse(&build_minimal_package_with_version(1009, 5, 3)).unwrap();
+    // Inner block: `Inner` is a StructProperty naming a struct with no native
+    // decoder, and its 4 payload bytes are not a tagged block either.
+    let mut inner_block = Vec::new();
+    push_legacy_tag_header(&mut inner_block, 4, 5, 4); // Inner: StructProperty, size 4
+    push_raw_name(&mut inner_block, 6); // struct name NoSuchStruct
+    push_guid(&mut inner_block, 0, 0, 0, 0); // struct guid
+    push_legacy_tag_tail(&mut inner_block, 1009);
+    inner_block.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+    push_raw_name(&mut inner_block, 3); // None
+    // Outer block: `Outer` is a StructProperty of `MyStruct` (tagged fallback).
+    let mut data = Vec::new();
+    push_legacy_tag_header(&mut data, 1, 5, inner_block.len() as i32);
+    push_raw_name(&mut data, 2); // struct name MyStruct
+    push_guid(&mut data, 0, 0, 0, 0);
+    push_legacy_tag_tail(&mut data, 1009);
+    data.extend_from_slice(&inner_block);
+    push_raw_name(&mut data, 3); // None
+
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "Obj".into(),
+                "Outer".into(),
+                "MyStruct".into(),
+                "None".into(),
+                "Inner".into(),
+                "StructProperty".into(),
+                "NoSuchStruct".into(),
+            ],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, 0)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    // The outer struct decoded (its block closed), the inner value did not.
+    assert_eq!(
+        analysis.exports[0].property_status,
+        Some(PropertyDecodeStatus::Complete)
+    );
+    let nested = analysis
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "property_value_fallback")
+        .unwrap_or_else(|| panic!("nested fallback not reported: {:#?}", analysis.diagnostics));
+    assert_eq!(nested.path, "/exports/1/properties/Outer/properties/Inner");
+    assert_eq!(analysis.status, AnalysisStatus::Partial);
+    let tagged = analysis
+        .capabilities
+        .iter()
+        .find(|capability| capability.kind == CapabilityKind::TaggedProperties)
+        .expect("tagged-property capability");
+    assert_eq!(tagged.status, AnalysisStatus::Partial);
+    assert!(
+        tagged
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("1 property value(s) retained opaque")),
+        "{tagged:#?}"
+    );
+    let region = analysis
+        .known_opaque
+        .iter()
+        .find(|region| region.kind == KnownOpaqueKind::PropertyValue)
+        .expect("opaque property value region");
+    assert_eq!(region.path, "/exports/1/properties/Outer/Inner");
+    // Nothing in the report is a ghost region manufactured from a diagnostic.
+    assert_eq!(
+        analysis.coverage.known_opaque_regions, 1,
+        "{:#?}",
+        analysis.known_opaque
+    );
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+}
+
+/// Byte conservation is computed from the spans each decoder actually claimed.
+/// When the tag loop stops early and the pin decoder starts at the declared
+/// property end, the bytes in between were consumed by nobody: they are reported
+/// as a decoder gap and counted as unattributed, not silently as decoded.
+#[test]
+fn bytes_between_decoders_are_a_visible_gap_not_decoded_bytes() {
+    use crate::object::{ObjectImport, PackageIndex};
+    use crate::reader::RawName;
+
+    let mut package = Package::parse(&build_minimal_package()).unwrap();
+    package.names = NameMap {
+        names: vec![
+            "MyPin".into(),
+            "exec".into(),
+            "None".into(),
+            "K2Node_CallFunction".into(),
+            "Node".into(),
+            "bEnabled".into(),
+            "BoolProperty".into(),
+        ],
+    };
+    package.imports = vec![ObjectImport {
+        class_package: RawName {
+            index: 3,
+            number: 0,
+        },
+        class_name: RawName {
+            index: 3,
+            number: 0,
+        },
+        outer_index: PackageIndex(0),
+        object_name: RawName {
+            index: 3,
+            number: 0,
+        },
+        package_name: None,
+    }];
+    let mut data = Vec::new();
+    data.push(0); // object serialization control
+    push_raw_name(&mut data, 5); // bEnabled
+    push_raw_name(&mut data, 6); // BoolProperty
+    push_i32(&mut data, 0); // no type parameters
+    push_i32(&mut data, 0); // size
+    data.push(0x10); // flags: BoolVal = true
+    let loop_stops_at = data.len();
+    push_raw_name(&mut data, 5); // a second tag whose type name cannot be read
+    push_raw_name(&mut data, 99); // name index out of range
+    data.extend_from_slice(&[0xCC; 6]); // bytes UE's declared range still covers
+    let declared_property_end = data.len();
+    push_i32(&mut data, 1); // UObject guid present
+    push_guid(&mut data, 9, 8, 7, 6);
+    push_i32(&mut data, 1); // pin count
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 3);
+    push_guid(&mut data, 1, 2, 3, 4);
+    push_i32(&mut data, 3);
+    push_guid(&mut data, 1, 2, 3, 4);
+    push_raw_name(&mut data, 0);
+    push_fstring(&mut data, "");
+    data.push(1);
+    push_minimal_pin_type(&mut data, 1, 2);
+    push_fstring(&mut data, "");
+    push_fstring(&mut data, "");
+    push_i32(&mut data, 0);
+    push_empty_ftext(&mut data);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 1);
+    push_i32(&mut data, 1);
+
+    let mut export = test_export(4, data.len() as i64, 0, declared_property_end as i64);
+    export.class_index = PackageIndex(-1);
+    package.exports = vec![export];
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert_eq!(
+        analysis.exports[0].property_status,
+        Some(PropertyDecodeStatus::FailedAfterEntries)
+    );
+    assert_eq!(
+        analysis.coverage.pins_decoded, 1,
+        "{:#?}",
+        analysis.diagnostics
+    );
+    let gap = analysis
+        .known_opaque
+        .iter()
+        .find(|region| region.kind == KnownOpaqueKind::DecoderGap)
+        .unwrap_or_else(|| panic!("no decoder gap: {:#?}", analysis.known_opaque));
+    let range = gap.byte_range.as_ref().unwrap();
+    assert_eq!(range.start, loop_stops_at as u64);
+    assert_eq!(range.end, declared_property_end as u64);
+    assert_eq!(
+        analysis.coverage.unattributed_tail_bytes,
+        (declared_property_end - loop_stops_at) as u64
+    );
+    assert_eq!(analysis.coverage.class_payload_bytes, 0);
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+    assert_eq!(analysis.status, AnalysisStatus::Partial);
+}
+
 #[test]
 fn pre_and_post_script_regions_are_classified_with_zero_unclassified() {
     let base = Package::parse(&build_minimal_package()).unwrap();

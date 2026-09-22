@@ -61,6 +61,7 @@ fn nested_struct_respects_declared_value_end() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -117,6 +118,7 @@ fn nested_struct_with_unparsable_payload_falls_back_instead_of_reporting_success
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let parsed = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
@@ -172,6 +174,7 @@ fn under_consumed_property_value_is_recorded_not_silently_dropped() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let parsed = parse_properties_report(&mut r, &ctx, d.len() as u64, "/exports/0/properties");
@@ -217,6 +220,7 @@ fn truncated_property_array_index_stops_parse() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -256,6 +260,7 @@ fn failed_property_after_entries_reports_status_and_diagnostic() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let parsed = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
@@ -358,6 +363,7 @@ fn legacy_property_tags_decode_type_metadata() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: fv,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let props = parse_object_properties(&mut r, &ctx, d.len() as u64);
@@ -428,6 +434,7 @@ fn legacy_property_tags_match_ue5_1_on_disk_layout() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: fv,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let props = parse_object_properties(&mut r, &ctx, d.len() as u64);
@@ -478,6 +485,7 @@ fn property_tag_extensions_are_byte_aligned() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -521,6 +529,7 @@ fn property_tag_extension_has_external_objects_is_parsed() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -582,6 +591,7 @@ fn skipped_serialize_property_is_marked_and_parsing_continues() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
@@ -626,6 +636,7 @@ fn a_tag_header_crossing_the_window_end_does_not_read_past_it() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 0,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let parse = parse_properties_report(&mut r, &ctx, window_end, "/properties");
@@ -680,6 +691,7 @@ fn a_value_overrunning_the_window_does_not_count_as_decoded() {
         serialization: crate::version::SerializationPolicy::default(),
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: 0,
+        nested_diagnostics: Default::default(),
     };
     let mut r = Reader::new(&d);
     let parse = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
@@ -762,6 +774,7 @@ fn variable_length_values_are_bounded_by_the_declared_window_not_the_file() {
             serialization: crate::version::SerializationPolicy::default(),
             file_version_ue4: crate::version::ue4::HIGHEST,
             file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+            nested_diagnostics: Default::default(),
         };
         let mut r = Reader::new(&d);
         let parse = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");

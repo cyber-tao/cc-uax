@@ -146,9 +146,6 @@ fn parse_pcg_point(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Val
         if parsed.status.is_output_relevant() {
             o.insert("property_status".into(), json!(parsed.status.as_str()));
         }
-        if !parsed.diagnostics.is_empty() {
-            o.insert("property_diagnostics".into(), json!(parsed.diagnostics));
-        }
         return Ok(Value::Object(o));
     }
 

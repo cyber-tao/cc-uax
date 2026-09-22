@@ -149,7 +149,15 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
     let overridable_serialization = diagnostics
         .iter()
         .any(|diagnostic| diagnostic.code == "overridable_serialization_unsupported");
-    let property_partial = property_coverage.is_partial() || overridable_serialization;
+    // A property value the decoder kept only as bytes is missing evidence the
+    // capability was asked for, whichever export it sits in. Counting it here is
+    // the same rule PCG and StateTree already apply to their PropertyBag gaps.
+    let opaque_property_values = known_opaque
+        .iter()
+        .filter(|region| region.kind == KnownOpaqueKind::PropertyValue)
+        .count();
+    let property_partial =
+        property_coverage.is_partial() || overridable_serialization || opaque_property_values > 0;
     let graph_partial_reason = graph_coverage.partial_reason(&graphs);
 
     let capabilities = build_capabilities(
@@ -161,6 +169,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
             wants_logic,
             property_coverage: &property_coverage,
             property_partial,
+            opaque_property_values,
             graph_coverage: &graph_coverage,
             graph_partial_reason,
             rigvm_adapter: &rigvm_adapter,
@@ -184,25 +193,29 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
     // Split the export tails so a project-scale `opaque_bytes` can be read: bulk
     // class data dwarfs everything else, and lumping it with unattributed bytes
     // makes a healthy scan look like a decoder failure.
-    let (class_payload_bytes, unattributed_tail_bytes) = report
-        .exports
-        .iter()
-        .filter_map(|export| {
-            export
-                .post_property_tail
-                .as_ref()
-                .map(|tail| (export, tail))
-        })
-        .fold(
-            (0u64, 0u64),
-            |(class_bytes, unattributed), (export, tail)| {
+    let (class_payload_bytes, unattributed_tail_bytes) =
+        report
+            .exports
+            .iter()
+            .fold((0u64, 0u64), |(class_bytes, unattributed), export| {
+                // Gaps between decoders are unattributed by definition.
+                let gaps: u64 = export.decoded_gaps.iter().map(|gap| gap.size).sum();
+                let tail = export
+                    .post_property_tail
+                    .as_ref()
+                    .map_or(0, |tail| tail.size);
                 if export.tail_is_class_payload() {
-                    (class_bytes.saturating_add(tail.size), unattributed)
+                    (
+                        class_bytes.saturating_add(tail),
+                        unattributed.saturating_add(gaps),
+                    )
                 } else {
-                    (class_bytes, unattributed.saturating_add(tail.size))
+                    (
+                        class_bytes,
+                        unattributed.saturating_add(tail).saturating_add(gaps),
+                    )
                 }
-            },
-        );
+            });
     let export_bytes_total = report.exports.iter().map(|export| export.serial_size).sum();
     let unclassified_bytes = report
         .exports

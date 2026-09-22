@@ -162,7 +162,7 @@ pub(super) fn decode_pins_for_export(
         }
     }
     if let Some((object_guid, pins, user_defined_pins, selected_diagnostics)) = best {
-        export.advance_decoded_end(best_pos);
+        export.claim_span(pin_start, best_pos);
         let _ = reader.seek(best_pos);
         export.object_guid = object_guid;
         export.pins = Some(pins);
@@ -172,6 +172,7 @@ pub(super) fn decode_pins_for_export(
     }
 
     diagnostics.extend(failures);
+    export.pins_failed = true;
     let pin_bytes = pin_end.saturating_sub(pin_start);
     if pin_bytes > 0 {
         diagnostics.push(

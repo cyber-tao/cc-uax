@@ -37,9 +37,6 @@ fn parse_state_tree_instance_data(r: &mut Reader, ctx: &ParseCtx, value_end: u64
         if parsed.status.is_output_relevant() {
             o.insert("property_status".into(), json!(parsed.status.as_str()));
         }
-        if !parsed.diagnostics.is_empty() {
-            o.insert("property_diagnostics".into(), json!(parsed.diagnostics));
-        }
         return Ok(Value::Object(o));
     }
 
@@ -61,9 +58,6 @@ fn parse_state_tree_instance_storage(
     o.insert("properties".into(), entries_to_values(&parsed.entries));
     if parsed.status.is_output_relevant() {
         o.insert("property_status".into(), json!(parsed.status.as_str()));
-    }
-    if !parsed.diagnostics.is_empty() {
-        o.insert("property_diagnostics".into(), json!(parsed.diagnostics));
     }
     Ok(Value::Object(o))
 }

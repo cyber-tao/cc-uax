@@ -462,6 +462,15 @@ pub(crate) fn parse_properties_report(
             }
         };
 
+        // Whatever the value decoders raised inside nested blocks belongs to this
+        // property: re-root it here so the report can attribute it, and so it
+        // counts toward status like any other warning.
+        let nested: Vec<Diagnostic> = ctx.nested_diagnostics.borrow_mut().drain(..).collect();
+        for mut nested_diagnostic in nested {
+            nested_diagnostic.path = format!("{prop_path}{}", nested_diagnostic.path);
+            diagnostics.push(nested_diagnostic);
+        }
+
         let resynced = r.seek(aligned).is_ok();
         entries.push(PropertyEntry {
             name: tag.name,

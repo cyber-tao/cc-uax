@@ -129,7 +129,7 @@ pub(super) fn decode_rigvm_link_for_export(
         target_pin_path,
     });
     let consumed = start + payload_reader.pos();
-    export.advance_decoded_end(consumed);
+    export.claim_span(start, consumed);
     if payload_reader.remaining() > 0 {
         diagnostics.push(
             Diagnostic::warning(
@@ -275,6 +275,14 @@ mod tests {
             rigvm_link: None,
             script_struct: None,
             property_block_closed: true,
+
+            property_block_end: None,
+
+            pins_failed: false,
+
+            decoded_spans: Vec::new(),
+
+            decoded_gaps: Vec::new(),
             decoded_end: None,
             serial_size: 0,
             unclassified_bytes: 0,

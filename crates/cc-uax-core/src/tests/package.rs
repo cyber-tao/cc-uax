@@ -413,6 +413,7 @@ fn property_tag_layout_switches_exactly_at_its_version_gate() {
             serialization: crate::version::SerializationPolicy::default(),
             file_version_ue4: crate::version::ue4::HIGHEST,
             file_version_ue5,
+            nested_diagnostics: Default::default(),
         };
         let mut reader = Reader::new(bytes);
         let parse = parse_properties_report(&mut reader, &ctx, bytes.len() as u64, "/properties");

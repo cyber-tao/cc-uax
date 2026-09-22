@@ -78,6 +78,24 @@ pub(crate) struct DecodedExport {
     /// is unattributed and the decoder cannot say what those bytes are. Those are
     /// very different pieces of evidence and must not share one reason string.
     pub(crate) property_block_closed: bool,
+    /// Where the tag loop itself stopped: the byte after the `None` terminator
+    /// on a clean block, or after the last completed property otherwise. This is
+    /// the only position that says whether the block closed; later decoders
+    /// (pins, script) move the high-water mark past it and must not be read as
+    /// evidence about the block.
+    pub(crate) property_block_end: Option<u64>,
+    /// The pin decoder ran on a graph node and could not decode its region. The
+    /// bytes are then unattributed even though the property block closed.
+    pub(crate) pins_failed: bool,
+    /// Every byte range a decoder actually consumed, in claim order. Byte
+    /// conservation is computed from the union of these, so a decoder that starts
+    /// past where the previous one stopped leaves a visible gap rather than a
+    /// silently "decoded" stretch.
+    pub(crate) decoded_spans: Vec<(u64, u64)>,
+    /// Bytes between two claimed spans that neither decoder consumed. Classified
+    /// opaque and counted as unattributed: they always point at a decoder that
+    /// stopped short or started late.
+    pub(crate) decoded_gaps: Vec<ByteRangePreview>,
     /// End of the contiguous decoded region (high-water mark set by each
     /// decoder). `None` means no decoder ran and the whole payload is opaque.
     pub(crate) decoded_end: Option<u64>,
@@ -88,10 +106,14 @@ pub(crate) struct DecodedExport {
 }
 
 impl DecodedExport {
-    /// Raises the decoded high-water mark; decoders call this after consuming
-    /// their region so the tail step opaque-classifies only what is left.
-    pub(crate) fn advance_decoded_end(&mut self, pos: u64) {
-        self.decoded_end = Some(self.decoded_end.map_or(pos, |current| current.max(pos)));
+    /// Records `[start, end)` as consumed by a decoder and raises the decoded
+    /// high-water mark, so the tail step opaque-classifies only what is left and
+    /// can see any bytes between claims that nobody consumed.
+    pub(crate) fn claim_span(&mut self, start: u64, end: u64) {
+        if end > start {
+            self.decoded_spans.push((start, end));
+        }
+        self.decoded_end = Some(self.decoded_end.map_or(end, |current| current.max(end)));
     }
 
     /// The export never wrote a tagged-property block, so its whole payload is
@@ -105,7 +127,7 @@ impl DecodedExport {
     /// block, or the class never wrote one. Anything else is unattributed and
     /// points at a decoding gap.
     pub(crate) fn tail_is_class_payload(&self) -> bool {
-        self.property_block_closed || self.is_native_only_payload()
+        (self.property_block_closed && !self.pins_failed) || self.is_native_only_payload()
     }
 }
 
@@ -229,6 +251,7 @@ impl Package {
             },
             file_version_ue4: self.summary.file_version_ue4,
             file_version_ue5: self.summary.file_version_ue5,
+            nested_diagnostics: Default::default(),
         };
         let script_ctx = ScriptStructContext::new(self);
         let mut reader = Reader::new(data);
@@ -264,6 +287,10 @@ impl Package {
                 rigvm_link: None,
                 script_struct: None,
                 property_block_closed: false,
+                property_block_end: None,
+                pins_failed: false,
+                decoded_spans: Vec::new(),
+                decoded_gaps: Vec::new(),
                 decoded_end: None,
                 serial_size: 0,
                 unclassified_bytes: 0,
@@ -407,14 +434,16 @@ fn account_export_tail(
     // nodes read it inside the pin decoder; every other export reads it here so
     // the GUID becomes evidence instead of opaque tail.
     //
-    // `property_end` only marks the real end of the property block when UE
-    // declared one; otherwise it is just `serial_end` and comparing against it
-    // would make this branch unreachable for every non-script export.
+    // Whether the block closed is judged from where the *tag loop* stopped, not
+    // from the high-water mark: the pin decoder legitimately moves that mark past
+    // `property_end`, and a failed pin decode leaves it exactly there, so reading
+    // the mark inverted the two cases. `property_end` only marks the real end of
+    // the block when UE declared one; otherwise it is just `serial_end`.
     let property_block_closed = matches!(
         export.property_status,
         Some(PropertyParseStatus::Complete | PropertyParseStatus::Empty)
     ) && (!window.has_declared_property_range
-        || decoded_end == window.property_end);
+        || export.property_block_end == Some(window.property_end));
     export.property_block_closed = property_block_closed;
     if export.object_guid.is_none()
         && export.pins.is_none()
@@ -423,7 +452,9 @@ fn account_export_tail(
         && reader.seek(decoded_end).is_ok()
     {
         consume_object_guid_tail(reader, window.serial_end, export);
-        decoded_end = reader.pos().clamp(decoded_end, window.serial_end);
+        let guid_end = reader.pos().clamp(decoded_end, window.serial_end);
+        export.claim_span(decoded_end, guid_end);
+        decoded_end = guid_end;
     }
     // `UStruct::Serialize` resumes exactly here: everything before it belongs to
     // `UObject`, and the compiled script sits a few fixed fields further on.
@@ -434,7 +465,9 @@ fn account_export_tail(
     {
         match decode_script_struct(reader, window.serial_end, class_full, script_ctx) {
             Ok(script_struct) => {
-                decoded_end = script_struct.end.clamp(decoded_end, window.serial_end);
+                let script_end = script_struct.end.clamp(decoded_end, window.serial_end);
+                export.claim_span(decoded_end, script_end);
+                decoded_end = script_end;
                 if let Some(code) = &script_struct.bytecode {
                     if let Some(failure) = &code.failure {
                         diagnostics.push(Diagnostic::warning(
@@ -473,13 +506,66 @@ fn account_export_tail(
     if decoded_end < window.serial_end {
         export.post_property_tail = Some(preview_range(reader, decoded_end, window.serial_end));
     }
+
+    // Byte conservation over the export: pre-script region + union of claimed
+    // spans + gaps between claims + tail must equal serial_size. Gaps are bytes a
+    // decoder skipped over (the next one started past where the previous one
+    // stopped); they are classified opaque and unattributed so they show up
+    // rather than being counted as decoded. Overlapping claims mean two decoders
+    // both accounted for the same bytes, which is a bookkeeping defect and lands
+    // in unclassified_bytes with a diagnostic.
+    let mut spans: Vec<(u64, u64)> = export
+        .decoded_spans
+        .iter()
+        .map(|&(start, end)| {
+            (
+                start.clamp(window.property_start, window.serial_end),
+                end.clamp(window.property_start, window.serial_end),
+            )
+        })
+        .filter(|(start, end)| end > start)
+        .collect();
+    spans.sort_unstable();
+    let claimed_total: u64 = spans.iter().map(|(start, end)| end - start).sum();
+    let mut covered = 0u64;
+    let mut cursor = window.property_start;
+    let mut gaps = Vec::new();
+    for (start, end) in spans {
+        if start > cursor {
+            gaps.push((cursor, start));
+        }
+        let start = start.max(cursor);
+        if end > start {
+            covered += end - start;
+        }
+        cursor = cursor.max(end);
+    }
+    let overlap = claimed_total.saturating_sub(covered);
+    let gap_total: u64 = gaps.iter().map(|(start, end)| end - start).sum();
+    export.decoded_gaps = gaps
+        .into_iter()
+        .map(|(start, end)| preview_range(reader, start, end))
+        .collect();
+    if overlap > 0 {
+        diagnostics.push(
+            Diagnostic::warning(
+                "export_bytes_double_claimed",
+                export_path.to_string(),
+                format!(
+                    "{overlap} byte(s) were claimed by more than one decoder; the export's byte accounting is not trustworthy"
+                ),
+            )
+            .with_offset(window.property_start),
+        );
+    }
     let pre = export.pre_script_region.as_ref().map_or(0, |p| p.size);
     let post = export.post_property_tail.as_ref().map_or(0, |p| p.size);
-    let decoded = decoded_end.saturating_sub(window.property_start);
     export.unclassified_bytes = serial_size
         .saturating_sub(pre)
         .saturating_sub(post)
-        .saturating_sub(decoded);
+        .saturating_sub(covered)
+        .saturating_sub(gap_total)
+        .saturating_add(overlap);
 }
 
 /// Reads UObject's `PossiblySerializeObjectGuid` (a presence flag optionally

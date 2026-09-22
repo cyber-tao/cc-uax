@@ -633,6 +633,14 @@ mod tests {
             rigvm_link: None,
             script_struct: None,
             property_block_closed: true,
+
+            property_block_end: None,
+
+            pins_failed: false,
+
+            decoded_spans: Vec::new(),
+
+            decoded_gaps: Vec::new(),
             decoded_end: None,
             serial_size: 0,
             unclassified_bytes: 0,

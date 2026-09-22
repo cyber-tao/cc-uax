@@ -24,6 +24,8 @@ pub(super) struct CapabilityInputs<'a> {
     pub(super) wants_logic: bool,
     pub(super) property_coverage: &'a PropertyCoverage,
     pub(super) property_partial: bool,
+    /// Property values retained only as opaque bytes (see `known_opaque`).
+    pub(super) opaque_property_values: usize,
     pub(super) graph_coverage: &'a GraphCoverage,
     /// Why the EdGraph capability is not complete, or `None` when it is.
     pub(super) graph_partial_reason: Option<String>,
@@ -49,6 +51,7 @@ pub(super) fn build_capabilities(
         wants_logic,
         property_coverage,
         property_partial,
+        opaque_property_values,
         graph_coverage,
         graph_partial_reason,
         rigvm_adapter,
@@ -105,11 +108,12 @@ pub(super) fn build_capabilities(
             },
             detail: property_partial.then(|| {
                 format!(
-                    "{}/{} non-empty exports have complete tagged-property coverage ({} not a tagged payload, {} failed partway)",
+                    "{}/{} non-empty exports have complete tagged-property coverage ({} not a tagged payload, {} failed partway); {} property value(s) retained opaque",
                     property_coverage.exports_complete,
                     property_coverage.exports_total,
                     property_coverage.exports_not_tagged,
-                    property_coverage.exports_failed
+                    property_coverage.exports_failed,
+                    opaque_property_values
                 )
             }),
         });

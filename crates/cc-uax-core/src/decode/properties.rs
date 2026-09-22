@@ -74,22 +74,25 @@ pub(super) fn decode_properties_for_export(
     // payload decodes nothing, and a failed parse stops at its last completed
     // property, so neither can claim bytes it did not decode; whatever is left
     // over becomes classified opaque tail instead.
-    let mut end_of_decoded = if matches!(status, PropertyParseStatus::NonTaggedPayload) {
+    let block_end = if matches!(status, PropertyParseStatus::NonTaggedPayload) {
         start
     } else {
         decoded_end.unwrap_or(start).clamp(start, end)
     };
+    // The tag loop's own stopping point is what later decides whether the block
+    // closed; decoders that follow it extend the decoded range, not this mark.
+    export.property_block_end = Some(block_end);
+    export.claim_span(start, block_end);
     if capture_properties {
         export.properties = Some(entries);
         // Known post-property serializers continue from where the tag loop
         // stopped, so anything they consume extends the decoded range.
-        if reader.seek(end_of_decoded).is_ok()
+        if reader.seek(block_end).is_ok()
             && consume_known_post_property_data(reader, ctx, window, class_full, export)
         {
-            end_of_decoded = reader.pos().clamp(end_of_decoded, end);
+            export.claim_span(block_end, reader.pos().clamp(block_end, end));
         }
     }
-    export.advance_decoded_end(end_of_decoded);
 }
 
 /// Runs the serializers that follow an export's tagged properties. Returns
@@ -246,6 +249,7 @@ mod metadata_tests {
             },
             file_version_ue4: ue4::HIGHEST,
             file_version_ue5: ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+            nested_diagnostics: Default::default(),
         }
     }
 
