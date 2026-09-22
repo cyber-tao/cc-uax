@@ -201,6 +201,13 @@ impl Package {
                 err.clone(),
             ));
         }
+        if let Some(err) = &self.package_metadata_error {
+            diagnostics.push(Diagnostic::warning(
+                "package_metadata_table_error",
+                "/summary/metadata_offset",
+                err.clone(),
+            ));
+        }
         diagnostics
     }
 

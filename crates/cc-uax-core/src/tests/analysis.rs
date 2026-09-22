@@ -68,6 +68,8 @@ fn classified_opaque_tail_is_recorded_without_forcing_partial() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let summary_only = analyze_package(&package, &data, AssetView::Summary);
@@ -136,6 +138,8 @@ fn every_export_path_resolves_to_the_export_it_describes() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Full);
@@ -216,6 +220,8 @@ fn nested_decode_failures_reach_the_report_and_its_status() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Full);
@@ -290,6 +296,8 @@ fn rigvm_link_exports_are_not_run_through_the_tagged_property_decoder() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Full);
@@ -356,6 +364,8 @@ fn an_unrecognized_node_under_a_graph_is_reported() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Logic);
@@ -507,6 +517,8 @@ fn pre_and_post_script_regions_are_classified_with_zero_unclassified() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Full);
@@ -559,6 +571,8 @@ fn non_tagged_payload_is_classified_as_one_opaque_region() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Full);
@@ -691,6 +705,8 @@ fn object_guid_after_tagged_properties_is_decoded() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
     let analysis = analyze_package(&package, &data, AssetView::Full);
     assert_eq!(analysis.status, AnalysisStatus::Complete);
@@ -722,6 +738,8 @@ fn object_guid_after_tagged_properties_is_decoded() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
     let analysis = analyze_package(&package, &data, AssetView::Full);
     assert!(analysis.exports[0].object_guid.is_none());
@@ -811,6 +829,8 @@ fn object_guid_is_read_after_the_property_block_in_both_window_shapes() {
             soft_object_path_error: None,
             soft_package_references: Vec::new(),
             soft_package_reference_error: None,
+            package_metadata: None,
+            package_metadata_error: None,
         };
         let analysis = analyze_package(&package, &data, AssetView::Full);
         assert_eq!(
@@ -850,6 +870,8 @@ fn a_tail_whose_flag_is_not_a_serialized_bool_stays_opaque() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
     let analysis = analyze_package(&package, &data, AssetView::Full);
     assert!(analysis.exports[0].object_guid.is_none());
@@ -881,6 +903,8 @@ fn a_cleared_guid_flag_is_consumed_without_a_declared_property_range() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
     let analysis = analyze_package(&package, &data, AssetView::Full);
     assert!(analysis.exports[0].object_guid.is_none());
@@ -911,6 +935,8 @@ fn a_cleared_guid_flag_that_ends_the_export_leaves_no_opaque_tail() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
     let analysis = analyze_package(&package, &data, AssetView::Full);
     assert_eq!(analysis.status, AnalysisStatus::Complete);
@@ -950,6 +976,8 @@ fn overridable_serialization_is_declared_unsupported() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Full);

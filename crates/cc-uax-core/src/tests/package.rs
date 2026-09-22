@@ -601,6 +601,8 @@ fn invalid_script_window_is_structured() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &[0; 4], AssetView::Properties);
@@ -651,6 +653,8 @@ fn zero_script_window_means_the_class_wrote_no_tagged_block() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Full);
@@ -693,6 +697,8 @@ fn known_native_only_class_is_classified_without_a_script_range() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Full);
@@ -769,6 +775,8 @@ fn asset_import_data_json_prefix_decodes_in_both_window_shapes() {
             soft_object_path_error: None,
             soft_package_references: Vec::new(),
             soft_package_reference_error: None,
+            package_metadata: None,
+            package_metadata_error: None,
         };
 
         let analysis = analyze_package(&package, &data, AssetView::Full);
@@ -815,6 +823,131 @@ fn asset_import_data_json_prefix_decodes_in_both_window_shapes() {
         );
         assert_eq!(analysis.coverage.opaque_bytes, 0, "{file_version_ue5}");
     }
+}
+
+/// `UMetaData::Serialize` writes its maps after `Super::Serialize`, i.e. after the
+/// declared property range on 1010–1013 packages. Bounding the metadata decoder
+/// by that range made it unreachable on exactly those packages, so every 5.4/5.5
+/// Blueprint's tooltips and categories were filed as class payload.
+#[test]
+fn metadata_export_maps_are_read_past_the_declared_property_range() {
+    let base = Package::parse(&build_minimal_package_with_version(1013, 5, 5)).unwrap();
+    let mut data = Vec::new();
+    data.push(0); // object serialization control
+    push_raw_name(&mut data, 3); // None: empty tagged block
+    let tagged_end = data.len();
+    push_i32(&mut data, 0); // PossiblySerializeObjectGuid: absent
+    push_i32(&mut data, 1); // object map count
+    push_i32(&mut data, 2); // FWeakObjectPtr key = export 2
+    push_i32(&mut data, 1); // value count
+    push_raw_name(&mut data, 4); // "BlueprintType"
+    push_fstring(&mut data, "true");
+    push_i32(&mut data, 0); // root map count
+
+    let mut package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "/Script/CoreUObject".to_string(),
+                "MetaData".to_string(),
+                "Package".to_string(),
+                "None".to_string(),
+                "BlueprintType".to_string(),
+                "Class".to_string(),
+                "PackageMetaData".to_string(),
+            ],
+        },
+        imports: vec![test_import(2, 0, 0, 0), test_import(5, 1, -1, 0)],
+        exports: vec![ObjectExport {
+            class_index: crate::object::PackageIndex(-2),
+            ..test_export(6, data.len() as i64, 0, tagged_end as i64)
+        }],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
+    };
+    package
+        .summary
+        .custom_versions
+        .push(crate::summary::CustomVersion {
+            key: crate::version::custom::EDITOR_OBJECT_VERSION,
+            version: crate::version::custom::EDITOR_ROOT_META_DATA_SUPPORT,
+        });
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    let export = &analysis.exports[0];
+    assert_eq!(export.class, "/Script/CoreUObject.MetaData");
+    let metadata = export
+        .metadata
+        .as_ref()
+        .unwrap_or_else(|| panic!("metadata not decoded: {:#?}", analysis.known_opaque));
+    assert_eq!(
+        metadata["object_metadata"][0]["values"]["BlueprintType"].as_str(),
+        Some("true")
+    );
+    assert!(
+        analysis.known_opaque.is_empty(),
+        "{:#?}",
+        analysis.known_opaque
+    );
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+    assert_eq!(analysis.status, AnalysisStatus::Complete);
+}
+
+/// From `METADATA_SERIALIZATION_OFFSET` there is no `MetaData` export at all: the
+/// maps live at `Summary.MetaDataOffset` (`SavePackageUtilities.cpp::SaveMetaData`,
+/// `FLinkerLoad::SerializeMetaData`), keyed by `FSoftObjectPath` through the
+/// linker — an index into the header list when the package has one.
+#[test]
+fn package_metadata_table_is_read_from_the_summary_offset() {
+    let mut data = build_minimal_editor_package_with_version(1017, 5, 6);
+    let mut package = Package::parse(&data).unwrap();
+    assert_eq!(package.summary.metadata_offset, 0);
+    assert!(package.package_metadata.is_none());
+
+    // Append the table and point the parsed summary at it. One object entry
+    // keyed by an inline soft path (this package has no soft-object-path list),
+    // one root entry.
+    let table_offset = data.len() as i32;
+    push_i32(&mut data, 1);
+    push_i32(&mut data, 1);
+    push_raw_name(&mut data, 0); // package name
+    push_raw_name(&mut data, 1); // asset name
+    push_fstring(&mut data, ""); // sub path
+    push_i32(&mut data, 1);
+    push_raw_name(&mut data, 2); // "ToolTip"
+    push_fstring(&mut data, "Spawns a coin");
+    push_raw_name(&mut data, 3); // "PackageLocalizationNamespace"
+    push_fstring(&mut data, "Game");
+    package.summary.metadata_offset = table_offset;
+    package.names = NameMap {
+        names: vec![
+            "/Game/BP_Coin".into(),
+            "BP_Coin_C".into(),
+            "ToolTip".into(),
+            "PackageLocalizationNamespace".into(),
+        ],
+    };
+
+    let mut reader = Reader::new(&data);
+    let (metadata, error) = crate::package::parse_package_metadata_table(&mut reader, &package);
+    assert_eq!(error, None);
+    let metadata = metadata.expect("table decoded");
+    assert_eq!(
+        metadata["object_metadata"][0]["object"]["asset_path"].as_str(),
+        Some("/Game/BP_Coin.BP_Coin_C")
+    );
+    assert_eq!(
+        metadata["object_metadata"][0]["values"]["ToolTip"].as_str(),
+        Some("Spawns a coin")
+    );
+    assert_eq!(
+        metadata["root_metadata"]["PackageLocalizationNamespace"].as_str(),
+        Some("Game")
+    );
 }
 
 fn assert_native_only_payload(analysis: &crate::AssetAnalysis, payload_len: u64) {
@@ -883,6 +1016,8 @@ fn a_first_tag_with_a_non_property_type_is_a_non_tagged_payload() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Full);
@@ -943,6 +1078,8 @@ fn pre_complete_typename_version_decodes_legacy_properties() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Properties);
@@ -990,6 +1127,8 @@ fn post_property_tail_is_classified_with_its_byte_range() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Properties);
@@ -1030,6 +1169,8 @@ fn export_tails_separate_class_payloads_from_unattributed_bytes() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
     let tail_of = |analysis: &crate::AssetAnalysis| {
         analysis
@@ -1111,6 +1252,8 @@ fn non_tagged_property_payload_is_reported_as_status() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
 
     let analysis = analyze_package(&package, &data, AssetView::Properties);

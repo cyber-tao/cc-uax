@@ -311,6 +311,9 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
             Vec::new()
         },
         exports,
+        package_metadata: wants_properties
+            .then(|| package.package_metadata.clone())
+            .flatten(),
         graphs,
         rigvm_graphs: rigvm_adapter.graphs,
         pcg_graphs: pcg_adapter.graphs,

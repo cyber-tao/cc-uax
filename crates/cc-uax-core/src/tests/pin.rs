@@ -991,6 +991,8 @@ fn logic_graphs_group_by_outer_and_never_emit_cross_graph_edges() {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     };
     let output_id = Guid([1, 2, 3, 4]);
     let input_id = Guid([5, 6, 7, 8]);

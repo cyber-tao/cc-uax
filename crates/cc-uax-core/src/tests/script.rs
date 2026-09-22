@@ -60,6 +60,8 @@ fn package() -> Package {
         soft_object_path_error: None,
         soft_package_references: Vec::new(),
         soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
     }
 }
 

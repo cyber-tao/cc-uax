@@ -90,7 +90,9 @@ pub(super) fn decode_properties_for_export(
         if reader.seek(block_end).is_ok()
             && consume_known_post_property_data(reader, ctx, window, class_full, export)
         {
-            export.claim_span(block_end, reader.pos().clamp(block_end, end));
+            // These serializers run after UObject::Serialize, so they may extend
+            // past the declared property range but never past the export.
+            export.claim_span(block_end, reader.pos().clamp(block_end, window.serial_end));
         }
     }
 }
@@ -106,17 +108,21 @@ fn consume_known_post_property_data(
     class_full: &str,
     export: &mut DecodedExport,
 ) -> bool {
-    if class_full != "/Script/CoreUObject.MetaData" || reader.pos() >= window.property_end {
+    // The maps follow `UObject::Serialize`, i.e. they sit *after* the declared
+    // property range on packages that declare one (1010–1013): bounding this by
+    // `property_end` made the decoder unreachable on exactly those packages and
+    // filed every Blueprint's tooltips and categories as class payload.
+    if class_full != "/Script/CoreUObject.MetaData" || reader.pos() >= window.serial_end {
         return false;
     }
     let metadata_start = reader.pos();
-    match parse_package_metadata_tail(reader, ctx, window.property_end) {
+    match parse_package_metadata_tail(reader, ctx, window.serial_end) {
         Ok(metadata) => {
             export.metadata = Some(metadata);
             true
         }
         Err(err) => {
-            let payload = preview_range(reader, metadata_start, window.property_end);
+            let payload = preview_range(reader, metadata_start, window.serial_end);
             export.metadata = Some(json!({
                 "status": "opaque",
                 "reason": format!("failed to parse PackageMetaData payload: {err:#}"),

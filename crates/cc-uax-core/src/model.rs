@@ -78,6 +78,12 @@ pub struct AssetAnalysis {
     pub imports: Vec<AssetImport>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exports: Vec<AssetExport>,
+    /// The package-level metadata table UE5.6+ writes at `MetaDataOffset`
+    /// (`object_metadata` keyed by soft object path, plus `root_metadata`). Older
+    /// packages carry the same maps on their `MetaData` export's `metadata`.
+    /// Emitted in the `properties` and `full` views.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_metadata: Option<DecodedValue>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub graphs: Vec<LogicGraph>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

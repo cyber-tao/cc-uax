@@ -62,6 +62,10 @@ pub struct PackageFileSummary {
     pub import_offset: i32,
     pub soft_package_references_count: i32,
     pub soft_package_references_offset: i32,
+    /// `MetaDataOffset` (`METADATA_SERIALIZATION_OFFSET`, UE5.6+): where the
+    /// package-level metadata maps live now that `UMetaData` is no longer an
+    /// export. `0` when the package predates the field or wrote no table.
+    pub metadata_offset: i32,
     pub engine_version: EngineVersion,
     pub compatible_engine_version: EngineVersion,
     pub bulk_data_start_offset: i64,
@@ -203,8 +207,9 @@ impl PackageFileSummary {
             let _cell_import_offset = r.read_i32()?;
         }
 
+        let mut metadata_offset = 0;
         if ue5v >= ue5::METADATA_SERIALIZATION_OFFSET {
-            let _metadata_offset = r.read_i32()?;
+            metadata_offset = r.read_i32()?;
         }
 
         let _depends_offset = r.read_i32()?;
@@ -348,6 +353,7 @@ impl PackageFileSummary {
             import_offset,
             soft_package_references_count,
             soft_package_references_offset,
+            metadata_offset,
             engine_version,
             compatible_engine_version,
             bulk_data_start_offset,
