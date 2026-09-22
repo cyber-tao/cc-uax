@@ -55,6 +55,34 @@ die()     { err "$*"; exit 1; }
 step()    { printf "\n${C_BLUE}[%s/%s]${C_NC} %s\n" "$1" "$TOTAL_STEPS" "$2"; }
 TOTAL_STEPS=5
 
+# Remove a skill destination without following a link into the repository tree.
+# dev-install.sh links ~/.claude/skills/cc-uax at the checkout; `rm -rf` on a
+# symlink is safe, but under Git Bash a Windows junction is not a symlink to
+# bash and some MSYS builds delete the *target* through it. Mirrors
+# dev-install.sh's remove_skill_dest so both installers make the same promise.
+remove_skill_dest() {
+    local dest="$1"
+    if [ -L "$dest" ]; then
+        rm -f "$dest"
+        return
+    fi
+    if [ ! -e "$dest" ]; then
+        return
+    fi
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+            if command -v cygpath >/dev/null 2>&1 && command -v powershell.exe >/dev/null 2>&1; then
+                local win
+                win="$(cygpath -w "$dest")"
+                MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -Command \
+                    "\$p = '${win//\'/\'\'}'; if (Test-Path -LiteralPath \$p) { \$i = Get-Item -LiteralPath \$p -Force; if (\$i.Attributes -band [IO.FileAttributes]::ReparsePoint) { [IO.Directory]::Delete(\$p) } else { Remove-Item -LiteralPath \$p -Recurse -Force } }"
+                return
+            fi
+            ;;
+    esac
+    rm -rf "$dest"
+}
+
 other_cargo_bin() {
     if [ -n "${CC_UAX_DEV_BIN:-}" ]; then
         printf '%s' "$CC_UAX_DEV_BIN"
@@ -146,8 +174,8 @@ if [ "$UNINSTALL" = "1" ]; then
         warn "NO_SKILL=1 — leaving skills in place"
     else
         for dir in "${HOME}/.claude/skills/cc-uax" "${HOME}/.codex/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
-            if [ -d "$dir" ]; then
-                rm -rf "$dir"
+            if [ -d "$dir" ] || [ -L "$dir" ]; then
+                remove_skill_dest "$dir"
                 ok "removed ${dir}"
                 removed=1
             fi
@@ -287,7 +315,7 @@ else
     [ -f "${SKILL_SRC}/SKILL.md" ] || die "SKILL.md missing in archive"
 
     for dest in "${HOME}/.claude/skills/cc-uax" "${HOME}/.codex/skills/cc-uax" "${HOME}/.agents/skills/cc-uax"; do
-        rm -rf "$dest"
+        remove_skill_dest "$dest"
         mkdir -p "$dest"
         cp -R "${SKILL_SRC}/." "$dest/"
         ok "skill → ${dest}"

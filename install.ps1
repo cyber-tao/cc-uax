@@ -136,6 +136,21 @@ function Invoke-DevUninstall {
     }
 }
 
+# Delete a skill destination without following a junction/symlink into whatever
+# it points at. dev-install.ps1 links ~/.claude/skills/cc-uax to the checkout, and
+# on Windows PowerShell 5.1 `Remove-Item -Recurse` on such a link deletes the
+# *target's* contents -- the repository's skills/cc-uax/. The reparse point itself
+# is removed with Directory.Delete, which never descends.
+function Remove-SkillDest([string]$Dest) {
+    if (-not (Test-Path -LiteralPath $Dest)) { return }
+    $item = Get-Item -LiteralPath $Dest -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        [System.IO.Directory]::Delete($Dest)
+        return
+    }
+    Remove-Item -LiteralPath $Dest -Recurse -Force
+}
+
 function Show-PathWinner {
     $cmd = Get-Command cc-uax -ErrorAction SilentlyContinue
     if ($cmd -and $cmd.Source) {
@@ -181,7 +196,7 @@ if ($DoUninstall) {
                 (Join-Path $env:USERPROFILE '.agents\skills\cc-uax')
             )) {
             if (Test-Path $dir) {
-                Remove-Item -Recurse -Force $dir
+                Remove-SkillDest $dir
                 Write-Ok "removed $dir"
                 $removed = $true
             }
@@ -312,7 +327,7 @@ if ($NoSkill) {
             (Join-Path $env:USERPROFILE '.codex\skills\cc-uax'),
             (Join-Path $env:USERPROFILE '.agents\skills\cc-uax')
         )) {
-        if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+        Remove-SkillDest $dir
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dir) | Out-Null
         Copy-Item -LiteralPath $SkillSrc -Destination $dir -Recurse -Force
         Write-Ok "skill -> $dir"
