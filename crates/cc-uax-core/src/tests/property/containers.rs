@@ -86,11 +86,11 @@ fn legacy_struct_keyed_map(names: &NameMap, payload: &[u8]) -> Vec<u8> {
 fn a_legacy_map_without_an_inner_struct_name_is_its_own_limitation() {
     let names = NameMap {
         names: vec![
-            "VariableToScriptVariable".to_string(), // 0
-            "MapProperty".to_string(),              // 1
-            "StructProperty".to_string(),           // 2
-            "NameProperty".to_string(),             // 3
-            "None".to_string(),                     // 4
+            "SomeProjectStructKeyedMap".to_string(), // 0: not a declaration we know
+            "MapProperty".to_string(),               // 1
+            "StructProperty".to_string(),            // 2
+            "NameProperty".to_string(),              // 3
+            "None".to_string(),                      // 4
         ],
     };
     // NumToRemove = 0, Num = 1, then an undecodable struct key payload.
@@ -144,6 +144,135 @@ fn a_legacy_map_without_an_inner_struct_name_is_its_own_limitation() {
         "{:#?}",
         parse.diagnostics
     );
+}
+
+fn legacy_ctx<'a>(names: &'a NameMap) -> ParseCtx<'a> {
+    ParseCtx {
+        names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
+            - 1,
+        nested_diagnostics: Default::default(),
+    }
+}
+
+// The declarations behind a handful of set/map properties are known from UE
+// source, and on the reference corpus they were what kept every UE5.0–5.3
+// Blueprint (`UBlueprintGeneratedClass::PropertyGuids`, `TMap<FName, FGuid>`) and
+// Niagara asset from ever being `complete`. Naming the element struct from that
+// table lets the payload decode; the tag's `Size` still bounds it.
+#[test]
+fn a_legacy_map_whose_declaration_is_known_decodes_its_struct_elements() {
+    let names = NameMap {
+        names: vec![
+            "PropertyGuids".to_string(),  // 0
+            "MapProperty".to_string(),    // 1
+            "NameProperty".to_string(),   // 2
+            "StructProperty".to_string(), // 3
+            "None".to_string(),           // 4
+            "MyVariable".to_string(),     // 5
+        ],
+    };
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0); // NumToRemove
+    push_i32(&mut payload, 1); // Num
+    push_raw_name(&mut payload, 5); // key: FName "MyVariable"
+    push_guid(
+        &mut payload,
+        0x1111_1111,
+        0x2222_2222,
+        0x3333_3333,
+        0x4444_4444,
+    );
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0);
+    push_raw_name(&mut d, 1);
+    push_i32(&mut d, payload.len() as i32);
+    push_i32(&mut d, 0);
+    push_raw_name(&mut d, 2); // key type NameProperty
+    push_raw_name(&mut d, 3); // value type StructProperty, no struct name
+    d.push(0); // HasPropertyGuid
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 4);
+
+    let ctx = legacy_ctx(&names);
+    let mut r = Reader::new(&d);
+    let parse =
+        crate::property::parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let entry = &parse.entries[0];
+    assert_eq!(
+        entry.type_str,
+        "MapProperty(NameProperty,StructProperty(Guid))"
+    );
+    assert_eq!(entry.value[0]["key"].as_str(), Some("MyVariable"));
+    assert_eq!(
+        entry.value[0]["value"].as_str(),
+        Some("11111111222222223333333344444444")
+    );
+}
+
+// A legacy container tag records `ByteProperty` for a `TEnumAsByte<E>` element
+// too, but `FByteProperty::SerializeItem` writes an enum as an 8-byte FName.
+// The count and the tag's `Size` say which it is; reading names as bytes gave
+// name indices as values and a short read.
+#[test]
+fn legacy_byte_array_elements_are_names_when_the_size_says_so() {
+    let names = NameMap {
+        names: vec![
+            "Modes".to_string(),         // 0
+            "ArrayProperty".to_string(), // 1
+            "ByteProperty".to_string(),  // 2
+            "None".to_string(),          // 3
+            "EMode::Fast".to_string(),   // 4
+            "EMode::Slow".to_string(),   // 5
+        ],
+    };
+    // `payload` is the whole value: the element count followed by the elements.
+    let build = |payload: &[u8]| {
+        let mut d = Vec::new();
+        push_raw_name(&mut d, 0);
+        push_raw_name(&mut d, 1);
+        push_i32(&mut d, payload.len() as i32);
+        push_i32(&mut d, 0);
+        push_raw_name(&mut d, 2); // inner: ByteProperty, no enum name
+        d.push(0); // HasPropertyGuid
+        d.extend_from_slice(payload);
+        push_raw_name(&mut d, 3);
+        d
+    };
+    let ctx = legacy_ctx(&names);
+
+    // Two enum names: 4 (count) + 2 * 8 bytes.
+    let mut as_names = Vec::new();
+    push_i32(&mut as_names, 2);
+    push_raw_name(&mut as_names, 4);
+    push_raw_name(&mut as_names, 5);
+    let d = build(&as_names);
+    let mut r = Reader::new(&d);
+    let parse =
+        crate::property::parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    assert_eq!(parse.entries[0].value[0].as_str(), Some("EMode::Fast"));
+    assert_eq!(parse.entries[0].value[1].as_str(), Some("EMode::Slow"));
+
+    // Two plain bytes: 4 (count) + 2 bytes. The same tag, read as bytes.
+    let mut as_bytes = Vec::new();
+    push_i32(&mut as_bytes, 2);
+    as_bytes.extend_from_slice(&[7, 9]);
+    let d = build(&as_bytes);
+    let mut r = Reader::new(&d);
+    let parse =
+        crate::property::parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    assert_eq!(parse.entries[0].value[0].as_i64(), Some(7));
+    assert_eq!(parse.entries[0].value[1].as_i64(), Some(9));
 }
 
 /// Name table shared by the legacy struct-array tests below.

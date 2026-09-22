@@ -176,6 +176,13 @@ impl TypeName {
         Self::with_params("StructProperty".to_string(), vec![Self::leaf(struct_name)])
     }
 
+    /// A `ByteProperty` known to hold enum names, shaped the way a complete type
+    /// name carries the enum: the only fact the value decoder needs is that a
+    /// parameter is present.
+    pub(super) fn byte_enum_of(enum_name: String) -> Self {
+        Self::with_params("ByteProperty".to_string(), vec![Self::leaf(enum_name)])
+    }
+
     pub fn parse(r: &mut Reader, names: &NameMap, end_limit: u64) -> Result<Self> {
         let mut flat: Vec<(String, i32)> = Vec::new();
         let mut remaining: i64 = 1;
@@ -554,7 +561,8 @@ fn read_legacy_property_tag(
         .resolve_raw(r.read_raw_name_within(end_limit, "tag type")?);
     let size = r.read_i32_within(end_limit, "tag size")?;
     let array_index = r.read_i32_within(end_limit, "tag array index")?;
-    let (type_name, bool_val) = read_legacy_type_name(r, ctx, end_limit, &property_type)?;
+    let (mut type_name, bool_val) = read_legacy_type_name(r, ctx, end_limit, &property_type)?;
+    name_known_container_structs(&name, &mut type_name);
     // FPropertyTag stores HasPropertyGuid as uint8 (PropertyTag.h), not a
     // 4-byte FArchive::SerializeBool. Reading it as bool32 desyncs every
     // following tag on UE5.0–5.4 packages (FileVersionUE5 < 1012).
@@ -580,6 +588,99 @@ fn read_legacy_property_tag(
         bool_val,
         is_skipped: false,
     })
+}
+
+/// Element struct types of the `TSet`/`TMap` properties whose legacy tag cannot
+/// name them, keyed by property name: (property, key struct, value struct).
+///
+/// Below `PROPERTY_TAG_COMPLETE_TYPE_NAME` a container tag records only the
+/// element's *property* type and, unlike `TArray`, sets and maps write no inner
+/// tag, so the `UScriptStruct` is otherwise known only to UE's reflection
+/// registry. These are the reflected declarations of the properties that made
+/// every UE5.0–5.3 Blueprint and Niagara asset `partial` on the reference corpus,
+/// each verified against UE 5.3 headers:
+/// - `UBlueprintGeneratedClass::PropertyGuids` — `TMap<FName, FGuid>`
+///   (BlueprintGeneratedClass.h)
+/// - `UNiagaraNodeFunctionCall::BoundPinNames` — `TMap<FGuid, FName>`
+/// - `UNiagaraNodeParameterMapGet::PinOutputToPinDefaultPersistentId` —
+///   `TMap<FGuid, FGuid>`
+/// - `FNiagaraParameterStore::ParameterGuidMapping` — `TMap<FNiagaraVariable, FGuid>`
+/// - `UNiagaraGraph::VariableToScriptVariable` —
+///   `TMap<FNiagaraVariable, TObjectPtr<UNiagaraScriptVariable>>`
+/// - `FNiagaraScriptDataInterfaceInfo`… `InputDescriptions`/`OutputDescriptions`
+///   (NiagaraCommon.h) — `TMap<FNiagaraVariableBase, FText>`
+/// - `FNiagaraUserRedirectionParameterStore::UserParameterRedirects` —
+///   `TMap<FNiagaraVariable, FNiagaraVariable>`
+/// - `FNiagaraMessageStore::MessageKeyToMessageMap` — `TMap<FGuid, TObjectPtr<…>>`
+/// - `UNiagaraComponent::TemplateParameterOverrides`/`InstanceParameterOverrides` —
+///   `TMap<FNiagaraVariableBase, FNiagaraVariant>`
+/// - `UAnimSequence::AttributeCurves` —
+///   `TMap<FAnimationAttributeIdentifier, FAttributeCurve>`
+///
+/// A wrong entry cannot misalign the stream: the value window is still bounded by
+/// the tag's `Size`, so a struct that does not fit fails into the usual fallback.
+const LEGACY_CONTAINER_STRUCT_NAMES: &[(&str, Option<&str>, Option<&str>)] = &[
+    ("PropertyGuids", None, Some("Guid")),
+    ("BoundPinNames", Some("Guid"), None),
+    (
+        "PinOutputToPinDefaultPersistentId",
+        Some("Guid"),
+        Some("Guid"),
+    ),
+    (
+        "ParameterGuidMapping",
+        Some("NiagaraVariable"),
+        Some("Guid"),
+    ),
+    ("VariableToScriptVariable", Some("NiagaraVariable"), None),
+    ("InputDescriptions", Some("NiagaraVariableBase"), None),
+    ("OutputDescriptions", Some("NiagaraVariableBase"), None),
+    (
+        "UserParameterRedirects",
+        Some("NiagaraVariable"),
+        Some("NiagaraVariable"),
+    ),
+    ("MessageKeyToMessageMap", Some("Guid"), None),
+    (
+        "TemplateParameterOverrides",
+        Some("NiagaraVariableBase"),
+        Some("NiagaraVariant"),
+    ),
+    (
+        "InstanceParameterOverrides",
+        Some("NiagaraVariableBase"),
+        Some("NiagaraVariant"),
+    ),
+    (
+        "AttributeCurves",
+        Some("AnimationAttributeIdentifier"),
+        Some("AttributeCurve"),
+    ),
+];
+
+/// Fills in the struct names a legacy set/map tag omitted, when the property is
+/// one whose declaration is known (see [`LEGACY_CONTAINER_STRUCT_NAMES`]).
+fn name_known_container_structs(property_name: &str, type_name: &mut TypeName) {
+    if !matches!(type_name.name.as_str(), "SetProperty" | "MapProperty") {
+        return;
+    }
+    let Some((_, key_struct, value_struct)) = LEGACY_CONTAINER_STRUCT_NAMES
+        .iter()
+        .find(|(name, _, _)| *name == property_name)
+    else {
+        return;
+    };
+    let fill = |param: Option<&mut TypeName>, struct_name: Option<&str>| {
+        if let (Some(param), Some(struct_name)) = (param, struct_name)
+            && param.name == "StructProperty"
+            && param.params.is_empty()
+        {
+            param.params.push(TypeName::leaf(struct_name.to_string()));
+        }
+    };
+    let mut params = type_name.params.iter_mut();
+    fill(params.next(), *key_struct);
+    fill(params.next(), *value_struct);
 }
 
 fn read_legacy_type_name(

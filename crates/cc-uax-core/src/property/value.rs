@@ -179,10 +179,39 @@ fn parse_array(
         let struct_name = read_inner_array_struct_name(r, ctx, value_end)?;
         Some(TypeName::struct_of(struct_name))
     } else {
-        None
+        legacy_byte_element_type(ctx, inner, count, value_end.saturating_sub(r.pos()))
     };
     let inner = named_inner.as_ref().unwrap_or(inner);
     read_elements(r, inner, ctx, prefer_native, value_end, count)
+}
+
+/// Placeholder enum name for a legacy container whose `ByteProperty` elements
+/// turn out to be enum names: the tag never recorded which enum.
+const LEGACY_UNNAMED_ENUM: &str = "<enum>";
+
+/// Below `PROPERTY_TAG_COMPLETE_TYPE_NAME` a container tag records its element as
+/// a bare `ByteProperty` whether it is a `uint8` or a `TEnumAsByte<E>`, but
+/// `FByteProperty::SerializeItem` writes an enum as an 8-byte `FName`. The tag's
+/// `Size` bounds the payload, so the element width follows from the count: only
+/// `8 * count` remaining bytes can be names, only `count` can be bytes. Anything
+/// else is left to the caller, whose bounded read then fails rather than
+/// misreading name indices as values.
+fn legacy_byte_element_type(
+    ctx: &ParseCtx,
+    inner: &TypeName,
+    count: i32,
+    remaining: u64,
+) -> Option<TypeName> {
+    if ctx.file_version_ue5 >= ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME
+        || inner.name != "ByteProperty"
+        || !inner.params.is_empty()
+        || count <= 0
+    {
+        return None;
+    }
+    let count = u64::try_from(count).ok()?;
+    (remaining == count.checked_mul(RAW_NAME_BYTES)? && remaining != count)
+        .then(|| TypeName::byte_enum_of(LEGACY_UNNAMED_ENUM.to_string()))
 }
 
 /// Whether `FArrayProperty::SerializeItem` wrote an inner `FPropertyTag` for this
@@ -205,6 +234,8 @@ fn parse_collection(
     let count = r.read_i32_within(value_end, "collection element count")?;
     let remaining_in_value = value_end.saturating_sub(r.pos());
     validate_count(count, remaining_in_value, 1, "collection element")?;
+    let named_inner = legacy_byte_element_type(ctx, inner, count, remaining_in_value);
+    let inner = named_inner.as_ref().unwrap_or(inner);
     read_elements(r, inner, ctx, prefer_native, value_end, count)
 }
 
