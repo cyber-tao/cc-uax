@@ -64,11 +64,13 @@ pub(crate) struct DecodedBytecode {
     pub(crate) buffer_size: u32,
     /// `SerializedScriptSize`: the on-disk length, which bounds the region.
     pub(crate) serialized_size: u32,
-    /// Present when the whole region disassembled.
+    /// What the walk decoded. When `failure` is set this holds the expressions
+    /// read before the stream stopped making sense — still real evidence (and
+    /// real reference attribution) for that prefix.
     pub(crate) summary: Option<BytecodeSummary>,
-    /// Why it did not, when it did not. The region is skipped exactly either way,
-    /// because its length is declared, so a failure here costs the bytecode
-    /// evidence and nothing else.
+    /// Why the walk stopped short, when it did. The region is skipped exactly
+    /// either way, because its length is declared, so a failure here costs the
+    /// rest of the bytecode evidence and nothing else.
     pub(crate) failure: Option<String>,
 }
 
@@ -117,12 +119,22 @@ pub(crate) struct ScriptStructContext<'a> {
     pub(crate) core_object_version: i32,
     pub(crate) release_object_version: i32,
     pub(crate) file_version_ue5: i32,
+    /// Which `EBlueprintTextLiteralType` numbering `EX_TextConst` uses.
+    pub(crate) text_literals: bytecode::TextLiteralLayout,
 }
 
 impl<'a> ScriptStructContext<'a> {
     pub(crate) fn new(package: &'a Package) -> Self {
         Self {
             package,
+            text_literals: bytecode::TextLiteralLayout::for_package(
+                package.summary.engine_version.major,
+                package.summary.engine_version.minor,
+                package
+                    .summary
+                    .custom_version(custom::FORTNITE_MAIN_OBJECT_VERSION)
+                    .unwrap_or(-1),
+            ),
             filter_editor_only: package.summary.filter_editor_only(),
             framework_version: package
                 .summary
@@ -239,11 +251,9 @@ fn decode_bytecode(
         package: ctx.package,
         file_version_ue5: ctx.file_version_ue5,
         release_object_version: ctx.release_object_version,
+        text_literals: ctx.text_literals,
     };
-    let (summary, failure) = match bytecode::disassemble(reader, script_end, &bytecode_ctx) {
-        Ok(summary) => (Some(summary), None),
-        Err(error) => (None, Some(format!("{error:#}"))),
-    };
+    let (summary, failure) = bytecode::disassemble(reader, script_end, &bytecode_ctx);
     // The region's length is declared, so a failed walk still leaves the stream
     // positioned correctly for whatever the class writes next.
     reader.seek(script_end)?;
@@ -251,7 +261,7 @@ fn decode_bytecode(
     Ok(Some(DecodedBytecode {
         buffer_size: buffer_size as u32,
         serialized_size: serialized_size as u32,
-        summary,
+        summary: Some(summary),
         failure,
     }))
 }

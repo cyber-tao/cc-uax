@@ -81,12 +81,72 @@ pub(crate) struct BytecodeSummary {
     pub(crate) references: BTreeSet<(ScriptRefKind, String)>,
 }
 
+/// Which numbering of `EBlueprintTextLiteralType` (`Script.h`) the stream uses.
+///
+/// UE5.8 inserted `LocalizedTextWithNotes` *in the middle* of the enum, shifting
+/// `InvariantText`, `LiteralString` and `StringTableEntry` up by one. The
+/// bytecode carries no version of its own — the editor discards and recompiles it
+/// on load, so UE never needed one — which leaves the saving engine as the only
+/// signal. Reading a 5.0–5.7 stream with the 5.8 table turns every
+/// culture-invariant or string-table literal into the wrong number of
+/// sub-expressions and desynchronizes the rest of the function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextLiteralLayout {
+    /// `Empty, LocalizedText, InvariantText, LiteralString, StringTableEntry`.
+    BeforeDevNotes,
+    /// `Empty, LocalizedText, LocalizedTextWithNotes, InvariantText,
+    /// LiteralString, StringTableEntry`.
+    WithDevNotes,
+}
+
+impl TextLiteralLayout {
+    /// `LocalizedTextWithNotes` shipped with `FFortniteMainBranchObjectVersion::
+    /// AddDevNotesToFText`, the same change that made `FText` carry dev notes; a
+    /// package written by 5.8 or later records that custom version.
+    pub(crate) fn for_package(
+        engine_major: u16,
+        engine_minor: u16,
+        fortnite_main_version: i32,
+    ) -> Self {
+        if (engine_major, engine_minor) >= (5, 8)
+            || fortnite_main_version >= custom::ADD_DEV_NOTES_TO_FTEXT
+        {
+            Self::WithDevNotes
+        } else {
+            Self::BeforeDevNotes
+        }
+    }
+
+    fn literal(self, value: u8) -> Option<TextLiteral> {
+        Some(match (self, value) {
+            (_, 0) => TextLiteral::Empty,
+            (_, 1) => TextLiteral::LocalizedText,
+            (Self::WithDevNotes, 2) => TextLiteral::LocalizedTextWithNotes,
+            (Self::WithDevNotes, 3) | (Self::BeforeDevNotes, 2) => TextLiteral::InvariantText,
+            (Self::WithDevNotes, 4) | (Self::BeforeDevNotes, 3) => TextLiteral::LiteralString,
+            (Self::WithDevNotes, 5) | (Self::BeforeDevNotes, 4) => TextLiteral::StringTableEntry,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextLiteral {
+    Empty,
+    LocalizedText,
+    LocalizedTextWithNotes,
+    InvariantText,
+    LiteralString,
+    StringTableEntry,
+}
+
 pub(crate) struct BytecodeContext<'a> {
     pub(crate) package: &'a Package,
     pub(crate) file_version_ue5: i32,
     /// `FReleaseObjectVersion`, which decides whether an `FFieldPath` carries its
     /// owner. Missing (`-1`) selects the pre-owner layout, as UE does.
     pub(crate) release_object_version: i32,
+    pub(crate) text_literals: TextLiteralLayout,
 }
 
 impl BytecodeContext<'_> {
@@ -100,22 +160,32 @@ impl BytecodeContext<'_> {
 }
 
 /// Disassemble one `Script` region, consuming exactly `[start, end)`.
+///
+/// On failure the summary still holds every expression that decoded before the
+/// walk stopped — they are valid evidence (and valid reference attribution) up to
+/// that point — together with the reason it stopped. An unknown opcode has an
+/// unknown payload, so nothing after the failure is read.
 pub(crate) fn disassemble(
     reader: &mut Reader,
     end: u64,
     ctx: &BytecodeContext<'_>,
-) -> Result<BytecodeSummary> {
+) -> (BytecodeSummary, Option<String>) {
     let mut summary = BytecodeSummary::default();
     while reader.pos() < end {
-        read_expr(reader, end, ctx, &mut summary, 0)?;
+        if let Err(error) = read_expr(reader, end, ctx, &mut summary, 0) {
+            return (summary, Some(format!("{error:#}")));
+        }
     }
     if reader.pos() != end {
-        bail!(
-            "script stream overran its declared size by {} byte(s)",
-            reader.pos().saturating_sub(end)
+        return (
+            summary,
+            Some(format!(
+                "script stream overran its declared size by {} byte(s)",
+                reader.pos().saturating_sub(end)
+            )),
         );
     }
-    Ok(summary)
+    (summary, None)
 }
 
 /// One expression. Returns its opcode so the callers that loop until a terminator
@@ -132,8 +202,22 @@ fn read_expr(
         bail!("script expression nesting exceeded {MAX_EXPR_DEPTH}");
     }
     let token = xfer_u8(reader, end, ctx, summary)?;
+    let expr = read_expr_payload(token, reader, end, ctx, summary, depth)?;
+    // Counted only once the whole expression decoded, so a partial summary
+    // describes what was read, not what was attempted.
     summary.expressions += 1;
     *summary.opcodes.entry(opcode_name(token)).or_default() += 1;
+    Ok(expr)
+}
+
+fn read_expr_payload(
+    token: u8,
+    reader: &mut Reader,
+    end: u64,
+    ctx: &BytecodeContext<'_>,
+    summary: &mut BytecodeSummary,
+    depth: u32,
+) -> Result<Expr> {
     let mut text = None;
 
     match token {
@@ -573,30 +657,27 @@ fn xfer_text(
     depth: u32,
 ) -> Result<()> {
     let literal = xfer_u8(reader, end, ctx, summary)?;
+    let Some(literal) = ctx.text_literals.literal(literal) else {
+        bail!(
+            "unknown EBlueprintTextLiteralType {literal} for {:?}",
+            ctx.text_literals
+        );
+    };
     let expressions = match literal {
-        TEXT_LITERAL_EMPTY => 0,
-        TEXT_LITERAL_LOCALIZED_TEXT => 3,
-        TEXT_LITERAL_LOCALIZED_TEXT_WITH_NOTES => 4,
-        TEXT_LITERAL_INVARIANT_TEXT | TEXT_LITERAL_LITERAL_STRING => 1,
-        TEXT_LITERAL_STRING_TABLE_ENTRY => {
+        TextLiteral::Empty => 0,
+        TextLiteral::LocalizedText => 3,
+        TextLiteral::LocalizedTextWithNotes => 4,
+        TextLiteral::InvariantText | TextLiteral::LiteralString => 1,
+        TextLiteral::StringTableEntry => {
             xfer_object(reader, end, ctx, summary, ScriptRefKind::Object)?;
             2
         }
-        other => bail!("unknown EBlueprintTextLiteralType {other}"),
     };
     for _ in 0..expressions {
         read_expr(reader, end, ctx, summary, depth + 1)?;
     }
     Ok(())
 }
-
-// EBlueprintTextLiteralType (Script.h).
-const TEXT_LITERAL_EMPTY: u8 = 0;
-const TEXT_LITERAL_LOCALIZED_TEXT: u8 = 1;
-const TEXT_LITERAL_LOCALIZED_TEXT_WITH_NOTES: u8 = 2;
-const TEXT_LITERAL_INVARIANT_TEXT: u8 = 3;
-const TEXT_LITERAL_LITERAL_STRING: u8 = 4;
-const TEXT_LITERAL_STRING_TABLE_ENTRY: u8 = 5;
 
 // EExprToken (Script.h). Gaps in the numbering are unused opcode slots.
 const EX_LOCAL_VARIABLE: u8 = 0x00;

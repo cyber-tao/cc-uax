@@ -633,7 +633,9 @@ pub struct ScriptFunctionInfo {
 pub struct ScriptBytecodeInfo {
     pub buffer_size: u32,
     pub serialized_size: u32,
-    /// Absent when the stream disassembled and both sizes agreed.
+    /// Absent when the stream disassembled and both sizes agreed. When present,
+    /// `expressions`, `opcodes` and `references` describe the prefix that did
+    /// decode before the walk stopped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub undecoded_reason: Option<String>,
     #[serde(default, skip_serializing_if = "is_zero_usize")]

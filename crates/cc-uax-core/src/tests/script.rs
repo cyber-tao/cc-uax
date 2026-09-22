@@ -3,7 +3,7 @@ use crate::name::NameMap;
 use crate::object::{ObjectImport, PackageIndex};
 use crate::package::Package;
 use crate::reader::Reader;
-use crate::script::bytecode::{BytecodeContext, ScriptRefKind, disassemble};
+use crate::script::bytecode::{BytecodeContext, ScriptRefKind, TextLiteralLayout, disassemble};
 use crate::script::field::{FieldContext, decode_property_list};
 use crate::script::{ScriptStructContext, decode_script_struct};
 use crate::version::{custom, ue5};
@@ -19,6 +19,7 @@ const EX_STRING_CONST: u8 = 0x1F;
 const EX_OBJECT_CONST: u8 = 0x20;
 const EX_NAME_CONST: u8 = 0x21;
 const EX_VECTOR_CONST: u8 = 0x23;
+const EX_TEXT_CONST: u8 = 0x29;
 const EX_UNICODE_STRING_CONST: u8 = 0x34;
 const EX_END_OF_SCRIPT: u8 = 0x53;
 const EX_SOFT_OBJECT_CONST: u8 = 0x67;
@@ -84,6 +85,7 @@ fn bytecode_ctx<'a>(package: &'a Package, file_version_ue5: i32) -> BytecodeCont
         package,
         file_version_ue5,
         release_object_version: custom::RELEASE_FIELD_PATH_OWNER_SERIALIZATION,
+        text_literals: TextLiteralLayout::WithDevNotes,
     }
 }
 
@@ -92,13 +94,20 @@ fn run(
     package: &Package,
     file_version_ue5: i32,
 ) -> crate::script::bytecode::BytecodeSummary {
+    run_with(script, &bytecode_ctx(package, file_version_ue5))
+}
+
+fn run_with(script: &[u8], ctx: &BytecodeContext<'_>) -> crate::script::bytecode::BytecodeSummary {
     let mut reader = Reader::new(script);
-    disassemble(
-        &mut reader,
-        script.len() as u64,
-        &bytecode_ctx(package, file_version_ue5),
-    )
-    .expect("stream should disassemble")
+    let (summary, failure) = disassemble(&mut reader, script.len() as u64, ctx);
+    assert!(failure.is_none(), "stream should disassemble: {failure:?}");
+    summary
+}
+
+fn fails_with(script: &[u8], ctx: &BytecodeContext<'_>) -> String {
+    let mut reader = Reader::new(script);
+    let (_, failure) = disassemble(&mut reader, script.len() as u64, ctx);
+    failure.expect("stream should fail to disassemble")
 }
 
 /// An `FFieldPath` as `FPropertyProxyArchive` writes it: the path names, then the
@@ -184,14 +193,94 @@ fn vector_constants_follow_the_large_world_coordinates_gate() {
     run(&wide, &package, ue5::LARGE_WORLD_COORDINATES);
 
     // Reading the narrow form with the wide layout overruns the declared size.
-    let mut reader = Reader::new(&narrow);
+    fails_with(
+        &narrow,
+        &bytecode_ctx(&package, ue5::LARGE_WORLD_COORDINATES),
+    );
+}
+
+/// UE5.8 inserted `LocalizedTextWithNotes` into the middle of
+/// `EBlueprintTextLiteralType` (Script.h), so `InvariantText`, `LiteralString`
+/// and `StringTableEntry` moved up by one. A 5.0–5.7 invariant literal read with
+/// the 5.8 table becomes four sub-expressions instead of one and the walk fails.
+#[test]
+fn text_literal_kinds_follow_the_saving_engine_numbering() {
+    let package = package();
+    // `EX_TextConst` with an invariant string: kind byte, then one EX_StringConst.
+    let invariant = |kind: u8| {
+        let mut script = vec![EX_TEXT_CONST, kind, EX_STRING_CONST];
+        script.extend_from_slice(b"hi\0");
+        script
+    };
+    // A string-table entry: kind byte, object pointer, then table id and key.
+    let string_table = |kind: u8| {
+        let mut script = vec![EX_TEXT_CONST, kind];
+        push_i32(&mut script, -1);
+        script.push(EX_STRING_CONST);
+        script.extend_from_slice(b"/Game/T\0");
+        script.push(EX_STRING_CONST);
+        script.extend_from_slice(b"Key\0");
+        script
+    };
+    let before = BytecodeContext {
+        text_literals: TextLiteralLayout::BeforeDevNotes,
+        ..bytecode_ctx(&package, ue5::HIGHEST)
+    };
+    let after = bytecode_ctx(&package, ue5::HIGHEST);
+
+    // 5.0–5.7 numbering: InvariantText = 2, StringTableEntry = 4.
+    assert_eq!(run_with(&invariant(2), &before).expressions, 2);
+    assert_eq!(run_with(&string_table(4), &before).expressions, 3);
+    // 5.8 numbering: InvariantText = 3, StringTableEntry = 5.
+    assert_eq!(run_with(&invariant(3), &after).expressions, 2);
+    assert_eq!(run_with(&string_table(5), &after).expressions, 3);
+    // Cross-reading fails instead of silently mis-sizing the literal. (Kind 3 is
+    // one string under both numberings — LiteralString before, InvariantText
+    // after — which is why the old table survived on some assets.)
+    fails_with(&invariant(2), &after);
+    fails_with(&string_table(4), &after);
+    assert!(fails_with(&string_table(5), &before).contains("unknown EBlueprintTextLiteralType"));
+}
+
+#[test]
+fn text_literal_layout_is_selected_by_saving_engine_or_dev_notes_version() {
+    use TextLiteralLayout::{BeforeDevNotes, WithDevNotes};
+    let dev_notes = custom::ADD_DEV_NOTES_TO_FTEXT;
+    assert_eq!(TextLiteralLayout::for_package(5, 7, -1), BeforeDevNotes);
+    assert_eq!(
+        TextLiteralLayout::for_package(5, 7, dev_notes - 1),
+        BeforeDevNotes
+    );
+    assert_eq!(
+        TextLiteralLayout::for_package(5, 7, dev_notes),
+        WithDevNotes
+    );
+    assert_eq!(TextLiteralLayout::for_package(5, 8, -1), WithDevNotes);
+    assert_eq!(TextLiteralLayout::for_package(6, 0, -1), WithDevNotes);
+}
+
+/// The expressions decoded before a failure are still evidence: keeping them
+/// means a broken literal deep in a function does not erase the calls and
+/// references its first half made.
+#[test]
+fn a_failed_walk_keeps_the_expressions_decoded_before_it_stopped() {
+    let package = package();
+    let mut script = Vec::new();
+    script.push(EX_OBJECT_CONST);
+    push_i32(&mut script, -1);
+    script.push(0x7F); // not an opcode
+    let mut reader = Reader::new(&script);
+    let (summary, failure) = disassemble(
+        &mut reader,
+        script.len() as u64,
+        &bytecode_ctx(&package, ue5::HIGHEST),
+    );
+    assert!(failure.is_some());
+    assert_eq!(summary.expressions, 1);
     assert!(
-        disassemble(
-            &mut reader,
-            narrow.len() as u64,
-            &bytecode_ctx(&package, ue5::LARGE_WORLD_COORDINATES)
-        )
-        .is_err()
+        summary
+            .references
+            .contains(&(ScriptRefKind::Object, "/Game/Fx/NS_Spark".to_string()))
     );
 }
 
@@ -250,16 +339,10 @@ fn switch_value_reads_exactly_its_declared_case_count() {
 fn an_unknown_opcode_stops_the_walk_instead_of_guessing_a_width() {
     let package = package();
     let script = [0xFEu8, 0x00, 0x00];
-    let mut reader = Reader::new(&script);
 
-    let error = disassemble(
-        &mut reader,
-        script.len() as u64,
-        &bytecode_ctx(&package, ue5::HIGHEST),
-    )
-    .expect_err("an unknown opcode has an unknown payload");
+    let error = fails_with(&script, &bytecode_ctx(&package, ue5::HIGHEST));
 
-    assert!(format!("{error:#}").contains("unknown script opcode 0xFE"));
+    assert!(error.contains("unknown script opcode 0xFE"));
 }
 
 #[test]
@@ -267,16 +350,8 @@ fn a_truncated_expression_is_an_error_rather_than_a_short_read() {
     let package = package();
     // EX_IntConst promises four bytes and only two are present.
     let script = [EX_INT_CONST, 0x01, 0x02];
-    let mut reader = Reader::new(&script);
 
-    assert!(
-        disassemble(
-            &mut reader,
-            script.len() as u64,
-            &bytecode_ctx(&package, ue5::HIGHEST)
-        )
-        .is_err()
-    );
+    fails_with(&script, &bytecode_ctx(&package, ue5::HIGHEST));
 }
 
 #[test]
@@ -286,15 +361,9 @@ fn a_call_missing_its_terminator_reports_the_missing_opcode() {
     push_i32(&mut script, 0);
     script.push(EX_NOTHING);
 
-    let mut reader = Reader::new(&script);
-    let error = disassemble(
-        &mut reader,
-        script.len() as u64,
-        &bytecode_ctx(&package, ue5::HIGHEST),
-    )
-    .expect_err("the parameter list never closes");
+    let error = fails_with(&script, &bytecode_ctx(&package, ue5::HIGHEST));
 
-    assert!(format!("{error:#}").contains("EX_EndFunctionParms"));
+    assert!(error.contains("EX_EndFunctionParms"));
 }
 
 /// One `FField`: name, editor flags, no metadata, then `FProperty`'s fixed block.
