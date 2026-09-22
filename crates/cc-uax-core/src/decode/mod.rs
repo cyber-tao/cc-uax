@@ -737,6 +737,22 @@ fn is_state_tree_model_object_class(class: &str) -> bool {
     class.starts_with("/Script/StateTree")
 }
 
+/// An export whose payload holds a serialized `URigVM` (the compiled Control Rig
+/// program): the `URigVM` object itself, and a Control Rig generated class, whose
+/// `Serialize` writes the CDO's VM after `UBlueprintGeneratedClass::Serialize`
+/// (`ControlRigBlueprintGeneratedClass.cpp`, 5.0–5.8).
+pub(crate) fn is_rigvm_bytecode_class(class: &str) -> bool {
+    matches!(
+        class,
+        "/Script/RigVM.RigVM" | "/Script/ControlRig.ControlRigBlueprintGeneratedClass"
+    )
+}
+
+/// `URigHierarchy`: its `Serialize` is `Save`/`Load` of the compressed hierarchy.
+pub(crate) fn is_rig_hierarchy_class(class: &str) -> bool {
+    class == "/Script/ControlRig.RigHierarchy"
+}
+
 /// A Niagara object whose payload includes a compiled VM or GPU representation
 /// (`FNiagaraVMExecutableData`, simulation-stage and shader data) rather than
 /// source-level graph evidence.

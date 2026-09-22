@@ -31,16 +31,26 @@ pub mod ue5 {
 // the UE4 package version number.
 #[allow(dead_code)]
 pub mod ue4 {
+    // Values are `EUnrealEngineObjectUE4Version` (ObjectVersion.h), counted from
+    // `VER_UE4_OLDEST_LOADABLE_PACKAGE = 214`.
     pub const WORLD_LEVEL_INFO: i32 = 224;
     pub const ADDED_CHUNKID_TO_ASSETDATA_AND_UPACKAGE: i32 = 278;
+    /// `VAR_UE4_ARRAY_PROPERTY_INNER_TAGS` (sic): from here a legacy `ArrayProperty`
+    /// tag records its element's property type (PropertyTag.cpp).
+    pub const ARRAY_PROPERTY_INNER_TAGS: i32 = 282;
+    pub const CHANGED_CHUNKID_TO_BE_AN_ARRAY_OF_CHUNKIDS: i32 = 326;
     pub const ENGINE_VERSION_OBJECT: i32 = 336;
     pub const LOAD_FOR_EDITOR_GAME: i32 = 365;
     pub const ADD_STRING_ASSET_REFERENCES_MAP: i32 = 384;
-    pub const CHANGED_CHUNKID_TO_BE_AN_ARRAY_OF_CHUNKIDS: i32 = 392;
-    pub const COOKED_ASSETS_IN_EDITOR_SUPPORT: i32 = 415;
     pub const STRUCT_GUID_IN_PROPERTY_TAG: i32 = 441;
     pub const PACKAGE_SUMMARY_HAS_COMPATIBLE_ENGINE_VERSION: i32 = 444;
     pub const SERIALIZE_TEXT_IN_PACKAGES: i32 = 459;
+    /// `UAssetImportData` writes its source-file list as a JSON `FString` before
+    /// its tagged properties from this version on (`AssetImportData.cpp`).
+    pub const ASSET_IMPORT_DATA_AS_JSON: i32 = 464;
+    pub const COOKED_ASSETS_IN_EDITOR_SUPPORT: i32 = 485;
+    /// From here `FArrayProperty::SerializeItem` writes a full inner `FPropertyTag`
+    /// into a struct array's payload (PropertyArray.cpp).
     pub const INNER_ARRAY_TAG_INFO: i32 = 500;
     pub const PROPERTY_GUID_IN_PROPERTY_TAG: i32 = 503;
     pub const NAME_HASHES_SERIALIZED: i32 = 504;
@@ -50,9 +60,6 @@ pub mod ue4 {
     pub const ADDED_SEARCHABLE_NAMES: i32 = 510;
     pub const SERIALSIZE_64BIT_EXPORTMAP: i32 = 511;
     pub const ADDED_SOFT_OBJECT_PATH: i32 = 514;
-    /// `UAssetImportData` writes its source-file list as a JSON `FString` before
-    /// its tagged properties from this version on (`AssetImportData.cpp`).
-    pub const ASSET_IMPORT_DATA_AS_JSON: i32 = 515;
     pub const ADDED_PACKAGE_SUMMARY_LOCALIZATION_ID: i32 = 516;
     pub const ADDED_PACKAGE_OWNER: i32 = 518;
     pub const NON_OUTER_PACKAGE_IMPORT: i32 = 520;

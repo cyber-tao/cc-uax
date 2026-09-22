@@ -9,7 +9,10 @@ use super::coverage::{
     GraphCoverage, PcgCoverage, PropertyCoverage, RigVmCoverage, StateTreeCoverage,
 };
 use super::{pcg, rigvm, state_tree};
-use crate::decode::{DecodeReport, is_niagara_compiled_class, is_script_bytecode_class};
+use crate::decode::{
+    DecodeReport, is_niagara_compiled_class, is_rig_hierarchy_class, is_rigvm_bytecode_class,
+    is_script_bytecode_class,
+};
 use crate::model::{
     AnalysisCapability, AnalysisStatus, CapabilityKind, KnownOpaque, KnownOpaqueKind,
 };
@@ -152,32 +155,58 @@ pub(super) fn build_capabilities(
         });
     }
 
-    let has_rigvm = rigvm_coverage.graphs_total > 0;
-    if wants_logic && has_rigvm {
-        capabilities.push(AnalysisCapability {
-            kind: CapabilityKind::RigVmBytecode,
-            status: AnalysisStatus::Unsupported,
-            detail: Some("compiled RigVM bytecode is retained as known opaque data".into()),
-        });
-        known_opaque.push(KnownOpaque {
-            path: "/capabilities/rigvm_bytecode".into(),
-            kind: KnownOpaqueKind::Capability,
-            type_name: Some("RigVMBytecode".into()),
-            reason: "compiled RigVM bytecode semantics are not decoded".into(),
-            byte_range: None,
-        });
-        capabilities.push(AnalysisCapability {
-            kind: CapabilityKind::RigHierarchy,
-            status: AnalysisStatus::Unsupported,
-            detail: Some("compressed RigHierarchy data is retained as known opaque data".into()),
-        });
-        known_opaque.push(KnownOpaque {
-            path: "/capabilities/rig_hierarchy".into(),
-            kind: KnownOpaqueKind::Capability,
-            type_name: Some("RigHierarchy".into()),
-            reason: "compressed RigHierarchy semantics are not decoded".into(),
-            byte_range: None,
-        });
+    // Like Niagara below, these gaps are reported from evidence: the export whose
+    // payload holds the compiled form has to be present. Asserting them from the
+    // mere presence of a RigVM graph gave every hierarchy-less RigVM asset (UAF /
+    // AnimNext) a RigHierarchy gap it does not have.
+    if wants_logic {
+        let payload_exports = |predicate: fn(&str) -> bool| {
+            report
+                .exports
+                .iter()
+                .filter(|export| {
+                    predicate(&export.identity.class)
+                        && export
+                            .post_property_tail
+                            .as_ref()
+                            .is_some_and(|tail| tail.size > 0)
+                })
+                .count()
+        };
+        let rigvm_exports = payload_exports(is_rigvm_bytecode_class);
+        if rigvm_exports > 0 {
+            capabilities.push(AnalysisCapability {
+                kind: CapabilityKind::RigVmBytecode,
+                status: AnalysisStatus::Unsupported,
+                detail: Some(format!(
+                    "compiled RigVM bytecode on {rigvm_exports} export(s) is retained as known opaque data"
+                )),
+            });
+            known_opaque.push(KnownOpaque {
+                path: "/capabilities/rigvm_bytecode".into(),
+                kind: KnownOpaqueKind::Capability,
+                type_name: Some("RigVMBytecode".into()),
+                reason: "compiled RigVM bytecode semantics are not decoded".into(),
+                byte_range: None,
+            });
+        }
+        let hierarchy_exports = payload_exports(is_rig_hierarchy_class);
+        if hierarchy_exports > 0 {
+            capabilities.push(AnalysisCapability {
+                kind: CapabilityKind::RigHierarchy,
+                status: AnalysisStatus::Unsupported,
+                detail: Some(format!(
+                    "compressed RigHierarchy data on {hierarchy_exports} export(s) is retained as known opaque data"
+                )),
+            });
+            known_opaque.push(KnownOpaque {
+                path: "/capabilities/rig_hierarchy".into(),
+                kind: KnownOpaqueKind::Capability,
+                type_name: Some("RigHierarchy".into()),
+                reason: "compressed RigHierarchy semantics are not decoded".into(),
+                byte_range: None,
+            });
+        }
     }
     // Compiled Niagara payloads remain the same kind of gap as compiled RigVM
     // bytecode: the source-level graph decodes but the compiled form does not.

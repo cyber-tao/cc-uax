@@ -217,11 +217,12 @@ fn field_layout(type_name: &str) -> Option<&'static [FieldStep]> {
     const FIELD_PATH: &[FieldStep] = &[Name];
 
     Some(match type_name {
+        // `FUtf8StrProperty`/`FAnsiStrProperty` (UE5.5+, Utf8StrProperty.h) add
+        // no `Serialize` override either.
         "Property" | "NumericProperty" | "Int8Property" | "Int16Property" | "IntProperty"
         | "Int64Property" | "UInt16Property" | "UInt32Property" | "UInt64Property"
-        | "FloatProperty" | "DoubleProperty" | "NameProperty" | "StrProperty" | "TextProperty" => {
-            NONE
-        }
+        | "FloatProperty" | "DoubleProperty" | "NameProperty" | "StrProperty"
+        | "Utf8StrProperty" | "AnsiStrProperty" | "TextProperty" => NONE,
         "BoolProperty" => BOOL,
         "ByteProperty" => OBJECT,
         "EnumProperty" => ENUM,

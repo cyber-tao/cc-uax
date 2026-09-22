@@ -48,6 +48,9 @@ pub(crate) fn parse_value(
                 .resolve_raw(r.read_raw_name_within(value_end, "NameProperty")?)
         ),
         "StrProperty" => json!(r.read_fstring_within(value_end, "StrProperty")?),
+        "Utf8StrProperty" | "AnsiStrProperty" => {
+            json!(r.read_narrow_string_within(value_end, &ty.name)?)
+        }
         "TextProperty" => parse_text(r, ctx, value_end, 0)?,
         "ObjectProperty" | "ClassProperty" | "WeakObjectProperty" | "ObjectPtrProperty"
         | "ClassPtrProperty" | "InterfaceProperty" => {

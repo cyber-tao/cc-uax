@@ -331,6 +331,20 @@ impl<'a> Reader<'a> {
         self.read_fstring_of_length(len)
     }
 
+    /// An `FUtf8String`/`FAnsiString` (`TString<UTF8CHAR>`/`TString<ANSICHAR>`,
+    /// UE5.5+): the same length prefix as `FString`, but the count is always in
+    /// bytes and UE treats a negative one as a corrupt archive
+    /// (`String.cpp.inl`, `operator<<` for non-TCHAR element types).
+    pub fn read_narrow_string_within(&mut self, end: u64, what: &str) -> Result<String> {
+        self.ensure_within(end, 4, what)?;
+        let len = self.read_i32()?;
+        if len < 0 {
+            bail!("{what}: narrow string length {len} is negative");
+        }
+        self.ensure_within(end, len as u64, what)?;
+        self.read_fstring_of_length(len)
+    }
+
     fn read_fstring_of_length(&mut self, len: i32) -> Result<String> {
         if len == 0 {
             return Ok(String::new());

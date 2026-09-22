@@ -64,8 +64,89 @@ pub(super) fn parse_math_struct(
         "Quat4f" => json!({
             "x": r.read_f32()?, "y": r.read_f32()?, "z": r.read_f32()?, "w": r.read_f32()?
         }),
+        // Explicit-precision variants (NoExportTypes.h, `immutable` in 5.0–5.8).
+        "Vector3d" => vec3(r, true)?,
+        "Vector4d" | "Quat4d" => vec4(r, true)?,
+        "Rotator3d" => json!({
+            "pitch": r.read_f64()?, "yaw": r.read_f64()?, "roll": r.read_f64()?
+        }),
+        // FPlane : FVector + W, so the whole thing follows the LWC gate.
+        "Plane" => vec4(r, lwc)?,
+        "Plane4f" => vec4(r, false)?,
+        "Plane4d" => vec4(r, true)?,
+        "TwoVectors" => json!({ "v1": vec3(r, lwc)?, "v2": vec3(r, lwc)? }),
+        "Ray" => json!({ "origin": vec3(r, lwc)?, "direction": vec3(r, lwc)? }),
+        "Ray3f" => json!({ "origin": vec3(r, false)?, "direction": vec3(r, false)? }),
+        "Ray3d" => json!({ "origin": vec3(r, true)?, "direction": vec3(r, true)? }),
+        "Sphere" => json!({ "center": vec3(r, lwc)?, "radius": read_coord(r, lwc)? }),
+        "Sphere3f" => json!({ "center": vec3(r, false)?, "radius": r.read_f32()? as f64 }),
+        "Sphere3d" => json!({ "center": vec3(r, true)?, "radius": r.read_f64()? }),
+        "OrientedBox" => json!({
+            "center": vec3(r, lwc)?,
+            "axis_x": vec3(r, lwc)?,
+            "axis_y": vec3(r, lwc)?,
+            "axis_z": vec3(r, lwc)?,
+            "extent_x": read_coord(r, lwc)?,
+            "extent_y": read_coord(r, lwc)?,
+            "extent_z": read_coord(r, lwc)?,
+        }),
+        "Box3d" => {
+            let min = vec3(r, true)?;
+            let max = vec3(r, true)?;
+            json!({ "min": min, "max": max, "is_valid": r.read_u8()? != 0 })
+        }
+        "Matrix44d" => {
+            let mut m = Vec::with_capacity(16);
+            for _ in 0..16 {
+                m.push(json!(r.read_f64()?));
+            }
+            json!({ "m": m })
+        }
+        "PackedNormal" => json!({
+            "x": r.read_u8()?, "y": r.read_u8()?, "z": r.read_u8()?, "w": r.read_u8()?
+        }),
+        "PackedRGB10A2N" => json!({ "packed": r.read_i32()? }),
+        "PackedRGBA16N" => json!({ "xy": r.read_i32()?, "zw": r.read_i32()? }),
+        // Integer points, rects and vectors of every width (5.8 added the
+        // explicit-width names; the layout is the obvious sequence of components).
         "IntPoint" | "Int32Point" => json!({ "x": r.read_i32()?, "y": r.read_i32()? }),
-        "IntVector" => json!({ "x": r.read_i32()?, "y": r.read_i32()?, "z": r.read_i32()? }),
+        "Int64Point" => json!({ "x": r.read_i64()?, "y": r.read_i64()? }),
+        "Uint32Point" => json!({ "x": r.read_u32()?, "y": r.read_u32()? }),
+        "Uint64Point" => json!({ "x": r.read_u64()?, "y": r.read_u64()? }),
+        "IntRect" | "Int32Rect" => json!({
+            "min": { "x": r.read_i32()?, "y": r.read_i32()? },
+            "max": { "x": r.read_i32()?, "y": r.read_i32()? }
+        }),
+        "Int64Rect" => json!({
+            "min": { "x": r.read_i64()?, "y": r.read_i64()? },
+            "max": { "x": r.read_i64()?, "y": r.read_i64()? }
+        }),
+        "UintRect" | "Uint32Rect" => json!({
+            "min": { "x": r.read_u32()?, "y": r.read_u32()? },
+            "max": { "x": r.read_u32()?, "y": r.read_u32()? }
+        }),
+        "Uint64Rect" => json!({
+            "min": { "x": r.read_u64()?, "y": r.read_u64()? },
+            "max": { "x": r.read_u64()?, "y": r.read_u64()? }
+        }),
+        "IntVector" | "Int32Vector" => {
+            json!({ "x": r.read_i32()?, "y": r.read_i32()?, "z": r.read_i32()? })
+        }
+        "Int64Vector" => json!({ "x": r.read_i64()?, "y": r.read_i64()?, "z": r.read_i64()? }),
+        "Uint32Vector" => json!({ "x": r.read_u32()?, "y": r.read_u32()?, "z": r.read_u32()? }),
+        "Uint64Vector" => json!({ "x": r.read_u64()?, "y": r.read_u64()?, "z": r.read_u64()? }),
+        "Int64Vector2" => json!({ "x": r.read_i64()?, "y": r.read_i64()? }),
+        "Uint32Vector2" => json!({ "x": r.read_u32()?, "y": r.read_u32()? }),
+        "Uint64Vector2" => json!({ "x": r.read_u64()?, "y": r.read_u64()? }),
+        "Int64Vector4" => json!({
+            "x": r.read_i64()?, "y": r.read_i64()?, "z": r.read_i64()?, "w": r.read_i64()?
+        }),
+        "UintVector4" | "Uint32Vector4" => json!({
+            "x": r.read_u32()?, "y": r.read_u32()?, "z": r.read_u32()?, "w": r.read_u32()?
+        }),
+        "Uint64Vector4" => json!({
+            "x": r.read_u64()?, "y": r.read_u64()?, "z": r.read_u64()?, "w": r.read_u64()?
+        }),
         "Guid" => json!(r.read_guid()?.to_hex()),
         "Color" => json!({
             "b": r.read_u8()?, "g": r.read_u8()?, "r": r.read_u8()?, "a": r.read_u8()?
@@ -150,8 +231,8 @@ pub(super) fn parse_math_struct(
         // assets), so a StructProperty(FrameRate) payload is tagged properties.
         // ScalarKind::FrameRate below still covers the genuinely native contexts
         // (PerPlatformFrameRate, MovieScene channel tick resolution).
-        "IntVector2" => json!({ "x": r.read_i32()?, "y": r.read_i32()? }),
-        "IntVector4" => json!({
+        "IntVector2" | "Int32Vector2" => json!({ "x": r.read_i32()?, "y": r.read_i32()? }),
+        "IntVector4" | "Int32Vector4" => json!({
             "x": r.read_i32()?, "y": r.read_i32()?, "z": r.read_i32()?, "w": r.read_i32()?
         }),
         "DeprecateSlateVector2D" => json!({ "x": r.read_f32()?, "y": r.read_f32()? }),

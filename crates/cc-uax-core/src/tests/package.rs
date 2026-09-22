@@ -956,14 +956,34 @@ fn assert_native_only_payload(analysis: &crate::AssetAnalysis, payload_len: u64)
         Some(PropertyDecodeStatus::NativeOnly)
     );
     assert!(analysis.exports[0].properties.is_empty());
-    // Not a gap: no diagnostic, no tagged-property export counted, and the
-    // payload is class data rather than an unattributed tail.
+    // Not a tagged-property gap: no diagnostic, no tagged-property export counted,
+    // and the payload is class data rather than an unattributed tail. The only
+    // thing allowed to keep the asset from `complete` is a named compiled-payload
+    // capability: a RigHierarchy payload *is* the `rig_hierarchy` gap.
     assert!(
         analysis.diagnostics.is_empty(),
         "{:#?}",
         analysis.diagnostics
     );
-    assert_eq!(analysis.status, AnalysisStatus::Complete);
+    let compiled_gaps: Vec<_> = analysis
+        .capabilities
+        .iter()
+        .filter(|capability| capability.status != AnalysisStatus::Complete)
+        .collect();
+    assert!(
+        compiled_gaps
+            .iter()
+            .all(|capability| capability.kind.is_compiled_payload()),
+        "{compiled_gaps:#?}"
+    );
+    assert_eq!(
+        analysis.status,
+        if compiled_gaps.is_empty() {
+            AnalysisStatus::Complete
+        } else {
+            AnalysisStatus::Partial
+        }
+    );
     assert_eq!(analysis.coverage.property_exports_total, 0);
     assert_eq!(analysis.coverage.property_exports_native_only, 1);
     assert_eq!(analysis.coverage.unclassified_bytes, 0);

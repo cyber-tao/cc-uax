@@ -101,6 +101,207 @@ fn push_pcg_vector(v: &mut Vec<u8>, values: [f64; 3]) {
     }
 }
 
+fn parse_native_struct_at(
+    names: &NameMap,
+    struct_idx: i32,
+    none_idx: i32,
+    value: &[u8],
+    file_version_ue5: i32,
+) -> PropertyParse {
+    // Below PROPERTY_TAG_COMPLETE_TYPE_NAME the tag is the legacy layout: type
+    // name, size, array index, struct name + guid, HasPropertyGuid.
+    let data = if file_version_ue5 >= crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME {
+        build_struct_property(struct_idx, none_idx, value)
+    } else {
+        let mut d = Vec::new();
+        push_legacy_tag_header(&mut d, 0, 1, value.len() as i32);
+        push_raw_name(&mut d, struct_idx);
+        push_guid(&mut d, 0, 0, 0, 0);
+        push_legacy_tag_tail(&mut d, file_version_ue5);
+        d.extend_from_slice(value);
+        push_raw_name(&mut d, none_idx);
+        d
+    };
+    let ctx = ParseCtx {
+        names,
+        resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
+        serialization: SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5,
+        nested_diagnostics: Default::default(),
+    };
+    let mut reader = Reader::new(&data);
+    parse_properties_report(&mut reader, &ctx, data.len() as u64, "/test")
+}
+
+// The remaining `immutable` core math structs of NoExportTypes.h (5.0–5.8):
+// the LWC-gated ones follow FVector's float/double switch at
+// LARGE_WORLD_COORDINATES, the explicit-width ones are fixed. Missing arms sent
+// every FPlane/FSphere/FIntRect value through the tagged fallback and reported
+// it as an unparsed preview.
+#[test]
+fn remaining_immutable_math_structs_decode_at_both_lwc_widths() {
+    let names = NameMap {
+        names: vec![
+            "Value".to_string(),          // 0
+            "StructProperty".to_string(), // 1
+            "None".to_string(),           // 2
+            "Plane".to_string(),          // 3
+            "Sphere".to_string(),         // 4
+            "OrientedBox".to_string(),    // 5
+            "IntRect".to_string(),        // 6
+            "Int64Vector".to_string(),    // 7
+            "PackedNormal".to_string(),   // 8
+            "TwoVectors".to_string(),     // 9
+        ],
+    };
+    let lwc = crate::version::ue5::LARGE_WORLD_COORDINATES;
+    let coords = |values: &[f64], wide: bool| {
+        let mut v = Vec::new();
+        for value in values {
+            if wide {
+                push_f64(&mut v, *value);
+            } else {
+                push_f32(&mut v, *value as f32);
+            }
+        }
+        v
+    };
+    for (version, wide) in [(lwc - 1, false), (lwc, true)] {
+        let plane =
+            parse_native_struct_at(&names, 3, 2, &coords(&[1.0, 2.0, 3.0, 4.0], wide), version);
+        assert!(
+            plane.diagnostics.is_empty(),
+            "{version}: {:#?}",
+            plane.diagnostics
+        );
+        assert_eq!(plane.entries[0].value["w"].as_f64(), Some(4.0), "{version}");
+
+        let sphere =
+            parse_native_struct_at(&names, 4, 2, &coords(&[1.0, 2.0, 3.0, 9.5], wide), version);
+        assert!(sphere.diagnostics.is_empty(), "{version}");
+        assert_eq!(
+            sphere.entries[0].value["radius"].as_f64(),
+            Some(9.5),
+            "{version}"
+        );
+
+        let mut obb = Vec::new();
+        for _ in 0..4 {
+            obb.extend(coords(&[0.0, 1.0, 0.0], wide));
+        }
+        obb.extend(coords(&[2.0, 3.0, 4.0], wide));
+        let obb = parse_native_struct_at(&names, 5, 2, &obb, version);
+        assert!(
+            obb.diagnostics.is_empty(),
+            "{version}: {:#?}",
+            obb.diagnostics
+        );
+        assert_eq!(
+            obb.entries[0].value["extent_z"].as_f64(),
+            Some(4.0),
+            "{version}"
+        );
+
+        let two = parse_native_struct_at(
+            &names,
+            9,
+            2,
+            &coords(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], wide),
+            version,
+        );
+        assert!(two.diagnostics.is_empty(), "{version}");
+        assert_eq!(
+            two.entries[0].value["v2"]["z"].as_f64(),
+            Some(6.0),
+            "{version}"
+        );
+    }
+    // Reading the narrow form with the wide layout must not pass as decoded.
+    let short = parse_native_struct_at(&names, 3, 2, &coords(&[1.0, 2.0, 3.0, 4.0], false), lwc);
+    assert!(!short.diagnostics.is_empty());
+
+    let mut rect = Vec::new();
+    for value in [1i32, 2, 30, 40] {
+        push_i32(&mut rect, value);
+    }
+    let rect = parse_native_struct_at(&names, 6, 2, &rect, lwc);
+    assert!(rect.diagnostics.is_empty(), "{:#?}", rect.diagnostics);
+    assert_eq!(rect.entries[0].value["max"]["y"].as_i64(), Some(40));
+
+    let mut vec64 = Vec::new();
+    for value in [1i64 << 40, 2, 3] {
+        push_i64(&mut vec64, value);
+    }
+    let vec64 = parse_native_struct_at(&names, 7, 2, &vec64, lwc);
+    assert!(vec64.diagnostics.is_empty());
+    assert_eq!(vec64.entries[0].value["x"].as_i64(), Some(1 << 40));
+
+    let packed = parse_native_struct_at(&names, 8, 2, &[1, 2, 3, 255], lwc);
+    assert!(packed.diagnostics.is_empty());
+    assert_eq!(packed.entries[0].value["w"].as_u64(), Some(255));
+}
+
+// `FUtf8String`/`FAnsiString` properties (UE5.5+) serialize a byte count that is
+// never negative (String.cpp.inl, non-TCHAR `operator<<`), unlike `FString`
+// whose negative count means UTF-16.
+#[test]
+fn utf8_and_ansi_string_properties_decode_and_reject_negative_lengths() {
+    let names = NameMap {
+        names: vec![
+            "Label".to_string(),           // 0
+            "Utf8StrProperty".to_string(), // 1
+            "None".to_string(),            // 2
+            "AnsiStrProperty".to_string(), // 3
+        ],
+    };
+    let build = |type_idx: i32, len: i32, bytes: &[u8]| {
+        let mut d = Vec::new();
+        push_raw_name(&mut d, 0);
+        push_raw_name(&mut d, type_idx);
+        push_i32(&mut d, 0);
+        push_i32(&mut d, 4 + bytes.len() as i32);
+        d.push(0);
+        push_i32(&mut d, len);
+        d.extend_from_slice(bytes);
+        push_raw_name(&mut d, 2);
+        d
+    };
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|idx: i32| crate::structured_value::json!({ "index": idx }),
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
+        serialization: SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::HIGHEST,
+        nested_diagnostics: Default::default(),
+    };
+    for type_idx in [1, 3] {
+        let d = build(type_idx, 3, b"hi\0");
+        let mut reader = Reader::new(&d);
+        let parsed = parse_properties_report(&mut reader, &ctx, d.len() as u64, "/test");
+        assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+        assert_eq!(parsed.entries[0].value.as_str(), Some("hi"));
+    }
+    // A negative count is UTF-16 for FString; for a narrow string it is corrupt.
+    let d = build(1, -3, &[b'h', 0, b'i', 0, 0, 0]);
+    let mut reader = Reader::new(&d);
+    let parsed = parse_properties_report(&mut reader, &ctx, d.len() as u64, "/test");
+    assert!(
+        parsed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_fallback"),
+        "{:#?}",
+        parsed.diagnostics
+    );
+}
+
 #[test]
 fn native_struct_array_falls_back_to_hex() {
     let names = NameMap {

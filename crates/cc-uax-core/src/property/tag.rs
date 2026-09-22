@@ -727,7 +727,9 @@ fn read_legacy_type_name(
             )
         }
         "ArrayProperty" => {
-            let inner = if ctx.file_version_ue4 >= ue4::INNER_ARRAY_TAG_INFO {
+            // The *tag's* inner type name (PropertyTag.cpp) is gated separately
+            // from the inner tag written into the payload (PropertyArray.cpp).
+            let inner = if ctx.file_version_ue4 >= ue4::ARRAY_PROPERTY_INNER_TAGS {
                 name(r, "tag array inner type")?
             } else {
                 "None".to_string()

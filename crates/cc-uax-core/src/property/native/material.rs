@@ -53,7 +53,9 @@ pub(super) fn parse_material_input_struct(
             }
             Value::Object(o)
         }
-        "ShadingModelMaterialInput" | "SubstrateMaterialInput" => {
+        // `FStrataMaterialInput` is the UE5.0–5.3 name of `FSubstrateMaterialInput`
+        // (MaterialShared.cpp: `SerializeMaterialInput<uint32>` in both).
+        "ShadingModelMaterialInput" | "SubstrateMaterialInput" | "StrataMaterialInput" => {
             let mut o = parse_expression_input(r, ctx)?;
             o.insert("use_constant".into(), json!(r.read_bool32()?));
             o.insert("constant".into(), json!(r.read_u32()?));
