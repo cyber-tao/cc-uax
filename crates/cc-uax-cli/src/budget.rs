@@ -71,7 +71,17 @@ pub(crate) fn render_within_budget<T: Serialize>(
         insert_output_block(&mut root, false, budget, 0, &elided);
         let emitted = measure(&root, compact);
         insert_output_block(&mut root, false, budget, emitted, &elided);
-        return render(&root, compact);
+        // The probe that sized the block was `{"output":…}` with `truncated:true`;
+        // appending to a real document also costs the separating comma and the
+        // longer `false`, so a report within a byte or two of the target could
+        // still land over the cap. Check the real render and fall through to
+        // elision rather than trust the estimate.
+        if measure(&root, compact) <= budget {
+            return render(&root, compact);
+        }
+        if let Value::Object(map) = &mut root {
+            map.remove("output");
+        }
     }
 
     // Past this point elision is happening, so the block will carry entries whose
@@ -604,6 +614,28 @@ mod tests {
                     text.len() - budget
                 );
                 serde_json::from_str::<Value>(&text).expect("budgeted output must stay valid JSON");
+            }
+        }
+    }
+
+    // The fits-path estimated the `output` block from a `{"output":…}` probe with
+    // `truncated:true`, which is a byte or two short of what appending the real
+    // block costs, so a report whose size landed exactly there rendered over the
+    // cap. Sweep every budget across the boundary in both modes.
+    #[test]
+    fn a_report_at_the_fits_boundary_never_exceeds_the_budget() {
+        let report = sample_report();
+        for compact in [true, false] {
+            let full = render(&report, compact).unwrap().len();
+            let block = output_block_size(usize::MAX, compact, &[]);
+            for budget in (full + block).saturating_sub(4)..=full + block + 4 {
+                let text = render_within_budget(&report, budget, compact).unwrap();
+                assert!(
+                    text.len() <= budget,
+                    "compact={compact} budget={budget} rendered {} bytes",
+                    text.len()
+                );
+                serde_json::from_str::<Value>(&text).unwrap();
             }
         }
     }

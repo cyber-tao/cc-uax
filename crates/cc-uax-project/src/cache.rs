@@ -13,6 +13,9 @@ const CACHE_NAMESPACE: &str = "cc-uax/projects";
 // orphaning a version-named file on every schema change.
 const CACHE_FILE_NAME: &str = "project-index.sqlite";
 const CACHE_SCHEMA_VERSION: i64 = 4;
+/// How long a scan waits for another process's write transaction on the same
+/// cache file before treating the lock as a cache failure.
+const CACHE_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Cached analysis is only valid for the decoder that produced it: a change to
 /// either can alter decoded values without touching a file's mtime or size.
 ///
@@ -141,6 +144,12 @@ impl ProjectCache {
         }
         let connection = Connection::open(path)
             .map_err(|error| format!("open cache database {}: {error}", path.display()))?;
+        // Two scans sharing one `--cache-file` (or the default per-project file)
+        // otherwise turn a momentary write lock into SQLITE_BUSY, which is a
+        // hard cache failure and an exit 2 for a run that did nothing wrong.
+        connection
+            .busy_timeout(CACHE_BUSY_TIMEOUT)
+            .map_err(|error| format!("set cache busy timeout: {error}"))?;
         let mut reset_reason: Option<String> = None;
         let version = connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))

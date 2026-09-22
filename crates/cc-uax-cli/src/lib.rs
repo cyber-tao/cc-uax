@@ -299,9 +299,10 @@ fn write_json<T: Serialize>(
         Some(path) => {
             // Write atomically: render to a sibling temp file, then rename it over the
             // target, so an interrupted run never leaves a truncated report that a
-            // caller could read as a successful one.
+            // caller could read as a successful one. The sibling carries the process
+            // id so two runs writing the same `-o` cannot race on one temp file.
             let mut tmp = path.as_os_str().to_os_string();
-            tmp.push(".tmp");
+            tmp.push(format!(".{}.tmp", std::process::id()));
             let tmp = PathBuf::from(tmp);
             fs::write(&tmp, format!("{text}\n"))
                 .with_context(|| format!("failed to write {}", tmp.display()))?;
@@ -518,10 +519,22 @@ struct ProjectIssue {
     message: String,
 }
 
+/// Placeholder for a path outside the project that the report must not print:
+/// the default cache lives under the user's profile, and a report is shared.
+const SYSTEM_CACHE_PATH_LABEL: &str = "<system cache directory>";
+
 fn project_relative_path(index: &ProjectIndex, path: &Path) -> String {
-    let relative = path
-        .strip_prefix(index.layout.project_root())
-        .unwrap_or(path)
+    let Ok(relative) = path.strip_prefix(index.layout.project_root()) else {
+        // Everything the scan touches is under the project root except the cache
+        // file. A `--cache-file` was named by the caller and can be echoed; the
+        // default one lives under the user's profile and must not be.
+        return if index.cache_file.as_deref() == Some(path) {
+            path.to_string_lossy().replace('\\', "/")
+        } else {
+            SYSTEM_CACHE_PATH_LABEL.to_string()
+        };
+    };
+    let relative = relative
         .to_string_lossy()
         .replace('\\', "/")
         .trim_matches('/')

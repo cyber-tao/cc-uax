@@ -373,6 +373,9 @@ impl ProjectScanner {
         index.stats.cache_hits = cache_hits;
         index.stats.cache_misses = cache_misses;
         index.stats.cached_parse_failures = cached_parse_failures;
+        if let CachePathPolicy::CustomFile(path) = &options.cache {
+            index.cache_file = Some(path.clone());
+        }
         let hard_failure = index.failures.iter().any(|failure| failure.stage.is_hard());
         if options.mode == ScanMode::Strict && (fatal_cache_error || hard_failure) {
             return Err(ProjectScanError {
@@ -652,6 +655,7 @@ pub(crate) fn build_project_index(
         stats,
         failures,
         diagnostics,
+        cache_file: None,
         canonical_lookup: HashMap::new(),
     }
     .with_canonical_lookup()

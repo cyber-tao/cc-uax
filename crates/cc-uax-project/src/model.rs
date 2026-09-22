@@ -255,6 +255,11 @@ pub struct ProjectIndex {
     pub stats: ScanStats,
     pub failures: Vec<ScanFailure>,
     pub diagnostics: Vec<ScanDiagnostic>,
+    /// The cache file the caller named with `--cache-file`, when any. The only
+    /// path outside the project a scan can mention, and the only one a renderer
+    /// may echo: the default cache lives under the user's profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_file: Option<PathBuf>,
     #[serde(skip)]
     pub(crate) canonical_lookup: HashMap<String, String>,
 }

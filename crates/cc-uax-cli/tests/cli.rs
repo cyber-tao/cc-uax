@@ -268,6 +268,19 @@ fn a_usage_error_is_not_a_scan_failure() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+// A bare `cc-uax` prints help, but the caller did not ask for help: no report
+// was produced, which the contract classes with the other exit-1 cases. Only an
+// explicit `--help`/`--version` is a successful run.
+#[test]
+fn no_subcommand_is_a_usage_error_while_help_is_not() {
+    let bare = bin().output().unwrap();
+    assert_eq!(bare.status.code(), Some(1));
+    let help = bin().arg("--help").output().unwrap();
+    assert_eq!(help.status.code(), Some(0));
+    let version = bin().arg("--version").output().unwrap();
+    assert_eq!(version.status.code(), Some(0));
+}
+
 #[test]
 fn strict_project_scan_emits_a_partial_report_and_fails() {
     let root = temp_dir("strict");
