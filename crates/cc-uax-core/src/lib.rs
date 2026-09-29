@@ -1,6 +1,7 @@
 mod analysis;
 mod decode;
 mod diagnostic;
+mod extent;
 mod graph_models;
 mod legacy;
 mod model;
@@ -18,6 +19,7 @@ mod summary;
 mod version;
 
 pub use analysis::PackageView;
+pub use extent::{ReadExtent, legacy_package_read_extent, package_read_extent};
 pub use graph_models::*;
 pub use legacy::{LegacyPackageReferences, read_legacy_package_references};
 pub use model::*;

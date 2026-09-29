@@ -32,6 +32,37 @@ fn write_package(path: &Path) {
     std::fs::write(path, minimal_package()).unwrap();
 }
 
+// The report is written to a sibling temp file and renamed over `-o`. When the
+// rename cannot succeed the run fails, and the sibling must not be left behind: it
+// is named by process id, so nothing would ever reuse or clean it.
+#[test]
+fn a_failed_output_write_leaves_no_temp_file_behind() {
+    let root = temp_dir("output-failure");
+    write_package(&root.join("Content/Good.uasset"));
+    let output = root.join("report.json");
+    // A directory cannot be replaced by a file, so the rename fails.
+    std::fs::create_dir_all(&output).unwrap();
+
+    let result = bin()
+        .args([
+            "asset",
+            root.join("Content/Good.uasset").to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(result.status.code(), Some(1));
+    let leftovers: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
 // The exit code answers "did the run hold together", not "is the evidence
 // complete". Pin every boundary so the two cannot be conflated again: a partial or
 // unsupported report is still a successful run, only a project scan failure is 2,

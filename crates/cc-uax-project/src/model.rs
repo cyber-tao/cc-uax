@@ -248,6 +248,10 @@ pub struct ScanStats {
     pub cache_hits: usize,
     pub cache_misses: usize,
     pub cached_parse_failures: usize,
+    /// Bytes actually read from package files by this scan. A package is read up to
+    /// the end of its last export, not to the end of the file, and a cache hit reads
+    /// nothing.
+    pub bytes_read: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

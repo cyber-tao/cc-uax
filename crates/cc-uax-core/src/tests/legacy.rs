@@ -32,7 +32,7 @@ fn ue4_package(spec: &Ue4Package) -> Vec<u8> {
 
     let mut tables = Vec::new();
     let names_at = |header_len: usize, tables: &Vec<u8>| (header_len + tables.len()) as i32;
-    let header = |name_offset: i32, import_offset: i32, soft_offset: i32| {
+    let header = |name_offset: i32, import_offset: i32, soft_offset: i32, total_size: i32| {
         let mut d = Vec::new();
         push_u32(&mut d, 0x9E2A_83C1);
         push_i32(&mut d, spec.legacy_file_version);
@@ -60,7 +60,7 @@ fn ue4_package(spec: &Ue4Package) -> Vec<u8> {
                 }
             }
         }
-        push_i32(&mut d, 0); // total_header_size
+        push_i32(&mut d, total_size); // total_header_size
         push_fstring(&mut d, "/Game/Legacy");
         push_u32(&mut d, spec.package_flags);
         push_i32(&mut d, all_names.len() as i32);
@@ -121,7 +121,7 @@ fn ue4_package(spec: &Ue4Package) -> Vec<u8> {
         }
         d
     };
-    let header_len = header(0, 0, 0).len();
+    let header_len = header(0, 0, 0, 0).len();
 
     let name_offset = names_at(header_len, &tables);
     for name in &all_names {
@@ -146,7 +146,8 @@ fn ue4_package(spec: &Ue4Package) -> Vec<u8> {
         }
     }
 
-    let mut data = header(name_offset, import_offset, soft_offset);
+    let total_size = (header_len + tables.len()) as i32;
+    let mut data = header(name_offset, import_offset, soft_offset, total_size);
     data.extend_from_slice(&tables);
     data
 }
@@ -270,4 +271,29 @@ fn cooked_ue4_packages_are_out_of_scope_for_the_legacy_reader() {
 
     assert!(error.is_out_of_scope(), "{error}");
     assert!(error.to_string().contains("PKG_Cooked"), "{error}");
+}
+
+#[test]
+fn the_legacy_read_extent_is_the_header_and_nothing_after_it() {
+    let mut data = ue4_package(&spec(-7, 522, &["/Game/Soft/Bar"]));
+    let header_end = data.len() as u64;
+    data.extend_from_slice(&[0xEE; 1024]);
+    let file_len = data.len() as u64;
+
+    let full = crate::legacy_package_read_extent(&data, file_len).unwrap();
+    assert_eq!(full, crate::ReadExtent::Prefix(header_end));
+
+    // A head that stops inside the header asks for the header, then answers.
+    let summary_end =
+        PackageFileSummary::parse_scoped(&mut Reader::new(&data), SummaryScope::LegacyReferences)
+            .unwrap()
+            .name_offset as usize;
+    assert_eq!(
+        crate::legacy_package_read_extent(&data[..summary_end], file_len).unwrap(),
+        crate::ReadExtent::NeedHeader(header_end)
+    );
+
+    // The header prefix is all the reader needs.
+    let from_prefix = read_legacy_package_references(&data[..header_end as usize]).unwrap();
+    assert_eq!(from_prefix, read_legacy_package_references(&data).unwrap());
 }

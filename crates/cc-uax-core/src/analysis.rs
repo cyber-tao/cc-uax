@@ -44,19 +44,30 @@ use state_tree::build_state_tree_graphs;
 /// ```
 pub struct PackageView<'a> {
     bytes: &'a [u8],
+    /// Length of the whole package file, which `bytes` may only be a prefix of.
+    file_len: u64,
     package: Package,
 }
 
 impl<'a> PackageView<'a> {
     pub fn parse(bytes: &'a [u8]) -> Result<Self, PackageParseError> {
+        Self::parse_prefix(bytes, bytes.len() as u64)
+    }
+
+    /// Parses a package from the leading bytes of its file: the header tables and
+    /// every export range (see [`crate::package_read_extent`]). `file_len` is the
+    /// size of the whole file, which is what `coverage.bytes_total` reports even
+    /// though the bytes after the last export were never read.
+    pub fn parse_prefix(bytes: &'a [u8], file_len: u64) -> Result<Self, PackageParseError> {
         Ok(Self {
             package: Package::parse(bytes).map_err(PackageParseError::from)?,
             bytes,
+            file_len,
         })
     }
 
     pub fn analyze(&self, view: AssetView) -> AssetAnalysis {
-        analyze_package(&self.package, self.bytes, view)
+        analyze_package_of_file(&self.package, self.bytes, self.file_len, view)
     }
 
     pub fn package_name(&self) -> &str {
@@ -68,7 +79,20 @@ impl<'a> PackageView<'a> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) -> AssetAnalysis {
+    analyze_package_of_file(package, bytes, bytes.len() as u64, view)
+}
+
+/// `bytes` bounds every read; `file_len` is only what the report says the file
+/// weighs, and can exceed `bytes.len()` when the tail after the last export was
+/// not read.
+fn analyze_package_of_file(
+    package: &Package,
+    bytes: &[u8],
+    file_len: u64,
+    view: AssetView,
+) -> AssetAnalysis {
     let wants_logic = matches!(view, AssetView::Logic | AssetView::Full);
     let wants_properties = matches!(view, AssetView::Properties | AssetView::Full);
     let wants_references = matches!(view, AssetView::References | AssetView::Full);
@@ -240,7 +264,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         .map(|export| export.unclassified_bytes)
         .sum();
     let coverage = ParseCoverage {
-        bytes_total: bytes.len() as u64,
+        bytes_total: file_len,
         export_bytes_total,
         exports_total: package.exports.len(),
         exports_analyzed: report.exports.len(),

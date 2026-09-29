@@ -5,4 +5,5 @@ mod entry_points;
 mod layout;
 mod model;
 mod mount;
+mod package_file;
 mod scanner;

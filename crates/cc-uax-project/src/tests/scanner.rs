@@ -2,7 +2,7 @@ use super::common::{
     minimal_package, package_with_soft_refs, temp_project, ue4_package, ue4_package_with_soft_refs,
 };
 use crate::{
-    CachePathPolicy, MountTable, ProjectIndex, ProjectLayout, ProjectScanner,
+    AssetAnalysisSummary, CachePathPolicy, MountTable, ProjectIndex, ProjectLayout, ProjectScanner,
     ScanDiagnosticSeverity, ScanFailureStage, ScanMode, ScanOptions,
 };
 use std::collections::BTreeSet;
@@ -252,6 +252,64 @@ fn ue4_format_packages_contribute_reference_edges_and_replay_from_the_cache() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// What follows the last export is bulk data nothing parses, and on a real project
+// it is most of the bytes. A scan reads only the header and the exports, reports
+// the same evidence a whole-file read would, and a warm cache reads nothing.
+#[test]
+fn scans_read_only_up_to_the_end_of_each_package_and_replay_from_the_cache() {
+    // Well past the 64 KiB a read starts with, so the bulk tail is really skipped.
+    const BULK_TAIL_BYTES: usize = 192 * 1024;
+    const FIRST_READ_BYTES: u64 = 64 * 1024;
+    let root = temp_project("bounded_reads");
+    let content = root.join("Content");
+    let mut file_bytes = 0u64;
+    for (name, targets) in [
+        ("A", &["/Game/B", "/Game/C"][..]),
+        ("B", &["/Game/C"][..]),
+        ("C", &[][..]),
+    ] {
+        let mut data = package_with_soft_refs(targets);
+        data.extend_from_slice(&[0xEE; BULK_TAIL_BYTES]);
+        file_bytes += data.len() as u64;
+        std::fs::write(content.join(format!("{name}.uasset")), data).unwrap();
+    }
+    let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
+    let options = ScanOptions {
+        mode: ScanMode::Strict,
+        cache: CachePathPolicy::CustomFile(root.join("cache/index.sqlite")),
+    };
+
+    let cold = scanner.scan(options.clone()).unwrap();
+
+    assert!(cold.failures.is_empty(), "{:#?}", cold.failures);
+    // Each header ends within the first read, so nothing more is read.
+    assert_eq!(cold.stats.bytes_read, 3 * FIRST_READ_BYTES);
+    assert!(cold.stats.bytes_read < file_bytes);
+    for name in ["A", "B", "C"] {
+        let package = format!("/Game/{name}");
+        let record = cold.asset(&package).unwrap();
+        let whole = std::fs::read(&record.file_path).unwrap();
+        let expected = AssetAnalysisSummary::from_analysis(
+            &cc_uax_core::PackageView::parse(&whole)
+                .unwrap()
+                .analyze(cc_uax_core::AssetView::Full),
+        );
+        assert_eq!(
+            record.analysis, expected,
+            "{package}: a prefix read must report what a whole-file read reports"
+        );
+        assert_eq!(record.analysis.coverage.bytes_total, whole.len() as u64);
+    }
+    assert!(cold.forward["/Game/A"].contains("/Game/B"));
+
+    let warm = scanner.scan(options).unwrap();
+
+    assert_eq!(warm.stats.cache_hits, 3);
+    assert_eq!(warm.stats.bytes_read, 0);
+    assert_eq!(warm.forward, cold.forward);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
 fn try_symlink_file(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {

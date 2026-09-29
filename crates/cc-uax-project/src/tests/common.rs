@@ -242,9 +242,6 @@ pub fn package_with_soft_refs(targets: &[&str]) -> Vec<u8> {
     push_i64(&mut d, 0); // payload_toc_offset
     push_i32(&mut d, 0); // data_resource_offset (fv >= 1009)
 
-    let header_size = d.len();
-    put_i32(&mut d, total_header_size_pos, header_size as i32);
-
     // Name table: one entry per target path, FString + 4-byte hash.
     put_i32(&mut d, name_count_pos, targets.len() as i32);
     let name_offset = d.len() as i32;
@@ -262,5 +259,9 @@ pub fn package_with_soft_refs(targets: &[&str]) -> Vec<u8> {
         push_i32(&mut d, index as i32); // name index
         push_i32(&mut d, 0); // name number
     }
+    // Every table the parser reads ends before TotalHeaderSize, and there is no
+    // export data, so the header is the whole package.
+    let header_size = d.len();
+    put_i32(&mut d, total_header_size_pos, header_size as i32);
     d
 }

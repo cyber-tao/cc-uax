@@ -4,6 +4,7 @@ mod entry_points;
 mod layout;
 mod model;
 mod mount;
+mod package_file;
 mod scanner;
 
 /// Shape version of the scanned index and its per-asset summaries.
@@ -60,6 +61,7 @@ pub use model::{
 pub use mount::{
     MountSpec, MountTable, MountTableError, package_path_from_relative, strip_asset_extension,
 };
+pub use package_file::{PackageBytes, ReadScope, extend_package_bytes, read_package_file};
 pub use scanner::{ProjectScanError, ProjectScanner, ScanMode, ScanOptions};
 
 #[cfg(test)]

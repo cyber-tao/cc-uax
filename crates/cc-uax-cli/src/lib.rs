@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use cc_uax_core::{AnalysisStatus, AssetAnalysis, AssetView, PackageView};
 use cc_uax_project::{
     AssetKind, AssetOwnership, CachePathPolicy, MountTable, ProjectIndex, ProjectLayout,
-    ProjectScanner, ScanDiagnosticSeverity, ScanFailureStage, ScanMode, ScanOptions,
-    strip_asset_extension,
+    ProjectScanner, ReadScope, ScanDiagnosticSeverity, ScanFailureStage, ScanMode, ScanOptions,
+    read_package_file, strip_asset_extension,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -92,9 +92,9 @@ fn execute(cli: &Cli) -> Result<ExitCode> {
 }
 
 fn analyze_asset(args: &AssetArgs) -> Result<AssetAnalysis> {
-    let bytes =
-        fs::read(&args.file).with_context(|| format!("failed to read {}", args.file.display()))?;
-    let package = PackageView::parse(&bytes)
+    let read = read_package_file(&args.file, ReadScope::Analysis)
+        .with_context(|| format!("failed to read {}", args.file.display()))?;
+    let package = PackageView::parse_prefix(&read.bytes, read.file_len)
         .with_context(|| format!("failed to parse {}", args.file.display()))?;
     Ok(package.analyze(args.view.into()))
 }
@@ -176,8 +176,8 @@ fn analyze_focused_assets(
     }
     for package in selected {
         let record = &index.assets[&package];
-        match fs::read(&record.file_path) {
-            Ok(bytes) => match PackageView::parse(&bytes) {
+        match read_package_file(&record.file_path, ReadScope::Analysis) {
+            Ok(read) => match PackageView::parse_prefix(&read.bytes, read.file_len) {
                 Ok(view) => {
                     analyses.insert(package, view.analyze(AssetView::Full));
                 }
@@ -310,9 +310,17 @@ fn write_json<T: Serialize>(
             let mut tmp = path.as_os_str().to_os_string();
             tmp.push(format!(".{}.tmp", std::process::id()));
             let tmp = PathBuf::from(tmp);
-            fs::write(&tmp, format!("{text}\n"))
-                .with_context(|| format!("failed to write {}", tmp.display()))?;
-            fs::rename(&tmp, path).with_context(|| format!("failed to write {}", path.display()))
+            // A failure of either step must not leave the sibling behind: it is named
+            // by process id, so nothing would ever reuse or clean it.
+            if let Err(error) = fs::write(&tmp, format!("{text}\n")) {
+                let _ = fs::remove_file(&tmp);
+                return Err(error).with_context(|| format!("failed to write {}", tmp.display()));
+            }
+            if let Err(error) = fs::rename(&tmp, path) {
+                let _ = fs::remove_file(&tmp);
+                return Err(error).with_context(|| format!("failed to write {}", path.display()));
+            }
+            Ok(())
         }
         None => {
             let mut stdout = io::stdout().lock();

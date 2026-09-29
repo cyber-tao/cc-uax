@@ -1,5 +1,6 @@
 use crate::cache::{CacheEntry, CachedParse, ProjectCache};
 use crate::entry_points::load_project_entry_points;
+use crate::package_file::{PackageBytes, ReadScope, extend_package_bytes, read_package_file};
 use crate::{
     Adjacency, AssetAnalysisSummary, AssetKind, AssetOwnership, AssetRecord, CachePathPolicy,
     ExternalPackageKind, MountTable, ProjectAnalysisSummary, ProjectEntryPoints, ProjectIndex,
@@ -76,6 +77,7 @@ impl ProjectScanner {
         let mut cache_hits = 0usize;
         let mut cache_misses = 0usize;
         let mut cached_parse_failures = 0usize;
+        let mut bytes_read = 0u64;
         let mut records = Vec::new();
         let mut seen_packages = HashMap::<String, PathBuf>::new();
 
@@ -253,9 +255,13 @@ impl ProjectScanner {
                 }
                 ScanStep::Pending(pending) => pending,
             };
-            let parsed = parsed_assets
+            let ReadOutcome {
+                bytes_read: read,
+                result: parsed,
+            } = parsed_assets
                 .next()
                 .expect("one parse result per pending read");
+            bytes_read += read;
             let PendingRead {
                 file,
                 package_path,
@@ -395,6 +401,7 @@ impl ProjectScanner {
         index.stats.cache_hits = cache_hits;
         index.stats.cache_misses = cache_misses;
         index.stats.cached_parse_failures = cached_parse_failures;
+        index.stats.bytes_read = bytes_read;
         if let CachePathPolicy::CustomFile(path) = &options.cache {
             index.cache_file = Some(path.clone());
         }
@@ -480,7 +487,7 @@ struct PendingRead {
 /// disk, parsed and analyzed with no shared state. Ordering is restored by the
 /// caller, which folds these results back in step order, so the index does not
 /// depend on how the work was scheduled.
-fn read_pending_assets(steps: &[ScanStep]) -> Vec<Result<ParsedAsset, ParseFileError>> {
+fn read_pending_assets(steps: &[ScanStep]) -> Vec<ReadOutcome> {
     let pending: Vec<&PendingRead> = steps
         .iter()
         .filter_map(|step| match step {
@@ -1194,28 +1201,56 @@ fn unsupported_package_fallback_reason() -> String {
     "package is outside the supported UE5 editor package range".to_string()
 }
 
-fn read_asset(path: &Path) -> Result<ParsedAsset, ParseFileError> {
-    let data = fs::read(path).map_err(|error| ParseFileError::Read(error.to_string()))?;
-    let view = PackageView::parse(&data).map_err(|error| {
-        let message = error.to_string();
-        if error.is_out_of_scope() {
+/// What reading one package cost and produced.
+struct ReadOutcome {
+    /// Bytes actually read from the file, whatever the result.
+    bytes_read: u64,
+    result: Result<ParsedAsset, ParseFileError>,
+}
+
+fn read_asset(path: &Path) -> ReadOutcome {
+    // Only the header tables and the export data are read: what follows the last
+    // export is most of a large file and nothing here parses it.
+    let mut package = match read_package_file(path, ReadScope::Analysis) {
+        Ok(package) => package,
+        Err(error) => {
+            return ReadOutcome {
+                bytes_read: 0,
+                result: Err(ParseFileError::Read(error.to_string())),
+            };
+        }
+    };
+    let result = analyze_package_bytes(path, &mut package);
+    ReadOutcome {
+        bytes_read: package.bytes.len() as u64,
+        result,
+    }
+}
+
+fn analyze_package_bytes(
+    path: &Path,
+    package: &mut PackageBytes,
+) -> Result<ParsedAsset, ParseFileError> {
+    let view = match PackageView::parse_prefix(&package.bytes, package.file_len) {
+        Ok(view) => view,
+        Err(error) => {
+            let reason = error.to_string();
+            if !error.is_out_of_scope() {
+                return Err(ParseFileError::Parse(reason));
+            }
             // Its properties stay out of scope, but a UE4-format package still has
             // linker tables, and without their edges everything only it references
-            // looks unreachable.
-            let legacy = cc_uax_core::read_legacy_package_references(&data)
+            // looks unreachable. The header is all those tables need.
+            let legacy = extend_package_bytes(path, package, ReadScope::LegacyReferences)
                 .ok()
+                .and_then(|()| cc_uax_core::read_legacy_package_references(&package.bytes).ok())
                 .map(|legacy| LegacyTables {
                     references: flatten_references(legacy.references),
                     file_version_ue4: legacy.file_version_ue4,
                 });
-            ParseFileError::Unsupported {
-                reason: message,
-                legacy,
-            }
-        } else {
-            ParseFileError::Parse(message)
+            return Err(ParseFileError::Unsupported { reason, legacy });
         }
-    })?;
+    };
     let references = flatten_references(view.references());
     let analysis = view.analyze(AssetView::Full);
     let owned_sublevels = collect_owned_sublevels(&analysis);
