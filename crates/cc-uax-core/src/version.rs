@@ -86,6 +86,8 @@ pub struct SerializationPolicy {
     pub ue5_release_stream_version: i32,
     pub editor_version: i32,
     pub anim_phys_version: i32,
+    pub core_object_version: i32,
+    pub framework_object_version: i32,
 }
 
 impl Default for SerializationPolicy {
@@ -100,6 +102,8 @@ impl Default for SerializationPolicy {
             ue5_release_stream_version: -1,
             editor_version: -1,
             anim_phys_version: -1,
+            core_object_version: -1,
+            framework_object_version: -1,
         }
     }
 }
@@ -138,6 +142,10 @@ pub mod custom {
     pub const CORE_OBJECT_VERSION: Guid =
         Guid([0x375E_C13C, 0x06E4_48FB, 0xB500_84F0, 0x262A_717E]);
 
+    /// FCoreObjectVersion::MaterialInputNativeSerialize — from this version on
+    /// `FExpressionInput` and the `FMaterialInput<T>` structs write their fields
+    /// natively; before it their `Serialize` returns false and the payload is tagged.
+    pub const CORE_MATERIAL_INPUT_NATIVE_SERIALIZE: i32 = 1;
     /// FCoreObjectVersion::FProperties — from this version on `UStruct::Serialize`
     /// writes its reflected fields as `FField`s through `SerializeProperties`.
     pub const CORE_FPROPERTIES: i32 = 4;
@@ -211,6 +219,14 @@ pub mod custom {
     /// FFortniteMainBranchObjectVersion::AddDevNotesToFText — UE5.8 editor Base
     /// FText history appends an extra FString when not FilterEditorOnly.
     pub const ADD_DEV_NOTES_TO_FTEXT: i32 = 260;
+    /// FFortniteReleaseBranchCustomObjectVersion::NaniteMaterialOverrideUsesEditorOnly
+    /// (FortniteReleaseBranchCustomObjectVersions.inl) — from this version on
+    /// `FMaterialOverrideNanite::Serialize` writes `bSerializeAsCookedData` and leaves
+    /// the rest to tagged serialization; before it, the legacy three-field layout.
+    pub const FORTNITE_RELEASE_NANITE_MATERIAL_OVERRIDE_USES_EDITOR_ONLY: i32 = 11;
+    /// FEditorObjectVersion::AddedFontFaceAssets — from this version on
+    /// `FFontData::Serialize` writes a `bIsCooked` prefix; before it, tagged.
+    pub const EDITOR_ADDED_FONT_FACE_ASSETS: i32 = 9;
     /// FAnimPhysObjectVersion::RemoveUIDFromSmartNameSerialize — before it,
     /// `FSmartName::Serialize` writes a `uint16` UID after the display name.
     pub const ANIM_PHYS_REMOVE_UID_FROM_SMART_NAME_SERIALIZE: i32 = 5;

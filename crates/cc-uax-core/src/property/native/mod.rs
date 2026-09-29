@@ -8,6 +8,7 @@ mod niagara;
 mod pcg;
 mod scalar;
 mod sequencer;
+mod slate;
 mod state_tree;
 
 use crate::property::{ParseCtx, PropertyParseStatus};
@@ -72,6 +73,12 @@ pub(crate) fn parse_native_struct(
         return Ok(Some(v));
     }
     if let Some(v) = material::parse_material_input_struct(r, name, ctx)? {
+        return Ok(Some(v));
+    }
+    if let Some(v) = material::parse_material_override_struct(r, name, ctx, value_end)? {
+        return Ok(Some(v));
+    }
+    if let Some(v) = slate::parse_slate_struct(r, name, ctx, value_end)? {
         return Ok(Some(v));
     }
     if let Some(v) = sequencer::parse_sequencer_struct(r, name, ctx, value_end)? {

@@ -12,6 +12,10 @@ mod scanner;
 /// change to what a cached `AssetAnalysisSummary` means must bump it or a warm
 /// scan will replay summaries built under the old meaning.
 ///
+/// 11: `NavAgentSelector`, `MaterialOverrideNanite`, `FontData` and locator fragments
+/// decode natively and material inputs follow their version gates, so cached
+/// property values and statuses for material and UI assets differ.
+///
 /// 10: `RawAnimSequenceTrack`, `SmartName` and `AttributeCurve` decode natively
 /// (and legacy `AttributeCurves` maps with them), so cached property values and
 /// statuses for animation assets differ.
@@ -32,7 +36,7 @@ mod scanner;
 /// 5: cached summaries built before native-only payload classification, decoder
 /// span accounting, the import-data prefix decoder, the TextConst layout gate and
 /// the widened graph-node list carry different statuses and counters.
-pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 10;
+pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 11;
 
 pub use analysis_summary::{
     AnalysisDiagnosticSummary, AssetAnalysisSummary, CapabilitySummary, GraphSummary,

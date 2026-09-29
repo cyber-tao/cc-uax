@@ -914,7 +914,11 @@ fn material_scalar_input_resolves_expression() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         soft_object_paths_unavailable: false,
-        serialization: crate::version::SerializationPolicy::default(),
+        serialization: crate::version::SerializationPolicy {
+            core_object_version: crate::version::custom::CORE_MATERIAL_INPUT_NATIVE_SERIALIZE,
+            framework_object_version: crate::version::custom::FRAMEWORK_PINS_STORE_FNAME,
+            ..Default::default()
+        },
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
         nested_diagnostics: Default::default(),
@@ -962,6 +966,8 @@ fn material_color_input_uses_packed_color_before_linear_color_version() {
         soft_object_paths_unavailable: false,
         serialization: crate::version::SerializationPolicy {
             fortnite_main_version: 76,
+            core_object_version: crate::version::custom::CORE_MATERIAL_INPUT_NATIVE_SERIALIZE,
+            framework_object_version: crate::version::custom::FRAMEWORK_PINS_STORE_FNAME,
             ..Default::default()
         },
         file_version_ue4: crate::version::ue4::HIGHEST,
@@ -1015,6 +1021,8 @@ fn material_color_input_uses_linear_color_at_or_past_version() {
             soft_object_paths_unavailable: false,
             serialization: crate::version::SerializationPolicy {
                 fortnite_main_version: version,
+                core_object_version: crate::version::custom::CORE_MATERIAL_INPUT_NATIVE_SERIALIZE,
+                framework_object_version: crate::version::custom::FRAMEWORK_PINS_STORE_FNAME,
                 ..Default::default()
             },
             file_version_ue4: crate::version::ue4::HIGHEST,
@@ -2802,7 +2810,11 @@ fn native_struct_expression_input_decodes() {
         pins: PinSerCtx::default(),
         soft_object_paths: &[],
         soft_object_paths_unavailable: false,
-        serialization: SerializationPolicy::default(),
+        serialization: SerializationPolicy {
+            core_object_version: crate::version::custom::CORE_MATERIAL_INPUT_NATIVE_SERIALIZE,
+            framework_object_version: crate::version::custom::FRAMEWORK_PINS_STORE_FNAME,
+            ..Default::default()
+        },
         file_version_ue4: crate::version::ue4::HIGHEST,
         file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
         nested_diagnostics: Default::default(),
@@ -3141,6 +3153,10 @@ fn anim_names(struct_name: &str) -> NameMap {
             "AttributeCurves",                        // 14
             "AnimationAttributeIdentifier",           // 15
             "AttributeCurve",                         // 16
+            "ActorLocator",                           // 17
+            "ArrayProperty",                          // 18
+            "Expression",                             // 19
+            "ObjectProperty",                         // 20
         ]
         .iter()
         .map(|name| name.to_string())
@@ -3581,4 +3597,349 @@ fn a_legacy_attribute_curves_map_decodes_end_to_end() {
         entry["value"]["keys"][0]["value"]["properties"][0]["value"].as_f64(),
         Some(3.0)
     );
+}
+
+// ---- Remaining native structs and material-input gates -------------------------
+
+/// `Foo: IntProperty = value` as a complete-type-name tagged block ending in `None`.
+fn push_foo_block(v: &mut Vec<u8>, value: i32) {
+    push_raw_name(v, 11); // Foo
+    push_raw_name(v, 12); // IntProperty
+    push_i32(v, 0);
+    push_i32(v, 4);
+    v.push(0);
+    push_i32(v, value);
+    push_raw_name(v, 3); // None
+}
+
+fn parse_flagged_struct(
+    struct_name: &str,
+    serialization: SerializationPolicy,
+    value: &[u8],
+) -> PropertyParse {
+    parse_anim_struct_value(
+        struct_name,
+        crate::version::ue4::HIGHEST,
+        crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        serialization,
+        &[],
+        value,
+    )
+}
+
+#[test]
+fn nav_agent_selector_reads_its_packed_bits() {
+    let parse = parse_flagged_struct(
+        "NavAgentSelector",
+        SerializationPolicy::default(),
+        &0x0000_0005u32.to_le_bytes(),
+    );
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v["@struct"].as_str(), Some("NavAgentSelector"));
+    assert_eq!(v["packed_bits"].as_u64(), Some(5));
+}
+
+#[test]
+fn nav_agent_selector_truncation_fails() {
+    let parse = parse_flagged_struct("NavAgentSelector", SerializationPolicy::default(), &[1, 0]);
+
+    assert!(parse.entries[0].value.is_opaque());
+}
+
+fn nanite_policy(fortnite_release_version: i32) -> SerializationPolicy {
+    SerializationPolicy {
+        fortnite_release_version,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn material_override_nanite_reads_the_legacy_layout_below_version_11() {
+    let mut payload = Vec::new();
+    push_float_attribute_path(&mut payload); // OverrideMaterialRef, two-name form at 1009
+    push_i32(&mut payload, 1); // bEnableOverride
+    push_i32(&mut payload, -3); // OverrideMaterial
+    let below =
+        crate::version::custom::FORTNITE_RELEASE_NANITE_MATERIAL_OVERRIDE_USES_EDITOR_ONLY - 1;
+    for version in [below, -1] {
+        let parse = parse_anim_struct_value(
+            "MaterialOverrideNanite",
+            crate::version::ue4::HIGHEST,
+            crate::version::ue5::DATA_RESOURCES,
+            nanite_policy(version),
+            &[],
+            &payload,
+        );
+
+        assert!(
+            parse.diagnostics.is_empty(),
+            "version {version}: {:#?}",
+            parse.diagnostics
+        );
+        let v = &parse.entries[0].value;
+        assert_eq!(v["@struct"].as_str(), Some("MaterialOverrideNanite"));
+        assert_eq!(v["enable_override"].as_bool(), Some(true));
+        assert_eq!(
+            v["override_material_ref"]["asset_path"].as_str(),
+            Some("/Script/Engine.FloatAnimationAttribute")
+        );
+    }
+}
+
+#[test]
+fn material_override_nanite_reads_a_flag_and_a_tagged_block_from_version_11() {
+    let at = crate::version::custom::FORTNITE_RELEASE_NANITE_MATERIAL_OVERRIDE_USES_EDITOR_ONLY;
+
+    let mut editor = Vec::new();
+    push_i32(&mut editor, 0); // bSerializeAsCookedData
+    push_foo_block(&mut editor, 5);
+    let parse = parse_flagged_struct("MaterialOverrideNanite", nanite_policy(at), &editor);
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v["cooked"].as_bool(), Some(false));
+    assert!(v.get("override_material").is_none());
+    assert_eq!(v["properties"][0]["value"].as_i64(), Some(5));
+
+    let mut cooked = Vec::new();
+    push_i32(&mut cooked, 1);
+    push_i32(&mut cooked, -3); // OverrideMaterial
+    push_foo_block(&mut cooked, 6);
+    let parse = parse_flagged_struct("MaterialOverrideNanite", nanite_policy(at), &cooked);
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v["cooked"].as_bool(), Some(true));
+    assert!(v.as_object().unwrap().contains_key("override_material"));
+    assert_eq!(v["properties"][0]["value"].as_i64(), Some(6));
+}
+
+fn font_policy(editor_version: i32) -> SerializationPolicy {
+    SerializationPolicy {
+        editor_version,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn font_data_is_tagged_below_added_font_face_assets() {
+    let mut block = Vec::new();
+    push_foo_block(&mut block, 5);
+    for version in [
+        crate::version::custom::EDITOR_ADDED_FONT_FACE_ASSETS - 1,
+        -1,
+    ] {
+        let parse = parse_flagged_struct("FontData", font_policy(version), &block);
+
+        assert!(
+            parse.diagnostics.is_empty(),
+            "version {version}: {:#?}",
+            parse.diagnostics
+        );
+        let v = &parse.entries[0].value;
+        assert_eq!(v["@struct"].as_str(), Some("FontData"));
+        assert_eq!(v["properties"][0]["value"].as_i64(), Some(5));
+    }
+}
+
+#[test]
+fn font_data_reads_the_cooked_flag_then_a_tagged_block() {
+    let at = crate::version::custom::EDITOR_ADDED_FONT_FACE_ASSETS;
+    let mut uncooked = Vec::new();
+    push_i32(&mut uncooked, 0);
+    push_foo_block(&mut uncooked, 5);
+    let parse = parse_flagged_struct("FontData", font_policy(at), &uncooked);
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v["@struct"].as_str(), Some("FontData"));
+    assert_eq!(v["properties"][0]["value"].as_i64(), Some(5));
+
+    let mut cooked = Vec::new();
+    push_i32(&mut cooked, 1);
+    cooked.extend_from_slice(&[0; 8]);
+    let parse = parse_flagged_struct("FontData", font_policy(at), &cooked);
+    let opaque = parse.entries[0].value.as_opaque().expect("falls back");
+    assert!(
+        opaque
+            .message
+            .contains("cooked FFontData payload in an editor package"),
+        "{}",
+        opaque.message
+    );
+}
+
+#[test]
+fn a_none_locator_fragment_is_empty() {
+    let mut payload = Vec::new();
+    push_raw_name(&mut payload, 3); // None
+    let parse = parse_flagged_struct(
+        "UniversalObjectLocatorFragment",
+        SerializationPolicy::default(),
+        &payload,
+    );
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(
+        v["@struct"].as_str(),
+        Some("UniversalObjectLocatorFragment")
+    );
+    assert!(v["fragment_type"].is_null());
+}
+
+#[test]
+fn a_locator_fragment_reads_its_tagged_payload() {
+    let mut payload = Vec::new();
+    push_raw_name(&mut payload, 17); // ActorLocator
+    push_foo_block(&mut payload, 5);
+    let parse = parse_flagged_struct(
+        "UniversalObjectLocatorFragment",
+        SerializationPolicy::default(),
+        &payload,
+    );
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v["fragment_type"].as_str(), Some("ActorLocator"));
+    assert_eq!(v["payload"]["properties"][0]["value"].as_i64(), Some(5));
+}
+
+#[test]
+fn a_locator_fragment_with_a_non_tagged_payload_falls_back_naming_its_type() {
+    let mut payload = Vec::new();
+    push_raw_name(&mut payload, 17); // ActorLocator
+    payload.extend_from_slice(&[0xFF; 12]);
+    let parse = parse_flagged_struct(
+        "UniversalObjectLocatorFragment",
+        SerializationPolicy::default(),
+        &payload,
+    );
+
+    let opaque = parse.entries[0].value.as_opaque().expect("falls back");
+    assert!(
+        opaque.message.contains("ActorLocator"),
+        "{}",
+        opaque.message
+    );
+}
+
+#[test]
+fn an_array_of_locator_fragments_decodes_every_fragment() {
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 2);
+    push_raw_name(&mut payload, 17); // ActorLocator
+    push_foo_block(&mut payload, 5);
+    push_raw_name(&mut payload, 3); // an empty fragment
+    let names = anim_names("UniversalObjectLocatorFragment");
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Prop
+    push_raw_name(&mut d, 18); // ArrayProperty
+    push_i32(&mut d, 1);
+    push_raw_name(&mut d, 1); // StructProperty
+    push_i32(&mut d, 1);
+    push_raw_name(&mut d, 2); // UniversalObjectLocatorFragment
+    push_i32(&mut d, 0);
+    push_i32(&mut d, payload.len() as i32);
+    d.push(0x08);
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 3);
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
+        serialization: SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
+    };
+    let mut reader = Reader::new(&d);
+
+    let parse = parse_properties_report(&mut reader, &ctx, d.len() as u64, "/test");
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v[0]["fragment_type"].as_str(), Some("ActorLocator"));
+    assert_eq!(v[0]["payload"]["properties"][0]["value"].as_i64(), Some(5));
+    assert!(v[1]["fragment_type"].is_null());
+}
+
+fn material_input_policy(core: i32, framework: i32) -> SerializationPolicy {
+    SerializationPolicy {
+        core_object_version: core,
+        framework_object_version: framework,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn material_inputs_are_tagged_below_core_material_input_native_serialize() {
+    let mut block = Vec::new();
+    push_legacy_tag_header(&mut block, 19, 20, 4); // Expression: ObjectProperty
+    push_legacy_tag_tail(&mut block, 1009);
+    push_i32(&mut block, 7);
+    push_raw_name(&mut block, 3); // None
+    let parse = parse_anim_struct_value(
+        "ShadingModelMaterialInput",
+        crate::version::ue4::HIGHEST,
+        crate::version::ue5::DATA_RESOURCES,
+        material_input_policy(
+            crate::version::custom::CORE_MATERIAL_INPUT_NATIVE_SERIALIZE - 1,
+            crate::version::custom::FRAMEWORK_PINS_STORE_FNAME,
+        ),
+        &[],
+        &block,
+    );
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v["@struct"].as_str(), Some("ShadingModelMaterialInput"));
+    assert_eq!(v["properties"][0]["name"].as_str(), Some("Expression"));
+}
+
+#[test]
+fn material_input_name_is_an_fstring_below_pins_store_fname() {
+    let build = |input_name: &dyn Fn(&mut Vec<u8>)| {
+        let mut v = Vec::new();
+        push_i32(&mut v, -5); // expression
+        push_i32(&mut v, 1); // output index
+        input_name(&mut v);
+        for m in [1, 1, 0, 0, 0] {
+            push_i32(&mut v, m);
+        }
+        push_i32(&mut v, 1); // use constant
+        push_u32(&mut v, 9); // constant
+        v
+    };
+    let core = crate::version::custom::CORE_MATERIAL_INPUT_NATIVE_SERIALIZE;
+    let pins = crate::version::custom::FRAMEWORK_PINS_STORE_FNAME;
+
+    let as_string = build(&|v| push_fstring(v, "R"));
+    let parse = parse_flagged_struct(
+        "ShadingModelMaterialInput",
+        material_input_policy(core, pins - 1),
+        &as_string,
+    );
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v["input_name"].as_str(), Some("R"));
+    assert_eq!(v["constant"].as_u64(), Some(9));
+
+    let as_name = build(&|v| push_raw_name(v, 4)); // Idle
+    let parse = parse_flagged_struct(
+        "ShadingModelMaterialInput",
+        material_input_policy(core, pins),
+        &as_name,
+    );
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    assert_eq!(parse.entries[0].value["input_name"].as_str(), Some("Idle"));
+
+    // A package without the framework version reads -1: the FString layout.
+    let parse = parse_flagged_struct(
+        "ShadingModelMaterialInput",
+        material_input_policy(core, -1),
+        &as_string,
+    );
+    assert_eq!(parse.entries[0].value["input_name"].as_str(), Some("R"));
 }

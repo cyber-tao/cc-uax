@@ -96,6 +96,7 @@ Important version-gated formats include:
 - PropertyTag extensions: `OverridableInformation` (0x02, `FileVersionUE5` ≥ 1011 / UE5.4+) and `HasExternalsObjects` (0x04, UE5.8+);
 - `FText` Base history `DevNotes` when FortniteMain ≥ 260 and the archive is not FilterEditorOnly (UE5.8 editor packages).
 - `FRawAnimSequenceTrack` bulk arrays from `FUE5ReleaseStreamObjectVersion` 39 (`ScaleKeys` from `VER_UE4_ANIM_SUPPORT_NONUNIFORM_SCALE_ANIMATION`); below 39, and throughout 5.0, it is tagged. `FSmartName` writes a `uint16` UID below `FAnimPhysObjectVersion` 5 and an `FGuid` below 10.
+- `FMaterialOverrideNanite`: the legacy three-field layout below `FFortniteReleaseBranchCustomObjectVersion` 11, a cooked flag plus a tagged block from it. `FFontData`: a `bIsCooked` prefix from `FEditorObjectVersion` 9, tagged before. Material inputs (`FExpressionInput` and the `FMaterialInput<T>` structs) are tagged below `FCoreObjectVersion` 1, and their `InputName` is an `FString` below `FFrameworkObjectVersion` 31.
 
 The same `FileVersionUE5` does not guarantee the same layout: UE5.7 and UE5.8 share `1018` yet diverge (for example `FObjectImport::PackageName` gating and the `FInstancedPropertyBag` desc fields), so custom versions and, where needed, the engine version must gate those formats.
 

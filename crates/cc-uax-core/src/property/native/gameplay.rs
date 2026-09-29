@@ -17,17 +17,12 @@ pub(super) fn parse_gameplay_struct(
     let v = match name {
         "InstancedStruct" => parse_instanced_struct(r, ctx, value_end)?,
         "InstancedStructContainer" => parse_instanced_struct_container(r, ctx, value_end)?,
-        "UniversalObjectLocatorFragment" => {
-            let start = r.pos();
-            opaque_range(
-                r,
-                start,
-                value_end,
-                OpaqueReason::RegistryDependentPayload,
-                name,
-                "the locator fragment payload is interpreted by a runtime-registered locator type"
-                    .into(),
-            )?
+        "UniversalObjectLocatorFragment" => parse_locator_fragment(r, ctx, value_end)?,
+        // FNavAgentSelector::Serialize writes `Ar << PackedBits` (a uint32) and
+        // returns true (NavigationTypes.cpp; identical in UE5.0-5.8).
+        "NavAgentSelector" => {
+            let packed_bits = r.read_u32_within(value_end, "NavAgentSelector PackedBits")?;
+            json!({ "@struct": name, "packed_bits": packed_bits })
         }
         "GameplayEffectVersion" => {
             // FGameplayEffectVersion::Serialize writes the EGameplayEffectVersion byte.
@@ -65,6 +60,41 @@ pub(super) fn parse_gameplay_struct(
         _ => return Ok(None),
     };
     Ok(Some(v))
+}
+
+/// `FUniversalObjectLocatorFragment::Serialize` (UniversalObjectLocatorFragment.cpp,
+/// UE5.4+): loading reads an `FName FragmentTypeID`. `None` is an empty fragment
+/// with no payload; any other ID is followed by
+/// `FragmentType->GetStruct()->SerializeItem`, and the payload structs are plain
+/// USTRUCTs, so the payload is a self-delimiting tagged block.
+///
+/// Fragments are elements of `Fragments` arrays, so the payload length is not
+/// declared anywhere: a payload that is not a clean tagged block cannot be skipped,
+/// and the enclosing property has to fall back.
+fn parse_locator_fragment(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Value> {
+    let fragment_type = ctx
+        .names
+        .resolve_raw(r.read_raw_name_within(value_end, "locator fragment type")?);
+    if fragment_type == "None" {
+        return Ok(json!({
+            "@struct": "UniversalObjectLocatorFragment",
+            "fragment_type": null,
+        }));
+    }
+    let parsed = parse_properties_report(r, ctx, value_end, "/properties");
+    if matches!(
+        parsed.status,
+        PropertyParseStatus::NonTaggedPayload | PropertyParseStatus::FailedAfterEntries
+    ) {
+        bail!(
+            "locator fragment type {fragment_type} payload is not a tagged block; its layout is selected by the fragment-type registry"
+        );
+    }
+    Ok(json!({
+        "@struct": "UniversalObjectLocatorFragment",
+        "fragment_type": fragment_type,
+        "payload": { "properties": entries_to_values(&parsed.entries) },
+    }))
 }
 
 fn parse_instanced_struct(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Result<Value> {
