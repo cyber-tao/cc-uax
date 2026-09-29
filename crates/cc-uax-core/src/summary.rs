@@ -4,6 +4,11 @@ use crate::version::{PACKAGE_FILE_TAG, PACKAGE_FILE_TAG_SWAPPED, ue4, ue5};
 use anyhow::{Result, bail};
 
 const PKG_FILTER_EDITOR_ONLY: u32 = 0x8000_0000;
+/// `PKG_Cooked` (CoreUObject `ObjectMacros.h`, `EPackageFlags`): the package was cooked.
+const PKG_COOKED: u32 = 0x0000_0200;
+/// `PKG_UnversionedProperties` (CoreUObject `ObjectMacros.h`, `EPackageFlags`): tagged
+/// properties are replaced by unversioned property serialization.
+const PKG_UNVERSIONED_PROPERTIES: u32 = 0x0000_2000;
 /// FCustomVersion entry on disk: 16-byte GUID + 4-byte version.
 const CUSTOM_VERSION_ENTRY_BYTES: u64 = 20;
 
@@ -175,6 +180,16 @@ impl PackageFileSummary {
 
         let package_name = r.read_fstring()?;
         let package_flags = r.read_u32()?;
+        if package_flags & PKG_COOKED != 0 {
+            return Err(out_of_scope(
+                "package is cooked (PKG_Cooked); this tool targets uncooked editor packages",
+            ));
+        }
+        if package_flags & PKG_UNVERSIONED_PROPERTIES != 0 {
+            return Err(out_of_scope(
+                "package uses unversioned property serialization (PKG_UnversionedProperties), which only cooked packages write",
+            ));
+        }
         let filter_editor_only = package_flags & PKG_FILTER_EDITOR_ONLY != 0;
 
         let name_count = r.read_i32()?;

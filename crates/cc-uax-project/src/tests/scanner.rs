@@ -113,6 +113,35 @@ fn out_of_scope_packages_are_indexed_as_unsupported_and_do_not_fail_strict_mode(
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// A versioned package can still be cooked; the PKG_Cooked flag alone puts it out
+// of scope, and the project scan records it as `unsupported` with that reason.
+#[test]
+fn cooked_packages_are_indexed_as_unsupported() {
+    let root = temp_project("cooked");
+    let mut cooked = minimal_package();
+    let filter_only = 0x8000_0000u32.to_le_bytes();
+    let at = cooked
+        .windows(4)
+        .position(|window| window == filter_only)
+        .expect("the fixture sets PKG_FilterEditorOnly");
+    cooked[at..at + 4].copy_from_slice(&(0x8000_0000u32 | 0x0000_0200).to_le_bytes());
+    std::fs::write(root.join("Content/Cooked.uasset"), cooked).unwrap();
+    let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
+
+    let index = scanner.scan(scan_options(ScanMode::Strict)).unwrap();
+
+    assert!(index.failures.is_empty(), "{:#?}", index.failures);
+    let asset = index
+        .asset("/Game/Cooked")
+        .expect("cooked asset is indexed");
+    assert_eq!(
+        asset.analysis.status,
+        cc_uax_core::AnalysisStatus::Unsupported
+    );
+    let reason = asset.analysis.unsupported_reason.as_deref().unwrap();
+    assert!(reason.contains("PKG_Cooked"), "{reason}");
+    std::fs::remove_dir_all(root).unwrap();
+}
 // A warm cache must replay the same classification it recorded: an out-of-scope
 // package stays `unsupported` evidence instead of becoming a Parse failure.
 #[test]

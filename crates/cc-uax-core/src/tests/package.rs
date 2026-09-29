@@ -104,6 +104,45 @@ fn out_of_scope_packages_are_classified_apart_from_malformed_ones() {
     );
 }
 
+/// `build_minimal_package` with its package flags replaced.
+fn minimal_package_with_flags(flags: u32) -> Vec<u8> {
+    let mut data = build_minimal_package();
+    let filter_only = 0x8000_0000u32.to_le_bytes();
+    let at = data
+        .windows(4)
+        .position(|window| window == filter_only)
+        .expect("the fixture sets PKG_FilterEditorOnly");
+    data[at..at + 4].copy_from_slice(&flags.to_le_bytes());
+    data
+}
+
+// A versioned package can still be cooked, and a cooked package is not an editor
+// asset: its exports, properties and tables are laid out for the runtime. The
+// flags say so, so it is rejected up front instead of parsed as an editor package.
+#[test]
+fn cooked_and_unversioned_property_packages_are_out_of_scope() {
+    for (label, flags, needle) in [
+        ("cooked", 0x8000_0000u32 | 0x0000_0200, "PKG_Cooked"),
+        (
+            "unversioned properties",
+            0x8000_0000 | 0x0000_2000,
+            "PKG_UnversionedProperties",
+        ),
+        ("cooked without filtering", 0x0000_0200, "PKG_Cooked"),
+    ] {
+        let error = PackageView::parse(&minimal_package_with_flags(flags))
+            .err()
+            .unwrap_or_else(|| panic!("{label} should be rejected"));
+        assert!(error.is_out_of_scope(), "{label}: {error}");
+        assert!(error.to_string().contains(needle), "{label}: {error}");
+    }
+}
+
+#[test]
+fn a_package_filtered_for_editor_only_data_alone_still_parses() {
+    assert!(PackageView::parse(&minimal_package_with_flags(0x8000_0000)).is_ok());
+}
+
 // Big-endian console packages and package-level compression are readable formats
 // this tool does not target, so they must not look like corruption either.
 #[test]
@@ -704,6 +743,61 @@ fn known_native_only_class_is_classified_without_a_script_range() {
     let analysis = analyze_package(&package, &data, AssetView::Full);
     assert_eq!(analysis.exports[0].class, "/Script/ControlRig.RigHierarchy");
     assert_native_only_payload(&analysis, data.len() as u64);
+}
+
+/// `UInterchangeBaseNode::Serialize` writes only its attribute storage and never
+/// calls `Super::Serialize`, so every Interchange node class is native-only; below
+/// `SCRIPT_SERIALIZATION_OFFSET` the class list is what says so.
+#[test]
+fn interchange_node_class_is_native_only_below_the_script_range() {
+    let base = Package::parse(&build_minimal_package_with_version(1009, 5, 1)).unwrap();
+    let mut data = Vec::new();
+    // Opens with what a legacy tag loop would accept as a name and a type.
+    push_raw_name(&mut data, 3);
+    push_raw_name(&mut data, 4);
+    data.extend_from_slice(&[0x00, 0x00, 0x00, 0x40, 0xFF, 0xFF, 0xFF, 0xBF]);
+
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "/Script/InterchangeFactoryNodes".to_string(),
+                "InterchangeTexture2DFactoryNode".to_string(),
+                "Package".to_string(),
+                "AimItem".to_string(),
+                "DefaultGizmoLibrary".to_string(),
+                "Class".to_string(),
+            ],
+        },
+        imports: vec![
+            test_import(2, 0, 0, 0),  // -1: Package /Script/InterchangeFactoryNodes
+            test_import(5, 1, -1, 0), // -2: Class InterchangeTexture2DFactoryNode, outer -1
+        ],
+        exports: vec![ObjectExport {
+            class_index: crate::object::PackageIndex(-2),
+            ..test_export(0, data.len() as i64, 0, 0)
+        }],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+    assert_eq!(
+        analysis.exports[0].class,
+        "/Script/InterchangeFactoryNodes.InterchangeTexture2DFactoryNode"
+    );
+    assert_native_only_payload(&analysis, data.len() as u64);
+    assert!(
+        !analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "export_payload_not_tagged")
+    );
+    assert_eq!(analysis.coverage.unattributed_tail_bytes, 0);
 }
 
 /// `UAssetImportData::Serialize` writes its source files as a JSON `FString`

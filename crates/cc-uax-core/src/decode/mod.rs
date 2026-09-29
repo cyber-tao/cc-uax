@@ -746,12 +746,112 @@ fn looks_like_unrecognized_graph_node(
 /// - `URigHierarchy::Serialize` (`RigHierarchy.cpp`): `Save(Ar)`/`Load(Ar)` only.
 /// - `URigVM::Serialize` (`RigVM.cpp`): calls `Super::Serialize` only for
 ///   reference collectors and memory counting, never for a linker archive.
+/// - `UInterchangeBaseNode::Serialize` (`InterchangeBaseNode.cpp`): writes only
+///   its `FAttributeStorage` and never calls `Super::Serialize`. It is at
+///   `Engine/Source/Runtime/Experimental/Interchange/Core/Private/Nodes` line 280
+///   in 5.0 and `Engine/Source/Runtime/Interchange/Core/Private/Nodes` line 431 in
+///   5.1/5.2, unchanged through 5.8, so every class deriving from it is native-only.
+///
+/// [`INTERCHANGE_NODE_CLASSES`] was generated from UE source: every class that
+/// derives transitively from `UInterchangeBaseNode` in 5.0-5.3 under
+/// `Engine/Plugins`, `Engine/Source/Runtime/Interchange` and
+/// `Engine/Source/Runtime/Experimental/Interchange`. It only matters below 1010,
+/// where the export table does not carry the zero script range.
 pub(crate) fn is_native_only_payload_class(class: &str) -> bool {
-    matches!(
+    if matches!(
         class,
         "/Script/ControlRig.RigHierarchy" | "/Script/RigVM.RigVM"
-    )
+    ) {
+        return true;
+    }
+    class.starts_with("/Script/")
+        && class
+            .rsplit('.')
+            .next()
+            .is_some_and(|simple| INTERCHANGE_NODE_CLASSES.binary_search(&simple).is_ok())
 }
+
+/// Simple names (without the `U` prefix) of the `UInterchangeBaseNode` family,
+/// sorted for `binary_search`.
+const INTERCHANGE_NODE_CLASSES: &[&str] = &[
+    "InterchangeActorFactoryNode",
+    "InterchangeAnimSequenceFactoryNode",
+    "InterchangeAnimationTrackBaseNode",
+    "InterchangeAnimationTrackNode",
+    "InterchangeAnimationTrackSetFactoryNode",
+    "InterchangeAnimationTrackSetInstanceNode",
+    "InterchangeAnimationTrackSetNode",
+    "InterchangeBaseLightFactoryNode",
+    "InterchangeBaseLightNode",
+    "InterchangeBaseMaterialFactoryNode",
+    "InterchangeBaseNode",
+    "InterchangeCameraNode",
+    "InterchangeCineCameraFactoryNode",
+    "InterchangeCommonPipelineDataFactoryNode",
+    "InterchangeDatasmithAreaLightFactoryNode",
+    "InterchangeDatasmithAreaLightNode",
+    "InterchangeDatasmithMaterialNode",
+    "InterchangeDatasmithPbrMaterialNode",
+    "InterchangeDatasmithSceneFactoryNode",
+    "InterchangeDatasmithSceneNode",
+    "InterchangeDirectionalLightFactoryNode",
+    "InterchangeDirectionalLightNode",
+    "InterchangeFactoryBaseNode",
+    "InterchangeFunctionCallShaderNode",
+    "InterchangeLightFactoryNode",
+    "InterchangeLightNode",
+    "InterchangeMaterialExpressionFactoryNode",
+    "InterchangeMaterialFactoryNode",
+    "InterchangeMaterialFunctionCallExpressionFactoryNode",
+    "InterchangeMaterialFunctionFactoryNode",
+    "InterchangeMaterialInstanceFactoryNode",
+    "InterchangeMaterialInstanceNode",
+    "InterchangeMaterialNode",
+    "InterchangeMeshActorFactoryNode",
+    "InterchangeMeshFactoryNode",
+    "InterchangeMeshNode",
+    "InterchangePhysicalCameraFactoryNode",
+    "InterchangePhysicalCameraNode",
+    "InterchangePhysicsAssetFactoryNode",
+    "InterchangePointLightFactoryNode",
+    "InterchangePointLightNode",
+    "InterchangeRectLightFactoryNode",
+    "InterchangeRectLightNode",
+    "InterchangeSceneImportAssetFactoryNode",
+    "InterchangeSceneNode",
+    "InterchangeSceneVariantSetsFactoryNode",
+    "InterchangeSceneVariantSetsNode",
+    "InterchangeShaderGraphNode",
+    "InterchangeShaderNode",
+    "InterchangeSkeletalAnimationTrackNode",
+    "InterchangeSkeletalMeshFactoryNode",
+    "InterchangeSkeletalMeshLodDataNode",
+    "InterchangeSkeletonFactoryNode",
+    "InterchangeSourceNode",
+    "InterchangeSpotLightFactoryNode",
+    "InterchangeSpotLightNode",
+    "InterchangeStandardCameraFactoryNode",
+    "InterchangeStandardCameraNode",
+    "InterchangeStaticMeshFactoryNode",
+    "InterchangeStaticMeshLodDataNode",
+    "InterchangeTexture2DArrayFactoryNode",
+    "InterchangeTexture2DArrayNode",
+    "InterchangeTexture2DFactoryNode",
+    "InterchangeTexture2DNode",
+    "InterchangeTextureBlurNode",
+    "InterchangeTextureCubeArrayFactoryNode",
+    "InterchangeTextureCubeArrayNode",
+    "InterchangeTextureCubeFactoryNode",
+    "InterchangeTextureCubeNode",
+    "InterchangeTextureFactoryNode",
+    "InterchangeTextureLightProfileFactoryNode",
+    "InterchangeTextureLightProfileNode",
+    "InterchangeTextureNode",
+    "InterchangeTransformAnimationTrackNode",
+    "InterchangeVariantSetNode",
+    "InterchangeVolumeTextureFactoryNode",
+    "InterchangeVolumeTextureNode",
+];
 
 fn is_pcg_model_object_class(class: &str) -> bool {
     class.starts_with("/Script/PCG.") || class.starts_with("/Script/PCGEditor.")
