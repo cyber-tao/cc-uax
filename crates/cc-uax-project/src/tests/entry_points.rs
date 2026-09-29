@@ -208,6 +208,11 @@ fn packaging_cook_roots_become_configured_roots() {
     )
     .unwrap();
     std::fs::write(
+        root.join("Content/Extra/Also.uasset"),
+        super::common::minimal_package(),
+    )
+    .unwrap();
+    std::fs::write(
         root.join("Config/DefaultEngine.ini"),
         "[/Script/EngineSettings.GameMapsSettings]\n\
          GameDefaultMap=/Game/Dev.Dev\n",
@@ -219,7 +224,8 @@ fn packaging_cook_roots_become_configured_roots() {
          +MapsToCook=(FilePath=\"/Game/Shipped\")\n\
          +MapsToCook=(FilePath=\"/Game/Removed\")\n\
          -MapsToCook=(FilePath=\"/Game/Removed\")\n\
-         +DirectoriesToAlwaysCook=(Path=\"/Game/Extra\")\n",
+         +DirectoriesToAlwaysCook=(Path=\"/Game/Extra\")\n\
+         +DirectoriesToAlwaysCook=(Path=\"/Game/Empty\")\n",
     )
     .unwrap();
 
@@ -242,18 +248,32 @@ fn packaging_cook_roots_become_configured_roots() {
             .iter()
             .all(|root| root.package_path != "/Game/Removed")
     );
-    // A cook directory expands to the indexed packages beneath it.
-    assert_eq!(
-        resolved("/Game/Extra/Always").key,
-        "DirectoriesToAlwaysCook"
-    );
-    assert!(
-        index
-            .reachability
-            .reachable_runtime_packages
-            .contains("/Game/Extra/Always")
-    );
+    // A cook directory is one root that reports how many packages it matched, and
+    // every one of them still seeds reachability.
+    let cook_roots: Vec<_> = roots
+        .iter()
+        .filter(|root| root.key == "DirectoriesToAlwaysCook" && root.package_path == "/Game/Extra")
+        .collect();
+    assert_eq!(cook_roots.len(), 1, "{roots:#?}");
+    assert_eq!(cook_roots[0].matched_packages, 2);
+    assert_eq!(cook_roots[0].resolution, crate::RootResolution::Indexed);
+    assert_eq!(cook_roots[0].resolved_package, None);
+    for package in ["/Game/Extra/Always", "/Game/Extra/Also"] {
+        assert!(
+            index
+                .reachability
+                .reachable_runtime_packages
+                .contains(package),
+            "{package}"
+        );
+    }
     assert!(index.reachability.unreachable_project_assets.is_empty());
+    // A directory that matches nothing is still one root, and stays unresolved.
+    let empty = resolved("/Game/Empty");
+    assert_eq!(empty.key, "DirectoriesToAlwaysCook");
+    assert_eq!(empty.resolution, crate::RootResolution::Unresolved);
+    assert_eq!(empty.matched_packages, 0);
+    assert_eq!(empty.resolved_package, None);
 
     std::fs::remove_dir_all(root).unwrap();
 }

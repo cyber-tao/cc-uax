@@ -88,6 +88,14 @@ pub struct ProjectReachabilityRoot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_package: Option<String>,
     pub resolution: RootResolution,
+    /// For a cook-directory root, the number of indexed packages beneath it, all
+    /// of which seed reachability. Zero for every other root.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub matched_packages: usize,
+}
+
+fn is_zero_usize(value: &usize) -> bool {
+    *value == 0
 }
 
 /// Whether a configured root exists in this scan.

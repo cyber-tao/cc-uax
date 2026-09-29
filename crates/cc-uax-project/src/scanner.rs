@@ -694,11 +694,7 @@ fn build_project_reachability(
         ownership_closure,
         canonical,
     } = *graphs;
-    let configured_roots = configured_roots(entry_points, assets, canonical);
-    let roots = configured_roots
-        .iter()
-        .filter_map(|root| root.resolved_package.clone())
-        .collect::<Vec<_>>();
+    let (configured_roots, roots) = configured_roots(entry_points, assets, canonical);
 
     let (reachable_runtime_packages, ownership_closure_members) = walk_reachable(
         &roots,
@@ -810,11 +806,16 @@ fn walk_reachable(
     (reachable, closure_members)
 }
 
+/// The configured roots to report, and the packages the reachability walk starts
+/// from. They differ because a cook directory is one reported root that seeds
+/// every indexed package beneath it: listing each of those packages as a root made
+/// the report skeleton, which the output budget never trims, as large as the
+/// project.
 fn configured_roots(
     entry_points: &ProjectEntryPoints,
     assets: &BTreeMap<String, AssetRecord>,
     canonical: &HashMap<String, String>,
-) -> Vec<ProjectReachabilityRoot> {
+) -> (Vec<ProjectReachabilityRoot>, Vec<String>) {
     let mut roots = Vec::new();
     for reference in entry_points.defaults.values() {
         roots.push(reachability_root(None, reference, assets, canonical));
@@ -835,31 +836,37 @@ fn configured_roots(
     for reference in &entry_points.cook_roots {
         roots.push(reachability_root(None, reference, assets, canonical));
     }
+    let mut seeds = roots
+        .iter()
+        .filter_map(|root| root.resolved_package.clone())
+        .collect::<Vec<_>>();
     for reference in &entry_points.cook_directories {
-        let prefix = format!("{}/", reference.package_path.trim_end_matches('/'));
-        let mut matched = false;
-        for package in assets.keys() {
-            if package
-                .to_ascii_lowercase()
-                .starts_with(&prefix.to_ascii_lowercase())
-            {
-                matched = true;
-                roots.push(ProjectReachabilityRoot {
-                    key: reference.key.clone(),
-                    platform: None,
-                    source: reference.source.clone(),
-                    object_path: reference.object_path.clone(),
-                    package_path: package.clone(),
-                    resolved_package: Some(package.clone()),
-                    resolution: RootResolution::Indexed,
-                });
-            }
-        }
-        if !matched {
-            roots.push(reachability_root(None, reference, assets, canonical));
-        }
+        let directory = reference.package_path.trim_end_matches('/');
+        let prefix = format!("{directory}/").to_ascii_lowercase();
+        let matched = assets
+            .keys()
+            .filter(|package| package.to_ascii_lowercase().starts_with(&prefix))
+            .cloned()
+            .collect::<Vec<_>>();
+        // A directory is not a package name, so it can be neither resolved to one
+        // nor merely referenced.
+        roots.push(ProjectReachabilityRoot {
+            key: reference.key.clone(),
+            platform: None,
+            source: reference.source.clone(),
+            object_path: reference.object_path.clone(),
+            package_path: directory.to_string(),
+            resolved_package: None,
+            resolution: if matched.is_empty() {
+                RootResolution::Unresolved
+            } else {
+                RootResolution::Indexed
+            },
+            matched_packages: matched.len(),
+        });
+        seeds.extend(matched);
     }
-    roots
+    (roots, seeds)
 }
 
 fn reachability_root(
@@ -884,6 +891,7 @@ fn reachability_root(
         package_path: reference.package_path.clone(),
         resolved_package,
         resolution,
+        matched_packages: 0,
     }
 }
 
