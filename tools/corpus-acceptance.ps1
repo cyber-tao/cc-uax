@@ -281,6 +281,16 @@ function Measure-Project {
             $versions[$property.Name] = $property.Value
         }
     }
+    # UE4-format packages stay unsupported but contribute their linker reference
+    # tables; this distribution says how many of them did.
+    $ue4Versions = [ordered] @{}
+    if ($analysis.PSObject.Properties['ue4_file_versions']) {
+        foreach ($property in $analysis.ue4_file_versions.PSObject.Properties) {
+            $ue4Versions[$property.Name] = $property.Value
+        }
+    }
+    $ue4ReferencePackages = 0
+    foreach ($count in $ue4Versions.Values) { $ue4ReferencePackages += $count }
 
     return [ordered] @{
         exit_code             = $exitCode
@@ -331,6 +341,10 @@ function Measure-Project {
             @(@($unreachable) | Where-Object { $reachable.Contains([string] $_) }).Count
         } else { 0 }
         file_version_ue5      = $versions
+        file_version_ue4      = $ue4Versions
+        ue4_reference_packages = $ue4ReferencePackages
+        bytes_read            = & $number $stats 'bytes_read'
+        bytes_total           = & $number $coverage 'bytes_total'
     }
 }
 
@@ -385,6 +399,10 @@ function Test-Invariants {
         if ($total -gt $Result.assets) {
             $problems += "capability $kind is reported by $total assets, more than the $($Result.assets) scanned"
         }
+    }
+    # Reference tables are only read for packages the analysis does not target.
+    if ($Result.ue4_reference_packages -gt $Result.unsupported_assets) {
+        $problems += "$($Result.ue4_reference_packages) UE4-format packages report reference tables, more than the $($Result.unsupported_assets) unsupported assets"
     }
     if ($Result.reference_checked_assets -gt $Result.assets) {
         $problems += "reference cross-check ran on $($Result.reference_checked_assets) assets, more than the $($Result.assets) scanned"
@@ -463,6 +481,11 @@ function Test-AgainstBaseline {
     if ($Result.value_only_reachable -lt $Baseline.value_only_reachable) {
         $problems += "value-reachable packages fell: $($Baseline.value_only_reachable) -> $($Result.value_only_reachable)"
     }
+    # A UE4-format package whose tables stop being read loses all of its edges.
+    if ($Baseline.PSObject.Properties['ue4_reference_packages'] -and
+        $Result.ue4_reference_packages -lt $Baseline.ue4_reference_packages) {
+        $problems += "UE4-format packages with reference tables fell: $($Baseline.ue4_reference_packages) -> $($Result.ue4_reference_packages)"
+    }
     # A capability disappearing from the histogram means a whole class of evidence
     # stopped being reported, even if every other count holds.
     if ($Baseline.PSObject.Properties['capabilities']) {
@@ -540,6 +563,11 @@ foreach ($target in $Project) {
         $result.partial_assets, $result.compiled_payload_only_partials, `
         $result.reference_value_only, $result.reference_assets_with_value_only, `
         $result.value_only_reachable, $result.unreachable_assets)
+    $ue4 = ($result.file_version_ue4.Keys | Sort-Object { [int] $_ } | ForEach-Object {
+        "$_=$($result.file_version_ue4[$_])"
+    }) -join ' '
+    Write-Host ("  ue4_reference_packages={0} (FileVersionUE4: {1})  bytes_read={2} of bytes_total={3}" -f `
+        $result.ue4_reference_packages, $ue4, $result.bytes_read, $result.bytes_total)
 }
 
 Write-Host ""
