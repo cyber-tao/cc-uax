@@ -12,6 +12,10 @@ mod scanner;
 /// change to what a cached `AssetAnalysisSummary` means must bump it or a warm
 /// scan will replay summaries built under the old meaning.
 ///
+/// 8: under-consumed fixed-width containers become opaque, incomplete values
+/// downgrade `tagged_properties`, and nested diagnostic paths are attributed per
+/// property, so cached statuses, capabilities and diagnostics differ.
+///
 /// 7: legacy containers with ByteProperty elements are resolved by exact fit, so
 /// cached property values and diagnostics for 5.0–5.3 packages differ.
 ///
@@ -21,7 +25,7 @@ mod scanner;
 /// 5: cached summaries built before native-only payload classification, decoder
 /// span accounting, the import-data prefix decoder, the TextConst layout gate and
 /// the widened graph-node list carry different statuses and counters.
-pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 7;
+pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 8;
 
 pub use analysis_summary::{
     AnalysisDiagnosticSummary, AssetAnalysisSummary, CapabilitySummary, GraphSummary,

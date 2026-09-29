@@ -316,3 +316,185 @@ fn value_crossing_its_window_falls_back_through_the_read_limit() {
     assert!(!diag.message.contains("past its declared value window"));
     assert!(diag.message.contains("read limit"), "{}", diag.message);
 }
+
+fn complete_name_ctx<'a>(names: &'a NameMap) -> ParseCtx<'a> {
+    ParseCtx {
+        names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
+    }
+}
+
+/// `Nums: ArrayProperty(<inner>)` followed by `Count: IntProperty = 42`.
+fn array_then_count(inner_idx: i32, payload: &[u8]) -> Vec<u8> {
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Nums
+    push_raw_name(&mut d, 1); // ArrayProperty
+    push_i32(&mut d, 1); // one type parameter
+    push_raw_name(&mut d, inner_idx);
+    push_i32(&mut d, 0);
+    push_i32(&mut d, payload.len() as i32);
+    d.push(0); // flags
+    d.extend_from_slice(payload);
+    push_raw_name(&mut d, 3); // Count
+    push_raw_name(&mut d, 2); // IntProperty
+    push_i32(&mut d, 0);
+    push_i32(&mut d, 4);
+    d.push(0);
+    push_i32(&mut d, 42);
+    push_raw_name(&mut d, 4); // None
+    d
+}
+
+fn array_then_count_names() -> NameMap {
+    NameMap {
+        names: vec![
+            "Nums".to_string(),          // 0
+            "ArrayProperty".to_string(), // 1
+            "IntProperty".to_string(),   // 2
+            "Count".to_string(),         // 3
+            "None".to_string(),          // 4
+            "StrProperty".to_string(),   // 5
+        ],
+    }
+}
+
+#[test]
+fn an_underconsumed_fixed_width_container_becomes_an_opaque_value() {
+    let names = array_then_count_names();
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 2);
+    push_i32(&mut payload, 10);
+    push_i32(&mut payload, 20);
+    payload.extend_from_slice(&[0xAA, 0xBB]); // two bytes no element accounts for
+    let d = array_then_count(2, &payload);
+    let value_start = 37; // name, type, param count, inner name, inner count, size, flags
+    let ctx = complete_name_ctx(&names);
+    let mut r = Reader::new(&d);
+
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert_eq!(report.entries.len(), 2);
+    let opaque = report.entries[0].value.as_opaque().expect("opaque value");
+    assert_eq!(opaque.reason, OpaqueReason::ValueUnderconsumed);
+    assert_eq!(opaque.byte_range.start, value_start);
+    assert_eq!(opaque.byte_range.end, value_start + 14);
+    assert_eq!(opaque.byte_range.size, 14);
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "property_value_fallback")
+        .unwrap_or_else(|| panic!("{:#?}", report.diagnostics));
+    assert!(
+        diagnostic.message.contains("left 2 undecoded byte(s)")
+            && diagnostic.message.contains("must fill its window"),
+        "{}",
+        diagnostic.message
+    );
+    assert!(
+        !report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_incomplete")
+    );
+    assert_eq!(report.entries[1].name, "Count");
+    assert_eq!(report.entries[1].value.as_i64(), Some(42));
+}
+
+#[test]
+fn an_underconsumed_variable_width_container_keeps_its_decoded_elements() {
+    let names = array_then_count_names();
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 1);
+    push_fstring(&mut payload, "Hi");
+    payload.extend_from_slice(&[0xAA, 0xBB]);
+    let d = array_then_count(5, &payload);
+    let ctx = complete_name_ctx(&names);
+    let mut r = Reader::new(&d);
+
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert!(!report.entries[0].value.is_opaque());
+    assert_eq!(report.entries[0].value[0].as_str(), Some("Hi"));
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_incomplete"),
+        "{:#?}",
+        report.diagnostics
+    );
+    assert_eq!(report.entries[1].value.as_i64(), Some(42));
+}
+
+#[test]
+fn nested_diagnostics_stay_with_the_element_that_raised_them() {
+    let names = NameMap {
+        names: vec![
+            "M".to_string(),              // 0
+            "MapProperty".to_string(),    // 1
+            "NameProperty".to_string(),   // 2
+            "StructProperty".to_string(), // 3
+            "MyStruct".to_string(),       // 4
+            "X".to_string(),              // 5
+            "IntProperty".to_string(),    // 6
+            "Q".to_string(),              // 7
+            "None".to_string(),           // 8
+            "K1".to_string(),             // 9
+            "K2".to_string(),             // 10
+        ],
+    };
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0); // NumToRemove
+    push_i32(&mut payload, 2);
+    // Entry 1: X is an IntProperty whose declared size cannot hold an int32.
+    push_raw_name(&mut payload, 9);
+    push_raw_name(&mut payload, 5);
+    push_raw_name(&mut payload, 6);
+    push_i32(&mut payload, 0);
+    push_i32(&mut payload, 2);
+    payload.push(0);
+    payload.extend_from_slice(&[1, 0]);
+    push_raw_name(&mut payload, 8);
+    // Entry 2: Q decodes cleanly.
+    push_raw_name(&mut payload, 10);
+    push_raw_name(&mut payload, 7);
+    push_raw_name(&mut payload, 6);
+    push_i32(&mut payload, 0);
+    push_i32(&mut payload, 4);
+    payload.push(0);
+    push_i32(&mut payload, 5);
+    push_raw_name(&mut payload, 8);
+
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // M
+    push_raw_name(&mut d, 1); // MapProperty
+    push_i32(&mut d, 2); // key and value
+    push_raw_name(&mut d, 2);
+    push_i32(&mut d, 0);
+    push_raw_name(&mut d, 3);
+    push_i32(&mut d, 1);
+    push_raw_name(&mut d, 4);
+    push_i32(&mut d, 0);
+    push_i32(&mut d, payload.len() as i32);
+    d.push(0);
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 8);
+    let ctx = complete_name_ctx(&names);
+    let mut r = Reader::new(&d);
+
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/exports/0/properties");
+
+    let paths: Vec<&str> = report
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.path.as_str())
+        .collect();
+    assert_eq!(paths, ["/exports/0/properties/M/properties/X"], "{paths:?}");
+}

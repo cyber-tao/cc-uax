@@ -1333,3 +1333,67 @@ fn a_property_bag_fallback_is_one_region_at_serialized_data() {
     assert_eq!(regions[0].byte_range.as_ref().unwrap().size, 4);
     assert_eq!(analysis.coverage.opaque_value_bytes, 4);
 }
+
+/// A value that stops short of its declared window keeps its decoded evidence,
+/// but the capability that asked for complete properties cannot call itself
+/// complete while bytes of the window went unread.
+#[test]
+fn an_incomplete_property_value_downgrades_the_tagged_properties_capability() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut data = Vec::new();
+    data.push(0); // object property serialization control
+    push_raw_name(&mut data, 1); // Value
+    push_raw_name(&mut data, 2); // IntProperty
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 8); // declared size: twice what an int32 reads
+    data.push(0);
+    push_i32(&mut data, 42);
+    push_i32(&mut data, 0);
+    push_raw_name(&mut data, 3); // None
+    let tagged_end = data.len();
+
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "Obj".into(),
+                "Value".into(),
+                "IntProperty".into(),
+                "None".into(),
+            ],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, tagged_end as i64)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+
+    assert!(
+        analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_incomplete"),
+        "{:#?}",
+        analysis.diagnostics
+    );
+    let tagged = analysis
+        .capabilities
+        .iter()
+        .find(|capability| capability.kind == CapabilityKind::TaggedProperties)
+        .expect("tagged-property capability");
+    assert_eq!(tagged.status, AnalysisStatus::Partial);
+    assert!(
+        tagged
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("1 property value(s) left bytes undecoded")),
+        "{tagged:#?}"
+    );
+    assert_eq!(analysis.status, AnalysisStatus::Partial);
+}

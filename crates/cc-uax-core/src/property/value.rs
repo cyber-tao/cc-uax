@@ -256,13 +256,7 @@ fn parse_legacy_byte_container(
         let _ = r.seek(start);
         ctx.nested_diagnostics.borrow_mut().truncate(mark);
         let decoded = parse_container(r, &candidate, ctx, prefer_native, value_end);
-        // A nested tag loop drains the sink per property, so it may hold fewer
-        // than `mark` entries by now.
-        let diagnostics = {
-            let mut sink = ctx.nested_diagnostics.borrow_mut();
-            let split = mark.min(sink.len());
-            sink.split_off(split)
-        };
+        let diagnostics = ctx.nested_diagnostics.borrow_mut().split_off(mark);
         if let Ok(value) = decoded
             && r.pos() == value_end
         {

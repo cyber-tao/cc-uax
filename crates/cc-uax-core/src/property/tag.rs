@@ -131,6 +131,42 @@ pub(crate) fn is_property_type_name(name: &str) -> bool {
     PROPERTY_TYPE_NAMES.contains(&name)
 }
 
+/// Whether every element of this container has the same on-disk width, so a
+/// decode that stops short of the declared window proves the element layout was
+/// misread. Soft references, strings, text, structs, delegates and field paths
+/// are variable-width and stay out.
+fn is_fixed_width_container(ty: &TypeName) -> bool {
+    const FIXED_WIDTH_ELEMENTS: &[&str] = &[
+        "BoolProperty",
+        "Int8Property",
+        "Int16Property",
+        "IntProperty",
+        "Int64Property",
+        "ByteProperty",
+        "UInt16Property",
+        "UInt32Property",
+        "UInt64Property",
+        "FloatProperty",
+        "DoubleProperty",
+        "EnumProperty",
+        "NameProperty",
+        "ObjectProperty",
+        "ClassProperty",
+        "WeakObjectProperty",
+        "ObjectPtrProperty",
+        "ClassPtrProperty",
+        "InterfaceProperty",
+        "LazyObjectProperty",
+    ];
+    matches!(
+        ty.name.as_str(),
+        "ArrayProperty" | "SetProperty" | "MapProperty"
+    ) && ty
+        .params
+        .iter()
+        .all(|param| FIXED_WIDTH_ELEMENTS.contains(&param.name.as_str()))
+}
+
 fn fallback_code(unnamed_inner_struct: bool) -> &'static str {
     if unnamed_inner_struct {
         "property_tag_missing_inner_struct_name"
@@ -384,6 +420,9 @@ pub(crate) fn parse_properties_report(
             break;
         }
 
+        // Only what this property's own decoders push is drained below: an earlier
+        // sibling element's entries belong to the enclosing property.
+        let nested_mark = ctx.nested_diagnostics.borrow().len();
         // SkippedSerialize (0x20): the value was intentionally not written (Size == 0),
         // so there is nothing to decode for this property.
         let value = if tag.is_skipped {
@@ -396,6 +435,50 @@ pub(crate) fn parse_properties_report(
             });
             match decoded {
                 Ok(v) if r.pos() == aligned => v,
+                Ok(_) if r.pos() < aligned && is_fixed_width_container(&tag.type_name) => {
+                    // Every element has the same width, so a window the elements do not
+                    // fill means the layout assumption is wrong and the decoded
+                    // elements cannot be trusted; nothing they raised is reported.
+                    ctx.nested_diagnostics.borrow_mut().truncate(nested_mark);
+                    let consumed_to = r.pos();
+                    let gap = aligned - consumed_to;
+                    let _ = r.seek(value_start);
+                    let n = (tag.size as usize).min(PREVIEW_MAX);
+                    let preview = r.read_bytes(n).unwrap_or_default();
+                    let message = format!(
+                        "decoded property '{}' as {} left {gap} undecoded byte(s): read to {consumed_to}, declared end {aligned}; a container of fixed-width elements must fill its window, so its elements are not trustworthy",
+                        tag.name,
+                        tag.type_name.display()
+                    );
+                    diagnostics.push(
+                        Diagnostic::warning(
+                            "property_value_fallback",
+                            prop_path.clone(),
+                            message.clone(),
+                        )
+                        .with_offset(consumed_to)
+                        .with_context(json!({
+                            "property": tag.name.clone(),
+                            "type": tag.type_name.display(),
+                            "size": tag.size,
+                            "declared_end": aligned,
+                            "consumed_to": consumed_to,
+                            "unconsumed_bytes": gap,
+                            "preview": to_hex(&preview),
+                        })),
+                    );
+                    Value::Opaque(OpaqueValue {
+                        reason: OpaqueReason::ValueUnderconsumed,
+                        message,
+                        type_name: Some(tag.type_name.display()),
+                        byte_range: OpaqueByteRange {
+                            start: value_start,
+                            end: aligned,
+                            size: tag.size.max(0) as u64,
+                            preview: to_hex(&preview),
+                        },
+                    })
+                }
                 Ok(v) if r.pos() < aligned => {
                     // Decoder stopped before the declared window end; retain the gap as evidence.
                     let consumed_to = r.pos();
@@ -500,7 +583,11 @@ pub(crate) fn parse_properties_report(
         // Whatever the value decoders raised inside nested blocks belongs to this
         // property: re-root it here so the report can attribute it, and so it
         // counts toward status like any other warning.
-        let nested: Vec<Diagnostic> = ctx.nested_diagnostics.borrow_mut().drain(..).collect();
+        let nested: Vec<Diagnostic> = ctx
+            .nested_diagnostics
+            .borrow_mut()
+            .drain(nested_mark..)
+            .collect();
         for mut nested_diagnostic in nested {
             nested_diagnostic.path = format!("{prop_path}{}", nested_diagnostic.path);
             diagnostics.push(nested_diagnostic);

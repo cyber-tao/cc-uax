@@ -29,6 +29,8 @@ pub(super) struct CapabilityInputs<'a> {
     pub(super) property_partial: bool,
     /// Property values retained only as opaque bytes (see `known_opaque`).
     pub(super) opaque_property_values: usize,
+    /// Property values that decoded but left bytes of their window unread.
+    pub(super) incomplete_property_values: usize,
     pub(super) graph_coverage: &'a GraphCoverage,
     /// Why the EdGraph capability is not complete, or `None` when it is.
     pub(super) graph_partial_reason: Option<String>,
@@ -55,6 +57,7 @@ pub(super) fn build_capabilities(
         property_coverage,
         property_partial,
         opaque_property_values,
+        incomplete_property_values,
         graph_coverage,
         graph_partial_reason,
         rigvm_adapter,
@@ -110,14 +113,20 @@ pub(super) fn build_capabilities(
                 AnalysisStatus::Complete
             },
             detail: property_partial.then(|| {
-                format!(
+                let mut detail = format!(
                     "{}/{} non-empty exports have complete tagged-property coverage ({} not a tagged payload, {} failed partway); {} property value(s) retained opaque",
                     property_coverage.exports_complete,
                     property_coverage.exports_total,
                     property_coverage.exports_not_tagged,
                     property_coverage.exports_failed,
                     opaque_property_values
-                )
+                );
+                if incomplete_property_values > 0 {
+                    detail.push_str(&format!(
+                        "; {incomplete_property_values} property value(s) left bytes undecoded"
+                    ));
+                }
+                detail
             }),
         });
     }

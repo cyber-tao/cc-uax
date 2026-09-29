@@ -1094,13 +1094,17 @@ fn complete_type_name_byte_array_is_read_as_bytes_without_probing() {
 
     let parse = parse_legacy_container(&d, &ctx);
 
-    let value = &parse.entries[0].value;
-    assert_eq!(value[0].as_i64(), Some(5));
+    // Read as plain bytes (one element), the window is left 7 bytes short; a
+    // container of fixed-width elements must fill it, so the value is opaque
+    // rather than a byte array with a trailing warning.
+    let opaque = parse.entries[0].value.as_opaque().expect("opaque value");
+    assert_eq!(opaque.reason, OpaqueReason::ValueUnderconsumed);
+    assert_eq!(opaque.byte_range.size, 12);
     assert!(
         parse
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "property_value_incomplete"),
+            .any(|diagnostic| diagnostic.code == "property_value_fallback"),
         "{:#?}",
         parse.diagnostics
     );

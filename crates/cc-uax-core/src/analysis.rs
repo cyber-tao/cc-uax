@@ -156,8 +156,17 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         .iter()
         .filter(|region| region.kind == KnownOpaqueKind::PropertyValue)
         .count();
-    let property_partial =
-        property_coverage.is_partial() || overridable_serialization || opaque_property_values > 0;
+    // A value that stopped short of its declared window kept its decoded
+    // evidence, but the capability cannot call the properties complete while
+    // bytes of a window went unread. Nested ones are re-rooted into `diagnostics`.
+    let incomplete_property_values = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "property_value_incomplete")
+        .count();
+    let property_partial = property_coverage.is_partial()
+        || overridable_serialization
+        || opaque_property_values > 0
+        || incomplete_property_values > 0;
     let graph_partial_reason = graph_coverage.partial_reason(&graphs);
 
     let capabilities = build_capabilities(
@@ -170,6 +179,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
             property_coverage: &property_coverage,
             property_partial,
             opaque_property_values,
+            incomplete_property_values,
             graph_coverage: &graph_coverage,
             graph_partial_reason,
             rigvm_adapter: &rigvm_adapter,
