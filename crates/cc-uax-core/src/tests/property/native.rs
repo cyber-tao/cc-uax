@@ -3117,3 +3117,468 @@ fn explicit_transform_variants_keep_their_binary_layout() {
     );
     assert_eq!(parse.entries[0].value["scale3d"]["z"].as_f64(), Some(9.0));
 }
+
+// ---- Animation native structs -------------------------------------------------
+
+/// Name table shared by the animation struct tests; `struct_name` sits at 2.
+fn anim_names(struct_name: &str) -> NameMap {
+    NameMap {
+        names: [
+            "Prop",                                   // 0
+            "StructProperty",                         // 1
+            struct_name,                              // 2
+            "None",                                   // 3
+            "Idle",                                   // 4
+            "Spine",                                  // 5
+            "/Script/Engine.FloatAnimationAttribute", // 6
+            "/Script/Engine",                         // 7
+            "FloatAnimationAttribute",                // 8
+            "Value",                                  // 9
+            "FloatProperty",                          // 10
+            "Foo",                                    // 11
+            "IntProperty",                            // 12
+            "MapProperty",                            // 13
+            "AttributeCurves",                        // 14
+            "AnimationAttributeIdentifier",           // 15
+            "AttributeCurve",                         // 16
+        ]
+        .iter()
+        .map(|name| name.to_string())
+        .collect(),
+    }
+}
+
+/// Decodes `value` as the struct at name index 2, in the tag layout the package
+/// version implies: a legacy tag below 1012, a flagged complete-type-name tag from it.
+fn parse_anim_struct_value(
+    struct_name: &str,
+    file_version_ue4: i32,
+    file_version_ue5: i32,
+    serialization: SerializationPolicy,
+    soft_object_paths: &[crate::DecodedValue],
+    value: &[u8],
+) -> PropertyParse {
+    let names = anim_names(struct_name);
+    let data = if file_version_ue5 >= crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME {
+        build_struct_property(2, 3, value)
+    } else {
+        let mut d = Vec::new();
+        push_legacy_tag_header(&mut d, 0, 1, value.len() as i32);
+        push_raw_name(&mut d, 2);
+        push_guid(&mut d, 0, 0, 0, 0);
+        push_legacy_tag_tail(&mut d, file_version_ue5);
+        d.extend_from_slice(value);
+        push_raw_name(&mut d, 3);
+        d
+    };
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths,
+        soft_object_paths_unavailable: false,
+        serialization,
+        file_version_ue4,
+        file_version_ue5,
+        nested_diagnostics: Default::default(),
+    };
+    let mut reader = Reader::new(&data);
+    parse_properties_report(&mut reader, &ctx, data.len() as u64, "/test")
+}
+
+fn push_bulk_array(v: &mut Vec<u8>, element_bytes: i32, count: i32, data_bytes: usize) {
+    push_i32(v, element_bytes);
+    push_i32(v, count);
+    v.extend(std::iter::repeat_n(0x11u8, data_bytes));
+}
+
+fn raw_track_policy(release_stream: i32) -> SerializationPolicy {
+    SerializationPolicy {
+        ue5_release_stream_version: release_stream,
+        ..Default::default()
+    }
+}
+
+fn raw_track_payload() -> Vec<u8> {
+    let mut v = Vec::new();
+    push_bulk_array(&mut v, 12, 2, 24);
+    push_bulk_array(&mut v, 16, 1, 16);
+    push_bulk_array(&mut v, 12, 2, 24);
+    v
+}
+
+#[test]
+fn raw_anim_sequence_track_reports_key_counts_and_consumes_its_window() {
+    let parse = parse_anim_struct_value(
+        "RawAnimSequenceTrack",
+        crate::version::ue4::HIGHEST,
+        crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        raw_track_policy(crate::version::custom::UE5_RELEASE_RAW_ANIM_SEQUENCE_TRACK_SERIALIZER),
+        &[],
+        &raw_track_payload(),
+    );
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v["@struct"].as_str(), Some("RawAnimSequenceTrack"));
+    assert_eq!(v["serialization"].as_str(), Some("bulk"));
+    assert_eq!(v["pos_keys"].as_i64(), Some(2));
+    assert_eq!(v["rot_keys"].as_i64(), Some(1));
+    assert_eq!(v["scale_keys"].as_i64(), Some(2));
+}
+
+#[test]
+fn raw_anim_sequence_track_without_scale_keys_before_nonuniform_scale() {
+    let mut payload = Vec::new();
+    push_bulk_array(&mut payload, 12, 1, 12);
+    push_bulk_array(&mut payload, 16, 1, 16);
+    let parse = parse_anim_struct_value(
+        "RawAnimSequenceTrack",
+        crate::version::ue4::ANIM_SUPPORT_NONUNIFORM_SCALE_ANIMATION - 1,
+        crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        raw_track_policy(crate::version::custom::UE5_RELEASE_RAW_ANIM_SEQUENCE_TRACK_SERIALIZER),
+        &[],
+        &payload,
+    );
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    assert_eq!(parse.entries[0].value["pos_keys"].as_i64(), Some(1));
+    assert_eq!(parse.entries[0].value["scale_keys"].as_i64(), Some(0));
+}
+
+#[test]
+fn raw_anim_sequence_track_is_tagged_below_the_serializer_version() {
+    let mut block = Vec::new();
+    push_raw_name(&mut block, 11); // Foo
+    push_raw_name(&mut block, 12); // IntProperty
+    push_i32(&mut block, 0);
+    push_i32(&mut block, 4);
+    block.push(0);
+    push_i32(&mut block, 5);
+    push_raw_name(&mut block, 3);
+    for version in [
+        crate::version::custom::UE5_RELEASE_RAW_ANIM_SEQUENCE_TRACK_SERIALIZER - 1,
+        -1,
+    ] {
+        let parse = parse_anim_struct_value(
+            "RawAnimSequenceTrack",
+            crate::version::ue4::HIGHEST,
+            crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+            raw_track_policy(version),
+            &[],
+            &block,
+        );
+
+        assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+        let v = &parse.entries[0].value;
+        assert_eq!(v["@struct"].as_str(), Some("RawAnimSequenceTrack"));
+        assert!(v.get("serialization").is_none());
+        assert_eq!(v["properties"][0]["value"].as_i64(), Some(5));
+    }
+}
+
+#[test]
+fn raw_anim_sequence_track_rejects_a_wrong_element_size_and_truncation() {
+    let serializer = crate::version::custom::UE5_RELEASE_RAW_ANIM_SEQUENCE_TRACK_SERIALIZER;
+    let mut wrong_size = Vec::new();
+    push_bulk_array(&mut wrong_size, 16, 1, 16); // PosKeys are 12-byte FVector3f
+    let mut truncated = Vec::new();
+    push_bulk_array(&mut truncated, 12, 2, 12); // two keys declared, one present
+    for payload in [wrong_size, truncated] {
+        let parse = parse_anim_struct_value(
+            "RawAnimSequenceTrack",
+            crate::version::ue4::HIGHEST,
+            crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+            raw_track_policy(serializer),
+            &[],
+            &payload,
+        );
+
+        assert!(
+            parse.entries[0].value.is_opaque(),
+            "{:#?}",
+            parse.entries[0].value
+        );
+    }
+}
+
+fn smart_name_payload(uid: Option<u16>, with_guid: bool) -> Vec<u8> {
+    let mut v = Vec::new();
+    push_raw_name(&mut v, 4); // Idle
+    if let Some(uid) = uid {
+        push_u16(&mut v, uid);
+    }
+    if with_guid {
+        push_guid(&mut v, 1, 2, 3, 4);
+    }
+    v
+}
+
+#[test]
+fn smart_name_uid_and_guid_follow_the_anim_phys_version() {
+    use crate::version::custom::{
+        ANIM_PHYS_REMOVE_UID_FROM_SMART_NAME_SERIALIZE as REMOVE_UID,
+        ANIM_PHYS_SMART_NAME_REFACTOR_FOR_DETERMINISTIC_COOKING as REFACTOR,
+    };
+    // (AnimPhys version, UID present, GUID present)
+    let cases = [
+        (REMOVE_UID - 1, true, true),
+        (REMOVE_UID, false, true),
+        (REFACTOR - 1, false, true),
+        (REFACTOR, false, false),
+        (-1, true, true),
+    ];
+    for (version, has_uid, has_guid) in cases {
+        let parse = parse_anim_struct_value(
+            "SmartName",
+            crate::version::ue4::HIGHEST,
+            crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+            SerializationPolicy {
+                anim_phys_version: version,
+                ..Default::default()
+            },
+            &[],
+            &smart_name_payload(has_uid.then_some(7), has_guid),
+        );
+
+        assert!(
+            parse.diagnostics.is_empty(),
+            "version {version}: {:#?}",
+            parse.diagnostics
+        );
+        let v = &parse.entries[0].value;
+        assert_eq!(
+            v["@struct"].as_str(),
+            Some("SmartName"),
+            "version {version}"
+        );
+        assert_eq!(
+            v["display_name"].as_str(),
+            Some("Idle"),
+            "version {version}"
+        );
+        assert_eq!(v["uid"].as_i64(), has_uid.then_some(7), "version {version}");
+    }
+}
+
+#[test]
+fn smart_name_truncated_before_its_guid_fails() {
+    let parse = parse_anim_struct_value(
+        "SmartName",
+        crate::version::ue4::HIGHEST,
+        crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        SerializationPolicy::default(),
+        &[],
+        &smart_name_payload(Some(7), false),
+    );
+
+    assert!(parse.entries[0].value.is_opaque());
+}
+
+fn attribute_identifier_head(v: &mut Vec<u8>) {
+    push_raw_name(v, 4); // Name
+    push_raw_name(v, 5); // BoneName
+    push_i32(v, 3); // BoneIndex
+}
+
+#[test]
+fn animation_attribute_identifier_reads_an_inline_soft_path() {
+    let mut payload = Vec::new();
+    attribute_identifier_head(&mut payload);
+    push_raw_name(&mut payload, 6); // pre-1007: one FName for the whole asset path
+    push_i32(&mut payload, 0); // empty sub path
+    let parse = parse_anim_struct_value(
+        "AnimationAttributeIdentifier",
+        crate::version::ue4::HIGHEST,
+        crate::version::ue5::LARGE_WORLD_COORDINATES,
+        SerializationPolicy::default(),
+        &[],
+        &payload,
+    );
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v["name"].as_str(), Some("Idle"));
+    assert_eq!(v["bone_name"].as_str(), Some("Spine"));
+    assert_eq!(v["bone_index"].as_i64(), Some(3));
+    assert_eq!(
+        v["script_struct_path"]["asset_path"].as_str(),
+        Some("/Script/Engine.FloatAnimationAttribute")
+    );
+}
+
+#[test]
+fn animation_attribute_identifier_reads_a_soft_path_list_index() {
+    let mut payload = Vec::new();
+    attribute_identifier_head(&mut payload);
+    push_i32(&mut payload, 0); // index into the package's soft object path list
+    let paths = [crate::structured_value::json!({
+        "asset_path": "/Script/Engine.FloatAnimationAttribute"
+    })];
+    let parse = parse_anim_struct_value(
+        "AnimationAttributeIdentifier",
+        crate::version::ue4::HIGHEST,
+        crate::version::ue5::DATA_RESOURCES,
+        SerializationPolicy::default(),
+        &paths,
+        &payload,
+    );
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    assert_eq!(
+        parse.entries[0].value["script_struct_path"]["asset_path"].as_str(),
+        Some("/Script/Engine.FloatAnimationAttribute")
+    );
+}
+
+fn push_float_attribute_block(v: &mut Vec<u8>, value: f32) {
+    push_raw_name(v, 9); // Value
+    push_raw_name(v, 10); // FloatProperty
+    push_i32(v, 0);
+    push_i32(v, 4);
+    v.push(0);
+    push_f32(v, value);
+    push_raw_name(v, 3); // None
+}
+
+fn push_float_attribute_path(v: &mut Vec<u8>) {
+    push_raw_name(v, 7); // /Script/Engine
+    push_raw_name(v, 8); // FloatAnimationAttribute
+    push_i32(v, 0); // empty sub path
+}
+
+fn attribute_curve_payload() -> Vec<u8> {
+    let mut v = Vec::new();
+    push_i32(&mut v, 2);
+    push_f32(&mut v, 0.5);
+    push_f32(&mut v, 1.5);
+    push_float_attribute_path(&mut v);
+    push_float_attribute_block(&mut v, 2.0);
+    push_float_attribute_block(&mut v, 4.0);
+    v
+}
+
+#[test]
+fn attribute_curve_reads_a_tagged_value_per_key() {
+    let parse = parse_anim_struct_value(
+        "AttributeCurve",
+        crate::version::ue4::HIGHEST,
+        crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        SerializationPolicy::default(),
+        &[],
+        &attribute_curve_payload(),
+    );
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v["@struct"].as_str(), Some("AttributeCurve"));
+    assert_eq!(
+        v["script_struct"]["asset_path"].as_str(),
+        Some("/Script/Engine.FloatAnimationAttribute")
+    );
+    assert_eq!(v["keys"][0]["time"].as_f64(), Some(0.5));
+    assert_eq!(
+        v["keys"][0]["value"]["@struct"].as_str(),
+        Some("FloatAnimationAttribute")
+    );
+    assert_eq!(
+        v["keys"][0]["value"]["properties"][0]["value"].as_f64(),
+        Some(2.0)
+    );
+    assert_eq!(v["keys"][1]["time"].as_f64(), Some(1.5));
+    assert_eq!(
+        v["keys"][1]["value"]["properties"][0]["value"].as_f64(),
+        Some(4.0)
+    );
+}
+
+#[test]
+fn attribute_curve_with_a_null_path_has_keys_and_no_values() {
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 2);
+    push_f32(&mut payload, 0.5);
+    push_f32(&mut payload, 1.5);
+    push_raw_name(&mut payload, 3); // package None
+    push_raw_name(&mut payload, 3); // asset None
+    push_i32(&mut payload, 0);
+    let parse = parse_anim_struct_value(
+        "AttributeCurve",
+        crate::version::ue4::HIGHEST,
+        crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        SerializationPolicy::default(),
+        &[],
+        &payload,
+    );
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let v = &parse.entries[0].value;
+    assert_eq!(v["keys"].as_array().unwrap().len(), 2);
+    assert!(v["keys"][0]["value"].is_null());
+    assert!(v["keys"][1]["value"].is_null());
+}
+
+#[test]
+fn attribute_curve_with_a_truncated_second_value_fails() {
+    let mut payload = attribute_curve_payload();
+    payload.truncate(payload.len() - 6); // cut into the second block's value
+    let parse = parse_anim_struct_value(
+        "AttributeCurve",
+        crate::version::ue4::HIGHEST,
+        crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        SerializationPolicy::default(),
+        &[],
+        &payload,
+    );
+
+    assert!(parse.entries[0].value.is_opaque());
+}
+
+#[test]
+fn a_legacy_attribute_curves_map_decodes_end_to_end() {
+    let ue5 = 1009;
+    let names = anim_names("unused");
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0); // NumToRemove
+    push_i32(&mut payload, 1); // Num
+    // Key: FAnimationAttributeIdentifier with a two-name soft path (>= 1007).
+    attribute_identifier_head(&mut payload);
+    push_float_attribute_path(&mut payload);
+    // Value: FAttributeCurve with one key whose value is a legacy tagged block.
+    push_i32(&mut payload, 1);
+    push_f32(&mut payload, 0.25);
+    push_float_attribute_path(&mut payload);
+    push_legacy_tag_header(&mut payload, 9, 10, 4); // Value: FloatProperty
+    push_legacy_tag_tail(&mut payload, ue5);
+    push_f32(&mut payload, 3.0);
+    push_raw_name(&mut payload, 3); // None
+
+    let mut d = Vec::new();
+    push_legacy_tag_header(&mut d, 14, 13, payload.len() as i32); // AttributeCurves: MapProperty
+    push_raw_name(&mut d, 1); // key type StructProperty (no struct name)
+    push_raw_name(&mut d, 1); // value type StructProperty (no struct name)
+    d.push(0); // HasPropertyGuid
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 3);
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
+        serialization: SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: ue5,
+        nested_diagnostics: Default::default(),
+    };
+    let mut reader = Reader::new(&d);
+
+    let parse = parse_properties_report(&mut reader, &ctx, d.len() as u64, "/test");
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let entry = &parse.entries[0].value[0];
+    assert_eq!(entry["key"]["name"].as_str(), Some("Idle"));
+    assert_eq!(
+        entry["value"]["keys"][0]["value"]["properties"][0]["value"].as_f64(),
+        Some(3.0)
+    );
+}

@@ -39,6 +39,9 @@ pub mod ue4 {
     /// tag records its element's property type (PropertyTag.cpp).
     pub const ARRAY_PROPERTY_INNER_TAGS: i32 = 282;
     pub const CHANGED_CHUNKID_TO_BE_AN_ARRAY_OF_CHUNKIDS: i32 = 326;
+    /// `VER_UE4_ANIM_SUPPORT_NONUNIFORM_SCALE_ANIMATION`: from here
+    /// `FRawAnimSequenceTrack` writes a third `ScaleKeys` array (AnimTypes.h).
+    pub const ANIM_SUPPORT_NONUNIFORM_SCALE_ANIMATION: i32 = 335;
     pub const ENGINE_VERSION_OBJECT: i32 = 336;
     pub const LOAD_FOR_EDITOR_GAME: i32 = 365;
     pub const ADD_STRING_ASSET_REFERENCES_MAP: i32 = 384;
@@ -82,6 +85,7 @@ pub struct SerializationPolicy {
     pub property_bag_version: i32,
     pub ue5_release_stream_version: i32,
     pub editor_version: i32,
+    pub anim_phys_version: i32,
 }
 
 impl Default for SerializationPolicy {
@@ -95,6 +99,7 @@ impl Default for SerializationPolicy {
             property_bag_version: -1,
             ue5_release_stream_version: -1,
             editor_version: -1,
+            anim_phys_version: -1,
         }
     }
 }
@@ -126,6 +131,9 @@ pub mod custom {
     /// FEditorObjectVersion, which gates the package MetaData root map.
     pub const EDITOR_OBJECT_VERSION: Guid =
         Guid([0xE4B0_68ED, 0xF494_42E9, 0xA231_DA0B, 0x2E46_BB41]);
+    /// FAnimPhysObjectVersion (DevObjectVersion.cpp), which gates `FSmartName`.
+    pub const ANIM_PHYS_OBJECT_VERSION: Guid =
+        Guid([0x29E5_75DD, 0xE0A3_4627, 0x9D10_D276, 0x232C_DCEA]);
     /// FCoreObjectVersion, which gates `UStruct`'s `ChildProperties` block.
     pub const CORE_OBJECT_VERSION: Guid =
         Guid([0x375E_C13C, 0x06E4_48FB, 0xB500_84F0, 0x262A_717E]);
@@ -203,6 +211,16 @@ pub mod custom {
     /// FFortniteMainBranchObjectVersion::AddDevNotesToFText — UE5.8 editor Base
     /// FText history appends an extra FString when not FilterEditorOnly.
     pub const ADD_DEV_NOTES_TO_FTEXT: i32 = 260;
+    /// FAnimPhysObjectVersion::RemoveUIDFromSmartNameSerialize — before it,
+    /// `FSmartName::Serialize` writes a `uint16` UID after the display name.
+    pub const ANIM_PHYS_REMOVE_UID_FROM_SMART_NAME_SERIALIZE: i32 = 5;
+    /// FAnimPhysObjectVersion::SmartNameRefactorForDeterministicCooking — before
+    /// it, `FSmartName::Serialize` writes an `FGuid` after the UID field.
+    pub const ANIM_PHYS_SMART_NAME_REFACTOR_FOR_DETERMINISTIC_COOKING: i32 = 10;
+    /// FUE5ReleaseStreamObjectVersion::RawAnimSequenceTrackSerializer — from this
+    /// version on `FRawAnimSequenceTrack::Serialize` writes bulk arrays instead of
+    /// returning false for tagged serialization.
+    pub const UE5_RELEASE_RAW_ANIM_SEQUENCE_TRACK_SERIALIZER: i32 = 39;
 }
 
 pub const PACKAGE_FILE_TAG: u32 = 0x9E2A_83C1;
