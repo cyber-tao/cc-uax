@@ -188,6 +188,11 @@ pub struct AssetAnalysisSummary {
     /// acceptance signal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_version_ue5: Option<i32>,
+    /// `FileVersionUE4` of a UE4-format package (`FileVersionUE5` = 0) whose linker
+    /// reference tables were read although its properties are out of scope. Absent
+    /// for every other package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_version_ue4: Option<i32>,
     /// Why this mapped package carries no decoded evidence at all: it is a real
     /// package that the parser deliberately does not target (see
     /// `cc_uax_core::PackageRejection::OutOfScope`). Absent for parsed packages,
@@ -224,6 +229,7 @@ impl AssetAnalysisSummary {
             status: AnalysisStatus::Unsupported,
             // Nothing was parsed, so there is no version to report.
             file_version_ue5: None,
+            file_version_ue4: None,
             unsupported_reason: Some(reason.into()),
             coverage: ParseCoverage::default(),
             capabilities: Vec::new(),
@@ -234,6 +240,27 @@ impl AssetAnalysisSummary {
             diagnostics: AnalysisDiagnosticSummary::default(),
             known_opaque: KnownOpaqueSummary::default(),
             reference_evidence: None,
+        }
+    }
+
+    /// Summary for a UE4-format package (`FileVersionUE5` = 0) the analysis does not
+    /// target but whose linker reference tables were read. It stays `unsupported`,
+    /// and says what evidence it does carry.
+    pub(crate) fn unsupported_with_reference_tables(
+        reason: impl Into<String>,
+        file_version_ue4: i32,
+    ) -> Self {
+        Self {
+            file_version_ue4: Some(file_version_ue4),
+            capabilities: vec![CapabilitySummary {
+                kind: CapabilityKind::ReferenceTables,
+                status: AnalysisStatus::Complete,
+                detail: Some(
+                    "UE4-format package: linker reference tables were read; properties and graphs are not analysed"
+                        .to_string(),
+                ),
+            }],
+            ..Self::unsupported(reason)
         }
     }
 
@@ -286,6 +313,7 @@ impl AssetAnalysisSummary {
         Self {
             status: analysis.status,
             file_version_ue5: Some(analysis.summary.file_version_ue5),
+            file_version_ue4: None,
             unsupported_reason: None,
             coverage: analysis.coverage.clone(),
             capabilities: analysis
@@ -583,6 +611,12 @@ pub struct ProjectAnalysisSummary {
     /// however complete it looks.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub file_versions: BTreeMap<i32, usize>,
+    /// How many unsupported UE4-format packages (`FileVersionUE5` = 0) whose
+    /// reference tables were read carried each `FileVersionUE4`, keyed by version.
+    /// `file_versions` counts only parsed UE5 packages, so this is the version
+    /// spread of the packages that contribute reference edges but nothing else.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ue4_file_versions: BTreeMap<i32, usize>,
     pub coverage: ParseCoverage,
 }
 
@@ -606,6 +640,7 @@ impl ProjectAnalysisSummary {
             grouped_opaque_bytes: 0,
             grouped_opaque_value_bytes: 0,
             file_versions: BTreeMap::new(),
+            ue4_file_versions: BTreeMap::new(),
             coverage: ParseCoverage::default(),
         };
         let mut capability_counts: BTreeMap<CapabilityKind, ProjectCapabilityCount> =
@@ -649,6 +684,9 @@ impl ProjectAnalysisSummary {
             }
             if let Some(version) = summary.file_version_ue5 {
                 *aggregate.file_versions.entry(version).or_default() += 1;
+            }
+            if let Some(version) = summary.file_version_ue4 {
+                *aggregate.ue4_file_versions.entry(version).or_default() += 1;
             }
             if let Some(evidence) = &summary.reference_evidence {
                 let totals = &mut aggregate.reference_evidence;

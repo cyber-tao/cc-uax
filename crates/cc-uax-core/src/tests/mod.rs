@@ -1,6 +1,7 @@
 mod analysis;
 mod common;
 mod end_to_end;
+mod legacy;
 mod model;
 mod package;
 mod pin;

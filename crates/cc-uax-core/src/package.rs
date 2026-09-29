@@ -9,7 +9,7 @@ use crate::property::read_soft_object_path;
 use crate::reader::{FSTRING_LENGTH_BYTES, RAW_NAME_BYTES, Reader, seek_to_table};
 use crate::structured_value::{Value, json};
 use crate::summary::PackageFileSummary;
-use crate::version::ue5;
+use crate::version::{ue4, ue5};
 use anyhow::Result;
 
 /// Maximum outer-chain depth when resolving a full object name; guards against
@@ -73,6 +73,7 @@ impl Package {
             &names,
             summary.soft_package_references_offset,
             summary.soft_package_references_count,
+            ue4,
         );
 
         let mut package = Package {
@@ -318,21 +319,31 @@ fn read_name_string_map(r: &mut Reader, names: &NameMap, end: u64) -> Result<Val
     Ok(Value::Object(map))
 }
 
-/// The SoftPackageReferences header table: one FName package name per entry
-/// (written by SavePackage from FLinkerSave::SoftPackageReferenceList).
+/// The SoftPackageReferences header table (written by SavePackage from
+/// FLinkerSave::SoftPackageReferenceList), read the way
+/// `FPackageReader::SerializeSoftPackageReferenceList` reads it: one FName package
+/// name per entry from `VER_UE4_ADDED_SOFT_OBJECT_PATH`, an FString before it, and
+/// before `VER_UE4_KEEP_ONLY_PACKAGE_NAMES_IN_STRING_ASSET_REFERENCES_MAP` that
+/// FString is an object path that is reduced to its package name.
 pub(crate) fn parse_soft_package_references(
     r: &mut Reader,
     names: &NameMap,
     offset: i32,
     count: i32,
+    file_version_ue4: i32,
 ) -> (Vec<String>, Option<String>) {
     let mut out = Vec::new();
+    let as_names = file_version_ue4 >= ue4::ADDED_SOFT_OBJECT_PATH;
     match seek_to_table(
         r,
         "soft package reference table",
         offset,
         count,
-        RAW_NAME_BYTES,
+        if as_names {
+            RAW_NAME_BYTES
+        } else {
+            FSTRING_LENGTH_BYTES
+        },
     ) {
         Ok(true) => {}
         Ok(false) => return (out, None),
@@ -340,8 +351,19 @@ pub(crate) fn parse_soft_package_references(
     }
     out.reserve(count as usize);
     for i in 0..count {
-        match r.read_raw_name() {
-            Ok(raw) => out.push(names.resolve_raw(raw)),
+        let entry = if as_names {
+            r.read_raw_name().map(|raw| names.resolve_raw(raw))
+        } else {
+            r.read_fstring().map(|path| {
+                if file_version_ue4 >= ue4::KEEP_ONLY_PACKAGE_NAMES_IN_STRING_ASSET_REFERENCES_MAP {
+                    path
+                } else {
+                    normalize_legacy_soft_reference(&path)
+                }
+            })
+        };
+        match entry {
+            Ok(reference) => out.push(reference),
             Err(err) => {
                 return (
                     out,
@@ -356,4 +378,16 @@ pub(crate) fn parse_soft_package_references(
         }
     }
     (out, None)
+}
+
+/// Reduces a pre-`KEEP_ONLY_PACKAGE_NAMES` soft reference to its package name:
+/// `Class'/Game/A/B.B'` and `/Game/A/B.B:Sub` both become `/Game/A/B`. An entry
+/// that names no mount-rooted package becomes empty, which the reference
+/// builders drop.
+fn normalize_legacy_soft_reference(path: &str) -> String {
+    let unquoted = match (path.find('\''), path.rfind('\'')) {
+        (Some(open), Some(close)) if close > open => &path[open + 1..close],
+        _ => path,
+    };
+    crate::references::package_path_from_object_path(unquoted).unwrap_or_default()
 }

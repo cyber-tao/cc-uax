@@ -2,6 +2,7 @@ mod analysis;
 mod decode;
 mod diagnostic;
 mod graph_models;
+mod legacy;
 mod model;
 mod name;
 mod object;
@@ -18,6 +19,7 @@ mod version;
 
 pub use analysis::PackageView;
 pub use graph_models::*;
+pub use legacy::{LegacyPackageReferences, read_legacy_package_references};
 pub use model::*;
 pub use references::{collect_package_paths_from_value, package_path_from_object_path};
 pub use rejection::{PackageParseError, PackageRejection};

@@ -8,7 +8,8 @@ use crate::graph_models::LogicGraph;
 use crate::model::{
     AssetExport, AssetReferences, DecodedValue, ReferenceEvidence, ReferenceEvidenceSources,
 };
-use crate::package::Package;
+use crate::name::NameMap;
+use crate::object::ObjectImport;
 use std::collections::BTreeSet;
 
 const PACKAGE_CLASS_NAME: &str = "Package";
@@ -22,14 +23,32 @@ const ASSET_PATH_KEY: &str = "asset_path";
 /// never contribute a package.
 const BYTECODE_FUNCTION_NAME_KIND: &str = "function_name";
 
-impl Package {
-    pub(crate) fn import_class_object_names(&self) -> impl Iterator<Item = (String, String)> + '_ {
-        self.imports.iter().map(|import| {
-            (
-                self.names.resolve_raw(import.class_name),
-                self.names.resolve_raw(import.object_name),
-            )
-        })
+/// The reference tables of one package as the report carries them: the packages
+/// its import table names, split into assets and `/Script/` modules, plus its
+/// soft package references. The UE5 pipeline and the UE4-format reader both build
+/// their result here so the two cannot classify differently.
+pub(crate) fn asset_references(
+    names: &NameMap,
+    imports: &[ObjectImport],
+    soft_package_references: &[String],
+) -> AssetReferences {
+    let (assets, scripts) = collect_package_references(imports.iter().map(|import| {
+        (
+            names.resolve_raw(import.class_name),
+            names.resolve_raw(import.object_name),
+        )
+    }));
+    let soft = soft_package_references
+        .iter()
+        .filter(|reference| !reference.is_empty() && reference.as_str() != "None")
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    AssetReferences {
+        assets,
+        scripts,
+        soft,
     }
 }
 

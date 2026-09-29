@@ -33,6 +33,8 @@ pub mod ue5 {
 pub mod ue4 {
     // Values are `EUnrealEngineObjectUE4Version` (ObjectVersion.h), counted from
     // `VER_UE4_OLDEST_LOADABLE_PACKAGE = 214`.
+    /// `VER_UE4_OLDEST_LOADABLE_PACKAGE`: UE refuses to load anything older.
+    pub const OLDEST_LOADABLE_PACKAGE: i32 = 214;
     pub const WORLD_LEVEL_INFO: i32 = 224;
     pub const ADDED_CHUNKID_TO_ASSETDATA_AND_UPACKAGE: i32 = 278;
     /// `VAR_UE4_ARRAY_PROPERTY_INNER_TAGS` (sic): from here a legacy `ArrayProperty`
@@ -45,6 +47,10 @@ pub mod ue4 {
     pub const ENGINE_VERSION_OBJECT: i32 = 336;
     pub const LOAD_FOR_EDITOR_GAME: i32 = 365;
     pub const ADD_STRING_ASSET_REFERENCES_MAP: i32 = 384;
+    /// `VER_UE4_KEEP_ONLY_PACKAGE_NAMES_IN_STRING_ASSET_REFERENCES_MAP`: before it,
+    /// a soft package reference is an object path, normalised to its package name
+    /// when read (`FPackageReader::SerializeSoftPackageReferenceList`).
+    pub const KEEP_ONLY_PACKAGE_NAMES_IN_STRING_ASSET_REFERENCES_MAP: i32 = 484;
     pub const STRUCT_GUID_IN_PROPERTY_TAG: i32 = 441;
     pub const PACKAGE_SUMMARY_HAS_COMPATIBLE_ENGINE_VERSION: i32 = 444;
     pub const SERIALIZE_TEXT_IN_PACKAGES: i32 = 459;

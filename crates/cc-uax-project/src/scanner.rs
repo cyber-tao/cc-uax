@@ -168,6 +168,17 @@ impl ProjectScanner {
                         }
                     }
                     CachedParse::Unsupported => {
+                        // A row that carries its summary replays exactly what the
+                        // cold scan recorded, including the references of a
+                        // UE4-format package; one without falls back to the reason.
+                        let analysis = entry.analysis.clone().unwrap_or_else(|| {
+                            AssetAnalysisSummary::unsupported(
+                                entry
+                                    .reason
+                                    .clone()
+                                    .unwrap_or_else(unsupported_package_fallback_reason),
+                            )
+                        });
                         let record = AssetRecord {
                             package_path,
                             mount_root: file.package_root,
@@ -175,15 +186,10 @@ impl ProjectScanner {
                             relative_path: file.relative_path.clone(),
                             asset_kind,
                             ownership: classify_ownership(&file.relative_path),
-                            forward_references: BTreeSet::new(),
+                            forward_references: entry.references.iter().cloned().collect(),
                             value_references: BTreeSet::new(),
                             owned_sublevels: BTreeSet::new(),
-                            analysis: AssetAnalysisSummary::unsupported(
-                                entry
-                                    .reason
-                                    .clone()
-                                    .unwrap_or_else(unsupported_package_fallback_reason),
-                            ),
+                            analysis,
                         };
                         steps.push(ScanStep::settled(
                             SettledStep::record(record)
@@ -293,7 +299,20 @@ impl ProjectScanner {
                 // A package the parser deliberately does not target is truthful
                 // `unsupported` evidence about a real asset, not a scan failure,
                 // so it is indexed instead of aborting a strict scan.
-                Err(ParseFileError::Unsupported(message)) => {
+                Err(ParseFileError::Unsupported { reason, legacy }) => {
+                    let (references, analysis) = match legacy {
+                        Some(tables) => (
+                            tables.references,
+                            AssetAnalysisSummary::unsupported_with_reference_tables(
+                                reason.clone(),
+                                tables.file_version_ue4,
+                            ),
+                        ),
+                        None => (
+                            Vec::new(),
+                            AssetAnalysisSummary::unsupported(reason.clone()),
+                        ),
+                    };
                     if caching {
                         current_cache.insert(
                             cache_key.clone(),
@@ -301,10 +320,10 @@ impl ProjectScanner {
                                 mtime,
                                 size,
                                 parse: CachedParse::Unsupported,
-                                references: Vec::new(),
+                                references: references.clone(),
                                 owned_sublevels: Vec::new(),
-                                analysis: None,
-                                reason: Some(message.clone()),
+                                analysis: Some(analysis.clone()),
+                                reason: Some(reason),
                             },
                         );
                     }
@@ -315,10 +334,10 @@ impl ProjectScanner {
                         relative_path: file.relative_path.clone(),
                         asset_kind,
                         ownership: classify_ownership(&file.relative_path),
-                        forward_references: BTreeSet::new(),
+                        forward_references: references.into_iter().collect(),
                         value_references: BTreeSet::new(),
                         owned_sublevels: BTreeSet::new(),
-                        analysis: AssetAnalysisSummary::unsupported(message),
+                        analysis,
                     });
                     continue;
                 }
@@ -1149,7 +1168,18 @@ enum ParseFileError {
     Parse(String),
     /// A readable package the parser deliberately does not target. Not a failure:
     /// the asset is indexed as `unsupported` evidence.
-    Unsupported(String),
+    Unsupported {
+        reason: String,
+        /// The linker reference tables, when the package is UE4-format and they
+        /// could be read.
+        legacy: Option<LegacyTables>,
+    },
+}
+
+/// Reference tables read from an unsupported UE4-format package.
+struct LegacyTables {
+    references: Vec<String>,
+    file_version_ue4: i32,
 }
 
 struct ParsedAsset {
@@ -1169,20 +1199,24 @@ fn read_asset(path: &Path) -> Result<ParsedAsset, ParseFileError> {
     let view = PackageView::parse(&data).map_err(|error| {
         let message = error.to_string();
         if error.is_out_of_scope() {
-            ParseFileError::Unsupported(message)
+            // Its properties stay out of scope, but a UE4-format package still has
+            // linker tables, and without their edges everything only it references
+            // looks unreachable.
+            let legacy = cc_uax_core::read_legacy_package_references(&data)
+                .ok()
+                .map(|legacy| LegacyTables {
+                    references: flatten_references(legacy.references),
+                    file_version_ue4: legacy.file_version_ue4,
+                });
+            ParseFileError::Unsupported {
+                reason: message,
+                legacy,
+            }
         } else {
             ParseFileError::Parse(message)
         }
     })?;
-    let references = view.references();
-    let references = references
-        .assets
-        .into_iter()
-        .chain(references.scripts)
-        .chain(references.soft)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let references = flatten_references(view.references());
     let analysis = view.analyze(AssetView::Full);
     let owned_sublevels = collect_owned_sublevels(&analysis);
     Ok(ParsedAsset {
@@ -1190,6 +1224,18 @@ fn read_asset(path: &Path) -> Result<ParsedAsset, ParseFileError> {
         owned_sublevels,
         analysis: AssetAnalysisSummary::from_analysis(&analysis),
     })
+}
+
+/// Every package a package names, as one sorted, unique list.
+fn flatten_references(references: cc_uax_core::AssetReferences) -> Vec<String> {
+    references
+        .assets
+        .into_iter()
+        .chain(references.scripts)
+        .chain(references.soft)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn collect_owned_sublevels(analysis: &AssetAnalysis) -> BTreeSet<String> {

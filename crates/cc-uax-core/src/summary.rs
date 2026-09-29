@@ -9,8 +9,23 @@ const PKG_COOKED: u32 = 0x0000_0200;
 /// `PKG_UnversionedProperties` (CoreUObject `ObjectMacros.h`, `EPackageFlags`): tagged
 /// properties are replaced by unversioned property serialization.
 const PKG_UNVERSIONED_PROPERTIES: u32 = 0x0000_2000;
-/// FCustomVersion entry on disk: 16-byte GUID + 4-byte version.
+/// FCustomVersion entry on disk (`Optimized` format): 16-byte GUID + 4-byte version.
 const CUSTOM_VERSION_ENTRY_BYTES: u64 = 20;
+/// `FEnumCustomVersion_DEPRECATED` entry: `uint32` tag + `int32` version.
+const ENUM_CUSTOM_VERSION_ENTRY_BYTES: u64 = 8;
+/// Smallest `FGuidCustomVersion_DEPRECATED` entry: GUID + version + the length
+/// of an empty friendly-name `FString`.
+const GUID_CUSTOM_VERSION_MIN_ENTRY_BYTES: u64 = 16 + 4 + FSTRING_LENGTH_BYTES;
+
+/// How much of a package the caller wants to read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SummaryScope {
+    /// The versioned UE5 editor package the analysis pipeline targets.
+    Analysis,
+    /// A UE4-format package (`FileVersionUE5` = 0) whose linker reference tables
+    /// alone are read.
+    LegacyReferences,
+}
 
 #[derive(Debug, Clone)]
 pub struct CustomVersion {
@@ -89,6 +104,10 @@ impl PackageFileSummary {
     }
 
     pub fn parse(r: &mut Reader) -> Result<Self> {
+        Self::parse_scoped(r, SummaryScope::Analysis)
+    }
+
+    pub(crate) fn parse_scoped(r: &mut Reader, scope: SummaryScope) -> Result<Self> {
         let tag = r.read_u32()?;
         if tag == PACKAGE_FILE_TAG_SWAPPED {
             return Err(out_of_scope(
@@ -132,22 +151,36 @@ impl PackageFileSummary {
                 "package is unversioned (no version info, typically a cooked package); this tool targets versioned editor assets",
             ));
         }
-        if file_version_ue5 < crate::version::SUPPORTED_FILE_VERSION_FLOOR {
-            return Err(out_of_scope(format!(
-                "unsupported package FileVersionUE5={file_version_ue5}; this tool targets UE5.0–5.8 versioned editor assets (FileVersionUE5 >= {})",
-                crate::version::SUPPORTED_FILE_VERSION_FLOOR
-            )));
-        }
-        // UE stops reading a package whose file version it does not know
-        // (PackageFileSummary.cpp bails right after FileVersionLicensee when
-        // IsFileVersionTooNew), because every field after this point may have
-        // changed. Assuming the 5.8 layout would parse the tables from the wrong
-        // offsets and still produce a report.
-        if file_version_ue5 > ue5::HIGHEST {
-            return Err(out_of_scope(format!(
-                "package FileVersionUE5={file_version_ue5} is newer than this parser understands (highest known is {})",
-                ue5::HIGHEST
-            )));
+        if scope == SummaryScope::LegacyReferences {
+            if file_version_ue5 != 0 || !(-7..=-2).contains(&legacy_file_version) {
+                return Err(out_of_scope(format!(
+                    "not a UE4-format package (LegacyFileVersion={legacy_file_version}, FileVersionUE5={file_version_ue5})"
+                )));
+            }
+            if file_version_ue4 < ue4::OLDEST_LOADABLE_PACKAGE {
+                return Err(out_of_scope(format!(
+                    "FileVersionUE4={file_version_ue4} is older than the oldest loadable package version ({})",
+                    ue4::OLDEST_LOADABLE_PACKAGE
+                )));
+            }
+        } else {
+            if file_version_ue5 < crate::version::SUPPORTED_FILE_VERSION_FLOOR {
+                return Err(out_of_scope(format!(
+                    "unsupported package FileVersionUE5={file_version_ue5}; this tool targets UE5.0–5.8 versioned editor assets (FileVersionUE5 >= {})",
+                    crate::version::SUPPORTED_FILE_VERSION_FLOOR
+                )));
+            }
+            // UE stops reading a package whose file version it does not know
+            // (PackageFileSummary.cpp bails right after FileVersionLicensee when
+            // IsFileVersionTooNew), because every field after this point may have
+            // changed. Assuming the 5.8 layout would parse the tables from the wrong
+            // offsets and still produce a report.
+            if file_version_ue5 > ue5::HIGHEST {
+                return Err(out_of_scope(format!(
+                    "package FileVersionUE5={file_version_ue5} is newer than this parser understands (highest known is {})",
+                    ue5::HIGHEST
+                )));
+            }
         }
 
         let ue4v = file_version_ue4;
@@ -161,16 +194,43 @@ impl PackageFileSummary {
 
         let mut custom_versions = Vec::new();
         if legacy_file_version <= -2 {
+            // `GetCustomVersionFormatForArchive` (PackageFileSummary.cpp): the
+            // legacy version, not the engine, selects the entry layout. UE5
+            // packages are -8/-9 and always take the optimized one.
             let count = r.read_i32()?;
-            if count < 0
-                || (count as u64).saturating_mul(CUSTOM_VERSION_ENTRY_BYTES) > r.remaining()
-            {
+            let entry_bytes = match legacy_file_version {
+                -2 => ENUM_CUSTOM_VERSION_ENTRY_BYTES,
+                -5..=-3 => GUID_CUSTOM_VERSION_MIN_ENTRY_BYTES,
+                _ => CUSTOM_VERSION_ENTRY_BYTES,
+            };
+            if count < 0 || (count as u64).saturating_mul(entry_bytes) > r.remaining() {
                 bail!("custom version count out of range: {count}");
             }
             for _ in 0..count {
-                let key = r.read_guid()?;
-                let version = r.read_i32()?;
-                custom_versions.push(CustomVersion { key, version });
+                match legacy_file_version {
+                    // FEnumCustomVersion_DEPRECATED: the GUID is invented from
+                    // three zeroes and the tag (CustomVersion.cpp).
+                    -2 => {
+                        let tag = r.read_u32()?;
+                        let version = r.read_i32()?;
+                        custom_versions.push(CustomVersion {
+                            key: Guid([0, 0, 0, tag]),
+                            version,
+                        });
+                    }
+                    // FGuidCustomVersion_DEPRECATED: the friendly name is not kept.
+                    -5..=-3 => {
+                        let key = r.read_guid()?;
+                        let version = r.read_i32()?;
+                        let _friendly_name = r.read_fstring()?;
+                        custom_versions.push(CustomVersion { key, version });
+                    }
+                    _ => {
+                        let key = r.read_guid()?;
+                        let version = r.read_i32()?;
+                        custom_versions.push(CustomVersion { key, version });
+                    }
+                }
             }
         }
 

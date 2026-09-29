@@ -1,4 +1,6 @@
-use super::common::{minimal_package, package_with_soft_refs, temp_project, ue4_package};
+use super::common::{
+    minimal_package, package_with_soft_refs, temp_project, ue4_package, ue4_package_with_soft_refs,
+};
 use crate::{
     CachePathPolicy, MountTable, ProjectIndex, ProjectLayout, ProjectScanner,
     ScanDiagnosticSeverity, ScanFailureStage, ScanMode, ScanOptions,
@@ -168,6 +170,83 @@ fn cached_out_of_scope_packages_replay_as_unsupported() {
         warm.asset("/Game/Legacy").unwrap().analysis,
         cold.asset("/Game/Legacy").unwrap().analysis,
         "a warm cache hit must reproduce the cold-run summary"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// A UE4-format package is out of scope for analysis, but its linker tables are
+// still read: without its edges everything only it references looks unreachable.
+// A warm cache must replay those edges and its summary exactly.
+#[test]
+fn ue4_format_packages_contribute_reference_edges_and_replay_from_the_cache() {
+    let root = temp_project("ue4_references");
+    std::fs::create_dir_all(root.join("Config")).unwrap();
+    std::fs::write(
+        root.join("Config/DefaultEngine.ini"),
+        "[/Script/EngineSettings.GameMapsSettings]\nGameDefaultMap=/Game/Legacy.Legacy\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Content/Legacy.uasset"),
+        ue4_package_with_soft_refs(&["/Game/Target"]),
+    )
+    .unwrap();
+    std::fs::write(root.join("Content/Target.uasset"), minimal_package()).unwrap();
+    let scanner = ProjectScanner::new(ProjectLayout::discover(&root).unwrap());
+    let options = ScanOptions {
+        mode: ScanMode::Strict,
+        cache: CachePathPolicy::CustomFile(root.join("cache/index.sqlite")),
+    };
+
+    let cold = scanner.scan(options.clone()).unwrap();
+
+    assert!(cold.failures.is_empty(), "{:#?}", cold.failures);
+    assert!(
+        cold.forward["/Game/Legacy"].contains("/Game/Target"),
+        "{:#?}",
+        cold.forward
+    );
+    assert!(cold.reverse["/Game/Target"].contains("/Game/Legacy"));
+    assert!(
+        cold.reachability
+            .reachable_runtime_packages
+            .contains("/Game/Target")
+    );
+    let legacy = cold.asset("/Game/Legacy").expect("UE4 package is indexed");
+    assert_eq!(
+        legacy.analysis.status,
+        cc_uax_core::AnalysisStatus::Unsupported
+    );
+    assert_eq!(legacy.analysis.file_version_ue4, Some(522));
+    assert_eq!(legacy.analysis.file_version_ue5, None);
+    assert!(
+        legacy
+            .analysis
+            .capabilities
+            .iter()
+            .any(
+                |capability| capability.kind == cc_uax_core::CapabilityKind::ReferenceTables
+                    && capability.status == cc_uax_core::AnalysisStatus::Complete
+            ),
+        "{:#?}",
+        legacy.analysis.capabilities
+    );
+    assert_eq!(cold.analysis.ue4_file_versions.get(&522), Some(&1));
+    assert!(!cold.analysis.file_versions.contains_key(&522));
+
+    let warm = scanner.scan(options).unwrap();
+
+    assert_eq!(warm.stats.cache_hits, 2);
+    assert_eq!(warm.forward, cold.forward);
+    assert_eq!(warm.reverse, cold.reverse);
+    assert_eq!(
+        warm.asset("/Game/Legacy").unwrap().analysis,
+        cold.asset("/Game/Legacy").unwrap().analysis
+    );
+    assert_eq!(
+        warm.analysis.ue4_file_versions,
+        cold.analysis.ue4_file_versions
     );
 
     std::fs::remove_dir_all(root).unwrap();

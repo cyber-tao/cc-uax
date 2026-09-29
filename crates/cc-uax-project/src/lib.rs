@@ -12,6 +12,9 @@ mod scanner;
 /// change to what a cached `AssetAnalysisSummary` means must bump it or a warm
 /// scan will replay summaries built under the old meaning.
 ///
+/// 13: unsupported cache rows carry the references and summary of a UE4-format
+/// package whose linker tables were read, so cached forward edges differ.
+///
 /// 12: Interchange node exports below 1010 are native-only, and cooked-flagged
 /// packages are unsupported, so cached statuses and byte accounting differ.
 ///
@@ -39,7 +42,7 @@ mod scanner;
 /// 5: cached summaries built before native-only payload classification, decoder
 /// span accounting, the import-data prefix decoder, the TextConst layout gate and
 /// the widened graph-node list carry different statuses and counters.
-pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 12;
+pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 13;
 
 pub use analysis_summary::{
     AnalysisDiagnosticSummary, AssetAnalysisSummary, CapabilitySummary, GraphSummary,

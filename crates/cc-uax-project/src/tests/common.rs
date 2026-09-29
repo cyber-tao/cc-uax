@@ -73,6 +73,77 @@ pub fn ue4_package() -> Vec<u8> {
     data
 }
 
+/// A complete UE4-format package (`LegacyFileVersion` -7, `FileVersionUE4` 522,
+/// `FileVersionUE5` 0) whose soft package reference table names each of
+/// `targets`. Its properties are out of scope, but its linker tables are readable.
+pub fn ue4_package_with_soft_refs(targets: &[&str]) -> Vec<u8> {
+    let mut d = Vec::new();
+    push_u32(&mut d, 0x9E2A_83C1); // tag
+    push_i32(&mut d, -7); // legacy_file_version
+    push_i32(&mut d, 0); // legacy ue3
+    push_i32(&mut d, 522); // file_version_ue4
+    push_i32(&mut d, 0); // licensee
+    push_i32(&mut d, 0); // custom version count
+    push_i32(&mut d, 0); // total_header_size
+    push_fstring(&mut d, "TestPkg"); // package_name
+    push_u32(&mut d, 0x8000_0000); // package_flags = FilterEditorOnly
+    let name_count_pos = d.len();
+    push_i32(&mut d, 0); // name_count (patched)
+    let name_offset_pos = d.len();
+    push_i32(&mut d, 0); // name_offset (patched)
+    push_i32(&mut d, 0); // gatherable_text_data_count
+    push_i32(&mut d, 0); // gatherable_text_data_offset
+    push_i32(&mut d, 0); // export_count
+    push_i32(&mut d, 0); // export_offset
+    push_i32(&mut d, 0); // import_count
+    push_i32(&mut d, 0); // import_offset
+    push_i32(&mut d, 0); // depends_offset
+    let soft_ref_count_pos = d.len();
+    push_i32(&mut d, 0); // soft_package_references_count (patched)
+    let soft_ref_offset_pos = d.len();
+    push_i32(&mut d, 0); // soft_package_references_offset (patched)
+    push_i32(&mut d, 0); // searchable_names_offset
+    push_i32(&mut d, 0); // thumbnail_table_offset
+    d.extend_from_slice(&[0u8; 16]); // legacy package guid
+    push_i32(&mut d, 0); // generation_count
+    push_u16(&mut d, 4); // engine_version major/minor/patch
+    push_u16(&mut d, 27);
+    push_u16(&mut d, 0);
+    push_u32(&mut d, 0); // changelist
+    push_fstring(&mut d, ""); // branch
+    push_u16(&mut d, 4); // compatible_engine_version
+    push_u16(&mut d, 27);
+    push_u16(&mut d, 0);
+    push_u32(&mut d, 0);
+    push_fstring(&mut d, "");
+    push_u32(&mut d, 0); // compression_flags
+    push_i32(&mut d, 0); // compressed_chunks_count
+    push_u32(&mut d, 0); // package_source
+    push_i32(&mut d, 0); // additional_packages_to_cook count
+    push_i32(&mut d, 0); // asset_registry_data_offset
+    push_i64(&mut d, 0); // bulk_data_start_offset
+    push_i32(&mut d, 0); // world_tile_info_data_offset
+    push_i32(&mut d, 0); // chunk ids count
+    push_i32(&mut d, 0); // preload_dependency_count
+    push_i32(&mut d, 0); // preload_dependency_offset
+
+    put_i32(&mut d, name_count_pos, targets.len() as i32);
+    let name_offset = d.len() as i32;
+    put_i32(&mut d, name_offset_pos, name_offset);
+    for target in targets {
+        push_fstring(&mut d, target);
+        push_u32(&mut d, 0); // name hash
+    }
+    put_i32(&mut d, soft_ref_count_pos, targets.len() as i32);
+    let soft_ref_offset = d.len() as i32;
+    put_i32(&mut d, soft_ref_offset_pos, soft_ref_offset);
+    for index in 0..targets.len() {
+        push_i32(&mut d, index as i32); // name index
+        push_i32(&mut d, 0); // name number
+    }
+    d
+}
+
 fn push_u16(bytes: &mut Vec<u8>, value: u16) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }

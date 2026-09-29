@@ -7,11 +7,10 @@ use crate::diagnostic::{Diagnostic, Severity};
 use crate::model::*;
 use crate::package::Package;
 use crate::property::{PropertyEntry, PropertyParseStatus};
-use crate::references::collect_package_references;
+use crate::references::asset_references;
 use crate::script::field::DecodedField;
 use crate::script::{DecodedBytecode, DecodedScriptStruct, function_flag_names};
 use crate::version::ue5;
-use std::collections::BTreeSet;
 
 pub(super) fn summary_to_model(package: &Package) -> AssetSummary {
     let summary = &package.summary;
@@ -43,20 +42,11 @@ pub(super) fn summary_to_model(package: &Package) -> AssetSummary {
 }
 
 pub(super) fn references_to_model(package: &Package) -> AssetReferences {
-    let (assets, scripts) = collect_package_references(package.import_class_object_names());
-    let soft = package
-        .soft_package_references
-        .iter()
-        .filter(|reference| !reference.is_empty() && reference.as_str() != "None")
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    AssetReferences {
-        assets,
-        scripts,
-        soft,
-    }
+    asset_references(
+        &package.names,
+        &package.imports,
+        &package.soft_package_references,
+    )
 }
 
 pub(super) fn imports_to_model(package: &Package) -> Vec<AssetImport> {
