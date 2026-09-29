@@ -45,6 +45,40 @@ pub struct ParseCtx<'a> {
     pub nested_diagnostics: std::cell::RefCell<Vec<Diagnostic>>,
 }
 
+/// The type whose tagged block the tag loop is reading. A legacy set/map tag
+/// names no element struct; the declaring type is where that name can still
+/// come from.
+#[derive(Clone, Copy)]
+pub enum BlockOwner<'o> {
+    /// Nothing is known about the declaring type (native payload internals, tests).
+    Unknown,
+    /// A struct's own block, under the struct name its tag carried (empty when
+    /// the struct itself came out of a legacy container unnamed).
+    Struct(&'o str),
+    /// An export's block: its class, and that class's reflected declarations
+    /// when the class is a `UStruct` export of this package.
+    Class {
+        name: &'o str,
+        reflected: Option<&'o dyn ContainerStructNames>,
+    },
+}
+
+/// Key/element and value struct short names a declaration supplies for one
+/// legacy set/map property.
+pub struct ContainerStructs {
+    pub key: Option<String>,
+    pub value: Option<String>,
+}
+
+/// A source of reflected declarations (implemented by the decode module over
+/// the package's own `ChildProperties`); the property module must not depend on
+/// `script`.
+pub trait ContainerStructNames {
+    /// `None` when this source knows nothing about `property` or declares it as
+    /// something other than the container kind the tag carries.
+    fn container_struct_names(&self, property: &str, container: &str) -> Option<ContainerStructs>;
+}
+
 #[derive(Debug, Clone)]
 pub struct PropertyEntry {
     pub name: String,
@@ -127,7 +161,7 @@ pub(crate) fn parse_object_properties(
     ctx: &ParseCtx,
     end_limit: u64,
 ) -> Vec<PropertyEntry> {
-    parse_object_properties_report(r, ctx, end_limit, "/properties").entries
+    parse_object_properties_report(r, ctx, end_limit, "/properties", BlockOwner::Unknown).entries
 }
 
 pub fn parse_object_properties_report(
@@ -135,6 +169,7 @@ pub fn parse_object_properties_report(
     ctx: &ParseCtx,
     end_limit: u64,
     path: &str,
+    owner: BlockOwner<'_>,
 ) -> PropertyParse {
     // A UClass tagged-property block opens with a serialization-control byte
     // (EClassSerializationControlExtension, uint8). When OverridableSerialization-
@@ -193,7 +228,7 @@ pub fn parse_object_properties_report(
     // The object-level loop is the root: nested blocks report through
     // `ParseCtx::nested_diagnostics`, which this loop drains per property, so its
     // own diagnostics are returned directly rather than pushed there.
-    let mut parsed = tag::parse_properties_report(r, ctx, end_limit, path);
+    let mut parsed = tag::parse_properties_report(r, ctx, end_limit, path, owner);
     // The control byte was read before anything proved a tagged block exists. When
     // the first tag turns out not to be one, that byte was payload of a class that
     // never called UObject::Serialize, and reporting overridable serialization
@@ -225,13 +260,39 @@ pub(crate) fn parse_properties(
 /// *and* handed to the enclosing loop through [`ParseCtx::nested_diagnostics`]:
 /// callers may embed the status in their value, but the report-level accounting
 /// happens through the sink, never through the embedded copy.
+///
+/// The declaring type is unknown here, so this is for native-payload internals;
+/// a struct value goes through [`parse_struct_properties_report`].
 pub fn parse_properties_report(
     r: &mut Reader,
     ctx: &ParseCtx,
     end_limit: u64,
     path: &str,
 ) -> PropertyParse {
-    let parsed = tag::parse_properties_report(r, ctx, end_limit, path);
+    parse_nested_report(r, ctx, end_limit, path, BlockOwner::Unknown)
+}
+
+/// [`parse_properties_report`] for the tagged block of the struct named
+/// `struct_name`, so a legacy set/map property declared on that struct can have
+/// its element structs named.
+pub fn parse_struct_properties_report(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    end_limit: u64,
+    path: &str,
+    struct_name: &str,
+) -> PropertyParse {
+    parse_nested_report(r, ctx, end_limit, path, BlockOwner::Struct(struct_name))
+}
+
+fn parse_nested_report(
+    r: &mut Reader,
+    ctx: &ParseCtx,
+    end_limit: u64,
+    path: &str,
+    owner: BlockOwner<'_>,
+) -> PropertyParse {
+    let parsed = tag::parse_properties_report(r, ctx, end_limit, path, owner);
     if !parsed.diagnostics.is_empty() {
         ctx.nested_diagnostics
             .borrow_mut()

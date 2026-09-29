@@ -1,6 +1,6 @@
 use super::value::parse_property_value;
 use super::{
-    OVERRIDABLE_SERIALIZATION_BIT, PREVIEW_MAX, ParseCtx, PropertyEntry, PropertyParse,
+    BlockOwner, OVERRIDABLE_SERIALIZATION_BIT, PREVIEW_MAX, ParseCtx, PropertyEntry, PropertyParse,
     PropertyParseStatus, to_hex,
 };
 use crate::diagnostic::Diagnostic;
@@ -36,7 +36,8 @@ pub struct TypeName {
 /// inner `FPropertyTag` into the payload, so array elements stay decodable — see
 /// [`read_inner_array_struct_name`]. `FSetProperty::SerializeItem` and
 /// `FMapProperty::SerializeItem` write no such tag, so a set element or map
-/// key/value struct really is recoverable only from UE's reflection registry.
+/// key/value struct is recoverable only from the declaring type: the package's own
+/// generated class, or the source-verified [`LEGACY_CONTAINER_STRUCT_NAMES`].
 fn has_unnamed_inner_struct(ty: &TypeName) -> bool {
     let element_struct_name_is_in_payload = ty.name == "ArrayProperty";
     ty.params.iter().any(|param| {
@@ -68,7 +69,7 @@ pub(super) fn read_inner_array_struct_name(
     if name == "None" || name.is_empty() {
         bail!("inner array property tag is a None terminator");
     }
-    let tag = read_legacy_property_tag(r, ctx, end_limit, name)?;
+    let tag = read_legacy_property_tag(r, ctx, end_limit, name, BlockOwner::Unknown)?;
     if tag.type_name.name != "StructProperty" {
         bail!(
             "inner array property tag declares {} rather than StructProperty",
@@ -299,6 +300,7 @@ pub(crate) fn parse_properties_report(
     ctx: &ParseCtx,
     end_limit: u64,
     path: &str,
+    owner: BlockOwner<'_>,
 ) -> PropertyParse {
     let mut entries = Vec::new();
     let mut diagnostics = Vec::new();
@@ -345,7 +347,7 @@ pub(crate) fn parse_properties_report(
         }
         let tag_start = r.pos();
         let prop_index_path = format!("{path}/{}", entries.len());
-        let tag = match read_property_tag(r, ctx, end_limit) {
+        let tag = match read_property_tag(r, ctx, end_limit, owner) {
             Ok(Some(tag)) => tag,
             Ok(None) => {
                 if entries.is_empty() {
@@ -618,6 +620,7 @@ fn read_property_tag(
     r: &mut Reader,
     ctx: &ParseCtx,
     end_limit: u64,
+    owner: BlockOwner<'_>,
 ) -> Result<Option<PropertyTag>> {
     let name_raw = r.read_raw_name_within(end_limit, "tag name")?;
     let name = ctx.names.resolve_raw(name_raw);
@@ -627,7 +630,7 @@ fn read_property_tag(
     if ctx.file_version_ue5 >= ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME {
         read_complete_property_tag(r, ctx, end_limit, name).map(Some)
     } else {
-        read_legacy_property_tag(r, ctx, end_limit, name).map(Some)
+        read_legacy_property_tag(r, ctx, end_limit, name, owner).map(Some)
     }
 }
 
@@ -670,6 +673,7 @@ fn read_legacy_property_tag(
     ctx: &ParseCtx,
     end_limit: u64,
     name: String,
+    owner: BlockOwner<'_>,
 ) -> Result<PropertyTag> {
     let property_type = ctx
         .names
@@ -677,7 +681,7 @@ fn read_legacy_property_tag(
     let size = r.read_i32_within(end_limit, "tag size")?;
     let array_index = r.read_i32_within(end_limit, "tag array index")?;
     let (mut type_name, bool_val) = read_legacy_type_name(r, ctx, end_limit, &property_type)?;
-    name_known_container_structs(&name, &mut type_name);
+    resolve_legacy_container_structs(owner, &name, &mut type_name);
     // FPropertyTag stores HasPropertyGuid as uint8 (PropertyTag.h), not a
     // 4-byte FArchive::SerializeBool. Reading it as bool32 desyncs every
     // following tag on UE5.0–5.4 packages (FileVersionUE5 < 1012).
@@ -705,15 +709,44 @@ fn read_legacy_property_tag(
     })
 }
 
+/// A `TSet`/`TMap` property whose legacy tag cannot name its element structs, and
+/// the structs its declaration gives them.
+struct LegacyContainerDeclaration {
+    /// Declaring struct or class short names. Empty when the property is declared
+    /// on a type whose subclasses appear as the export class (UBlueprintGeneratedClass,
+    /// UNiagaraNodeFunctionCall) or on several structs (FNiagaraParameterStore and its
+    /// redirection subclass), where only the name can match; the exact-fit check on the
+    /// value window remains the guard for those.
+    owners: &'static [&'static str],
+    property: &'static str,
+    key_struct: Option<&'static str>,
+    value_struct: Option<&'static str>,
+}
+
+const fn declaration(
+    owners: &'static [&'static str],
+    property: &'static str,
+    key_struct: Option<&'static str>,
+    value_struct: Option<&'static str>,
+) -> LegacyContainerDeclaration {
+    LegacyContainerDeclaration {
+        owners,
+        property,
+        key_struct,
+        value_struct,
+    }
+}
+
 /// Element struct types of the `TSet`/`TMap` properties whose legacy tag cannot
-/// name them, keyed by property name: (property, key struct, value struct).
+/// name them, keyed by declaring type and property name.
 ///
 /// Below `PROPERTY_TAG_COMPLETE_TYPE_NAME` a container tag records only the
 /// element's *property* type and, unlike `TArray`, sets and maps write no inner
 /// tag, so the `UScriptStruct` is otherwise known only to UE's reflection
-/// registry. These are the reflected declarations of the properties that made
-/// every UE5.0–5.3 Blueprint and Niagara asset `partial` on the reference corpus,
-/// each verified against UE 5.3 headers:
+/// registry. A Blueprint's own variables are named by its generated class
+/// (see [`BlockOwner::Class`]); these are the engine declarations, each verified
+/// against the UE headers named below. The first group made every UE5.0–5.3
+/// Blueprint and Niagara asset `partial` on the reference corpus (UE 5.3 headers):
 /// - `UBlueprintGeneratedClass::PropertyGuids` — `TMap<FName, FGuid>`
 ///   (BlueprintGeneratedClass.h)
 /// - `UNiagaraNodeFunctionCall::BoundPinNames` — `TMap<FGuid, FName>`
@@ -722,7 +755,7 @@ fn read_legacy_property_tag(
 /// - `FNiagaraParameterStore::ParameterGuidMapping` — `TMap<FNiagaraVariable, FGuid>`
 /// - `UNiagaraGraph::VariableToScriptVariable` —
 ///   `TMap<FNiagaraVariable, TObjectPtr<UNiagaraScriptVariable>>`
-/// - `FNiagaraScriptDataInterfaceInfo`… `InputDescriptions`/`OutputDescriptions`
+/// - `FNiagaraScriptDataInterfaceInfo`’s `InputDescriptions`/`OutputDescriptions`
 ///   (NiagaraCommon.h) — `TMap<FNiagaraVariableBase, FText>`
 /// - `FNiagaraUserRedirectionParameterStore::UserParameterRedirects` —
 ///   `TMap<FNiagaraVariable, FNiagaraVariable>`
@@ -732,72 +765,184 @@ fn read_legacy_property_tag(
 /// - `UAnimSequence::AttributeCurves` —
 ///   `TMap<FAnimationAttributeIdentifier, FAttributeCurve>`
 ///
+/// The scoped group is declared on a single type, so it matches only under that
+/// owner (`FGuid`, `FQuat` and `FLinearColor` are `USTRUCT(immutable)` in
+/// NoExportTypes.h, so the keys and values named here are native structs):
+/// - `Engine/Source/Runtime/LevelSequence/Public/LevelSequenceBindingReference.h`
+///   (5.0–5.3; 5.4 deprecates it): `FLevelSequenceBindingReferences` declares
+///   `TMap<FGuid, FLevelSequenceBindingReferenceArray> BindingIdToReferences`,
+///   `TSet<FGuid> AnimSequenceInstances` and, from 5.3, `TSet<FGuid>
+///   PostProcessInstances`. `FLevelSequenceBindingReferenceArray` is a plain
+///   tagged `USTRUCT()`.
+/// - `Engine/Plugins/Enterprise/DatasmithContent/Source/DatasmithContent/Public/ObjectTemplates/DatasmithMaterialInstanceTemplate.h`
+///   (5.0): `UDatasmithMaterialInstanceTemplate::VectorParameterValues` is
+///   `TMap<FName, FLinearColor>`.
+/// - `Engine/Plugins/Animation/IKRig/Source/IKRig/Public/Retargeter/IKRetargeter.h`
+///   (5.0–5.3): `UIKRetargeter::RetargetPoses` (5.0) and `SourceRetargetPoses` /
+///   `TargetRetargetPoses` (5.1 on) are `TMap<FName, FIKRetargetPose>`, and the
+///   tagged struct `FIKRetargetPose` declares `TMap<FName, FQuat>
+///   BoneRotationOffsets`.
+///
 /// A wrong entry cannot misalign the stream: the value window is still bounded by
 /// the tag's `Size`, so a struct that does not fit fails into the usual fallback.
-const LEGACY_CONTAINER_STRUCT_NAMES: &[(&str, Option<&str>, Option<&str>)] = &[
-    ("PropertyGuids", None, Some("Guid")),
-    ("BoundPinNames", Some("Guid"), None),
-    (
+const LEGACY_CONTAINER_STRUCT_NAMES: &[LegacyContainerDeclaration] = &[
+    declaration(&[], "PropertyGuids", None, Some("Guid")),
+    declaration(&[], "BoundPinNames", Some("Guid"), None),
+    declaration(
+        &[],
         "PinOutputToPinDefaultPersistentId",
         Some("Guid"),
         Some("Guid"),
     ),
-    (
+    declaration(
+        &[],
         "ParameterGuidMapping",
         Some("NiagaraVariable"),
         Some("Guid"),
     ),
-    ("VariableToScriptVariable", Some("NiagaraVariable"), None),
-    ("InputDescriptions", Some("NiagaraVariableBase"), None),
-    ("OutputDescriptions", Some("NiagaraVariableBase"), None),
-    (
+    declaration(
+        &[],
+        "VariableToScriptVariable",
+        Some("NiagaraVariable"),
+        None,
+    ),
+    declaration(&[], "InputDescriptions", Some("NiagaraVariableBase"), None),
+    declaration(&[], "OutputDescriptions", Some("NiagaraVariableBase"), None),
+    declaration(
+        &[],
         "UserParameterRedirects",
         Some("NiagaraVariable"),
         Some("NiagaraVariable"),
     ),
-    ("MessageKeyToMessageMap", Some("Guid"), None),
-    (
+    declaration(&[], "MessageKeyToMessageMap", Some("Guid"), None),
+    declaration(
+        &[],
         "TemplateParameterOverrides",
         Some("NiagaraVariableBase"),
         Some("NiagaraVariant"),
     ),
-    (
+    declaration(
+        &[],
         "InstanceParameterOverrides",
         Some("NiagaraVariableBase"),
         Some("NiagaraVariant"),
     ),
-    (
+    declaration(
+        &[],
         "AttributeCurves",
         Some("AnimationAttributeIdentifier"),
         Some("AttributeCurve"),
     ),
+    declaration(
+        &["LevelSequenceBindingReferences"],
+        "BindingIdToReferences",
+        Some("Guid"),
+        Some("LevelSequenceBindingReferenceArray"),
+    ),
+    declaration(
+        &["LevelSequenceBindingReferences"],
+        "AnimSequenceInstances",
+        Some("Guid"),
+        None,
+    ),
+    declaration(
+        &["LevelSequenceBindingReferences"],
+        "PostProcessInstances",
+        Some("Guid"),
+        None,
+    ),
+    declaration(
+        &["DatasmithMaterialInstanceTemplate"],
+        "VectorParameterValues",
+        None,
+        Some("LinearColor"),
+    ),
+    declaration(
+        &["IKRetargeter"],
+        "RetargetPoses",
+        None,
+        Some("IKRetargetPose"),
+    ),
+    declaration(
+        &["IKRetargeter"],
+        "SourceRetargetPoses",
+        None,
+        Some("IKRetargetPose"),
+    ),
+    declaration(
+        &["IKRetargeter"],
+        "TargetRetargetPoses",
+        None,
+        Some("IKRetargetPose"),
+    ),
+    declaration(
+        &["IKRetargetPose"],
+        "BoneRotationOffsets",
+        None,
+        Some("Quat"),
+    ),
 ];
 
-/// Fills in the struct names a legacy set/map tag omitted, when the property is
-/// one whose declaration is known (see [`LEGACY_CONTAINER_STRUCT_NAMES`]).
-fn name_known_container_structs(property_name: &str, type_name: &mut TypeName) {
+/// The short name of the type `owner` reads the block of, when it has one: a
+/// struct name as its tag carried it, or the last segment of a class path.
+fn owner_short_name<'o>(owner: BlockOwner<'o>) -> Option<&'o str> {
+    let name = match owner {
+        BlockOwner::Unknown => return None,
+        BlockOwner::Struct(name) => name,
+        BlockOwner::Class { name, .. } => name.rsplit(['.', '/']).next().unwrap_or(name),
+    };
+    (!name.is_empty()).then_some(name)
+}
+
+/// Fills in the struct names a legacy set/map tag omitted. The declaring type
+/// comes first: a generated class of this package names the key and value struct
+/// of every Blueprint variable (see [`BlockOwner::Class`]), and that beats a table
+/// keyed by property name. Otherwise the property must be one whose declaration
+/// is known (see [`LEGACY_CONTAINER_STRUCT_NAMES`]) and whose owners, when the
+/// entry lists any, include the type being read.
+fn resolve_legacy_container_structs(
+    owner: BlockOwner<'_>,
+    property_name: &str,
+    type_name: &mut TypeName,
+) {
     if !matches!(type_name.name.as_str(), "SetProperty" | "MapProperty") {
         return;
     }
-    let Some((_, key_struct, value_struct)) = LEGACY_CONTAINER_STRUCT_NAMES
-        .iter()
-        .find(|(name, _, _)| *name == property_name)
-    else {
-        return;
+    let reflected_names = match owner {
+        BlockOwner::Class {
+            reflected: Some(reflected),
+            ..
+        } => reflected.container_struct_names(property_name, &type_name.name),
+        _ => None,
     };
-    let fill = |param: Option<&mut TypeName>, struct_name: Option<&str>| {
+    let (key_struct, value_struct) = if let Some(names) = reflected_names {
+        (names.key, names.value)
+    } else {
+        let owner_name = owner_short_name(owner);
+        let Some(declaration) = LEGACY_CONTAINER_STRUCT_NAMES.iter().find(|declaration| {
+            declaration.property == property_name
+                && (declaration.owners.is_empty()
+                    || owner_name.is_some_and(|name| declaration.owners.contains(&name)))
+        }) else {
+            return;
+        };
+        (
+            declaration.key_struct.map(str::to_string),
+            declaration.value_struct.map(str::to_string),
+        )
+    };
+    let fill = |param: Option<&mut TypeName>, struct_name: Option<String>| {
         if let (Some(param), Some(struct_name)) = (param, struct_name)
             && param.name == "StructProperty"
             && param.params.is_empty()
         {
-            param.params.push(TypeName::leaf(struct_name.to_string()));
+            param.params.push(TypeName::leaf(struct_name));
         }
     };
     let mut params = type_name.params.iter_mut();
-    fill(params.next(), *key_struct);
-    fill(params.next(), *value_struct);
+    fill(params.next(), key_struct);
+    fill(params.next(), value_struct);
 }
-
 fn read_legacy_type_name(
     r: &mut Reader,
     ctx: &ParseCtx,

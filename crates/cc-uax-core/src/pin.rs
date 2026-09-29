@@ -1,5 +1,7 @@
 use crate::diagnostic::Diagnostic;
-use crate::property::{ParseCtx, PropertyParseStatus, parse_object_properties_report, parse_text};
+use crate::property::{
+    BlockOwner, ParseCtx, PropertyParseStatus, parse_object_properties_report, parse_text,
+};
 use crate::reader::{Guid, Reader};
 use crate::structured_value::{Value, json};
 use crate::summary::PackageFileSummary;
@@ -158,7 +160,7 @@ pub(crate) fn locate_legacy_pin_start(
     path: &str,
 ) -> std::result::Result<u64, Diagnostic> {
     let start = r.pos();
-    let parsed = parse_object_properties_report(r, ctx, end, path);
+    let parsed = parse_object_properties_report(r, ctx, end, path, BlockOwner::Unknown);
     let property_end = r.pos();
     if matches!(
         parsed.status,

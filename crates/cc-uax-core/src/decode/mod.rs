@@ -10,7 +10,7 @@ pub(crate) use import_data::ImportSourceFile;
 use crate::diagnostic::{ByteRangePreview, Diagnostic};
 use crate::package::Package;
 use crate::pin::{Pin, PinSerCtx, UserDefinedPin};
-use crate::property::{ParseCtx, PropertyEntry, PropertyParseStatus};
+use crate::property::{BlockOwner, ParseCtx, PropertyEntry, PropertyParseStatus};
 use crate::reader::{Guid, Reader};
 pub(crate) use crate::script::is_script_bytecode_class;
 
@@ -427,6 +427,10 @@ impl Package {
                         window,
                         &export_path,
                         &class_full,
+                        BlockOwner::Class {
+                            name: &class_full,
+                            reflected: None,
+                        },
                         options.properties || capture_adapter_properties,
                         diagnostics,
                         &mut export,

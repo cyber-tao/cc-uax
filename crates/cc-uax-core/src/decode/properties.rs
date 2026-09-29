@@ -4,7 +4,7 @@ use super::window::{ExportSerialWindow, preview_range};
 use crate::diagnostic::Diagnostic;
 use crate::model::{OpaqueByteRange, OpaqueReason, OpaqueValue};
 use crate::property::{
-    ParseCtx, PropertyParse, PropertyParseStatus, parse_object_properties_report,
+    BlockOwner, ParseCtx, PropertyParse, PropertyParseStatus, parse_object_properties_report,
 };
 use crate::reader::{RAW_NAME_BYTES, Reader};
 use crate::structured_value::{Map, Value, json};
@@ -17,6 +17,7 @@ pub(super) fn decode_properties_for_export(
     window: ExportSerialWindow,
     export_path: &str,
     class_full: &str,
+    owner: BlockOwner<'_>,
     capture_properties: bool,
     diagnostics: &mut Vec<Diagnostic>,
     export: &mut DecodedExport,
@@ -35,7 +36,7 @@ pub(super) fn decode_properties_for_export(
     }
 
     let prop_path = format!("{export_path}/properties");
-    let parsed = parse_object_properties_report(reader, ctx, end, &prop_path);
+    let parsed = parse_object_properties_report(reader, ctx, end, &prop_path, owner);
     let PropertyParse {
         entries,
         diagnostics: prop_diags,

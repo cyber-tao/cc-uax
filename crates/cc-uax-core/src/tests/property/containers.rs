@@ -2,7 +2,10 @@ use super::super::common::*;
 use crate::model::OpaqueReason;
 use crate::name::NameMap;
 use crate::pin::PinSerCtx;
-use crate::property::{ParseCtx, parse_properties};
+use crate::property::{
+    BlockOwner, ContainerStructNames, ContainerStructs, ParseCtx, parse_object_properties_report,
+    parse_properties, parse_properties_report, parse_struct_properties_report,
+};
 use crate::reader::Reader;
 
 #[test]
@@ -227,6 +230,258 @@ fn a_legacy_map_whose_declaration_is_known_decodes_its_struct_elements() {
     );
 }
 
+// The same property name can be declared on several types, so a declaration that
+// UE source ties to one type only names the elements when that type is the one
+// whose block is being read.
+#[test]
+fn a_scoped_declaration_resolves_only_under_its_owner() {
+    let names = NameMap {
+        names: vec![
+            "BindingIdToReferences".to_string(), // 0
+            "MapProperty".to_string(),           // 1
+            "StructProperty".to_string(),        // 2
+            "None".to_string(),                  // 3
+        ],
+    };
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0); // NumToRemove
+    push_i32(&mut payload, 1); // Num
+    push_guid(&mut payload, 1, 2, 3, 4); // key: FGuid
+    push_raw_name(&mut payload, 3); // value: a tagged block holding only None
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0);
+    push_raw_name(&mut d, 1);
+    push_i32(&mut d, payload.len() as i32);
+    push_i32(&mut d, 0);
+    push_raw_name(&mut d, 2); // key type StructProperty, no struct name
+    push_raw_name(&mut d, 2); // value type StructProperty, no struct name
+    d.push(0); // HasPropertyGuid
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 3);
+    let ctx = legacy_ctx(&names);
+    let end = d.len() as u64;
+
+    let mut r = Reader::new(&d);
+    let named = parse_struct_properties_report(
+        &mut r,
+        &ctx,
+        end,
+        "/properties",
+        "LevelSequenceBindingReferences",
+    );
+    assert!(named.diagnostics.is_empty(), "{:#?}", named.diagnostics);
+    assert_eq!(
+        named.entries[0].type_str,
+        "MapProperty(StructProperty(Guid),StructProperty(LevelSequenceBindingReferenceArray))"
+    );
+    assert_eq!(
+        named.entries[0].value[0]["value"]["@struct"].as_str(),
+        Some("LevelSequenceBindingReferenceArray")
+    );
+
+    let mut r = Reader::new(&d);
+    let unknown = parse_properties_report(&mut r, &ctx, end, "/properties");
+    let mut r = Reader::new(&d);
+    let other = parse_struct_properties_report(&mut r, &ctx, end, "/properties", "SomethingElse");
+    for parse in [unknown, other] {
+        let opaque = parse.entries[0]
+            .value
+            .as_opaque()
+            .expect("another owner does not get the name");
+        assert_eq!(opaque.reason, OpaqueReason::MissingInnerStructName);
+        assert!(
+            parse
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "property_tag_missing_inner_struct_name"),
+            "{:#?}",
+            parse.diagnostics
+        );
+    }
+}
+
+// A declaration with no owner list matches by property name alone, whatever the
+// block belongs to: it is declared on a type whose subclasses appear as the export
+// class, or on several structs, so no single owner could be named.
+#[test]
+fn an_unscoped_declaration_still_matches_by_name_alone() {
+    let names = NameMap {
+        names: vec![
+            "PropertyGuids".to_string(),  // 0
+            "MapProperty".to_string(),    // 1
+            "NameProperty".to_string(),   // 2
+            "StructProperty".to_string(), // 3
+            "None".to_string(),           // 4
+            "MyVariable".to_string(),     // 5
+        ],
+    };
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0);
+    push_i32(&mut payload, 1);
+    push_raw_name(&mut payload, 5);
+    push_guid(&mut payload, 1, 2, 3, 4);
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0);
+    push_raw_name(&mut d, 1);
+    push_i32(&mut d, payload.len() as i32);
+    push_i32(&mut d, 0);
+    push_raw_name(&mut d, 2);
+    push_raw_name(&mut d, 3);
+    d.push(0);
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 4);
+    let ctx = legacy_ctx(&names);
+    let end = d.len() as u64;
+
+    for owner in [
+        BlockOwner::Unknown,
+        BlockOwner::Struct("SomethingElse"),
+        BlockOwner::Class {
+            name: "/Game/BP.BP_C",
+            reflected: None,
+        },
+    ] {
+        let mut r = Reader::new(&d);
+        let parse = parse_object_properties_report(&mut r, &ctx, end, "/properties", owner);
+        assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+        assert_eq!(
+            parse.entries[0].type_str,
+            "MapProperty(NameProperty,StructProperty(Guid))"
+        );
+    }
+}
+
+/// A stand-in for the package's own class declarations: names one struct for the
+/// values of `VectorParameterValues`, for one container kind only.
+struct FakeDeclarations {
+    container: &'static str,
+    value_struct: &'static str,
+}
+
+impl ContainerStructNames for FakeDeclarations {
+    fn container_struct_names(&self, property: &str, container: &str) -> Option<ContainerStructs> {
+        (property == "VectorParameterValues" && container == self.container).then(|| {
+            ContainerStructs {
+                key: None,
+                value: Some(self.value_struct.to_string()),
+            }
+        })
+    }
+}
+
+/// `VectorParameterValues: TMap<FName, ?>` with one entry whose value is 16 bytes,
+/// the width of both an `FGuid` and an `FLinearColor`.
+fn vector_parameter_values_map() -> (NameMap, Vec<u8>) {
+    let names = NameMap {
+        names: vec![
+            "VectorParameterValues".to_string(), // 0
+            "MapProperty".to_string(),           // 1
+            "NameProperty".to_string(),          // 2
+            "StructProperty".to_string(),        // 3
+            "None".to_string(),                  // 4
+            "Color".to_string(),                 // 5
+        ],
+    };
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0);
+    push_i32(&mut payload, 1);
+    push_raw_name(&mut payload, 5);
+    for channel in [1.0f32, 0.5, 0.25, 1.0] {
+        push_f32(&mut payload, channel);
+    }
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0);
+    push_raw_name(&mut d, 1);
+    push_i32(&mut d, payload.len() as i32);
+    push_i32(&mut d, 0);
+    push_raw_name(&mut d, 2);
+    push_raw_name(&mut d, 3);
+    d.push(0);
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 4);
+    (names, d)
+}
+
+// The package's own declaration is authoritative: a Blueprint variable can share
+// a name with an engine property and still be declared as something else. The two
+// structs are the same width, so the result shows which one won rather than which
+// one fits.
+#[test]
+fn a_reflected_declaration_beats_the_table() {
+    let (names, d) = vector_parameter_values_map();
+    let ctx = legacy_ctx(&names);
+    let end = d.len() as u64;
+    let class = "/Script/DatasmithContent.DatasmithMaterialInstanceTemplate";
+    let fake = FakeDeclarations {
+        container: "MapProperty",
+        value_struct: "Guid",
+    };
+
+    let mut r = Reader::new(&d);
+    let reflected = parse_object_properties_report(
+        &mut r,
+        &ctx,
+        end,
+        "/properties",
+        BlockOwner::Class {
+            name: class,
+            reflected: Some(&fake),
+        },
+    );
+    assert!(
+        reflected.diagnostics.is_empty(),
+        "{:#?}",
+        reflected.diagnostics
+    );
+    assert_eq!(
+        reflected.entries[0].type_str,
+        "MapProperty(NameProperty,StructProperty(Guid))"
+    );
+
+    let mut r = Reader::new(&d);
+    let table = parse_object_properties_report(
+        &mut r,
+        &ctx,
+        end,
+        "/properties",
+        BlockOwner::Class {
+            name: class,
+            reflected: None,
+        },
+    );
+    assert!(table.diagnostics.is_empty(), "{:#?}", table.diagnostics);
+    assert_eq!(
+        table.entries[0].type_str,
+        "MapProperty(NameProperty,StructProperty(LinearColor))"
+    );
+}
+
+#[test]
+fn a_reflected_declaration_of_another_container_kind_is_ignored() {
+    let (names, d) = vector_parameter_values_map();
+    let ctx = legacy_ctx(&names);
+    let fake = FakeDeclarations {
+        container: "SetProperty",
+        value_struct: "Guid",
+    };
+
+    let mut r = Reader::new(&d);
+    let parse = parse_object_properties_report(
+        &mut r,
+        &ctx,
+        d.len() as u64,
+        "/properties",
+        BlockOwner::Class {
+            name: "/Script/DatasmithContent.DatasmithMaterialInstanceTemplate",
+            reflected: Some(&fake),
+        },
+    );
+
+    assert_eq!(
+        parse.entries[0].type_str,
+        "MapProperty(NameProperty,StructProperty(LinearColor))"
+    );
+}
 // A legacy container tag records `ByteProperty` for a `TEnumAsByte<E>` element
 // too, but `FByteProperty::SerializeItem` writes an enum as an 8-byte FName.
 // The count and the tag's `Size` say which it is; reading names as bytes gave

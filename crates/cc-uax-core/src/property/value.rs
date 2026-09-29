@@ -5,7 +5,7 @@ use super::tag::read_inner_array_struct_name;
 use super::text::parse_text;
 use super::{
     PREVIEW_MAX, ParseCtx, PropertyEntry, PropertyParseStatus, TypeName, ensure_within_value,
-    entries_to_values, parse_properties_report, to_hex, validate_count,
+    entries_to_values, parse_struct_properties_report, to_hex, validate_count,
 };
 use crate::model::{OpaqueByteRange, OpaqueReason, OpaqueValue};
 use crate::name::NameMap;
@@ -512,7 +512,8 @@ fn parse_struct(
             let native_end = r.pos();
             let native_diagnostics = ctx.nested_diagnostics.borrow_mut().split_off(mark);
             r.seek(start)?;
-            let tagged = parse_properties_report(r, ctx, value_end, "/properties");
+            let tagged =
+                parse_struct_properties_report(r, ctx, value_end, "/properties", struct_name);
             if ensure_complete_tagged_payload(r, value_end, &tagged.status, struct_name).is_ok() {
                 return Ok(tagged_struct_value(struct_name, &tagged.entries));
             }
@@ -538,7 +539,7 @@ fn parse_struct(
         // whose `Serialize` returns false and writes a plain tagged block
         // (`FFontOutlineSettings`), so a flagged struct nobody decodes natively is
         // read as tagged; only a payload that is not a tagged block either is unknown.
-        let nested = parse_properties_report(r, ctx, value_end, "/properties");
+        let nested = parse_struct_properties_report(r, ctx, value_end, "/properties", struct_name);
         if matches!(
             nested.status,
             PropertyParseStatus::NonTaggedPayload | PropertyParseStatus::FailedAfterEntries
@@ -570,7 +571,7 @@ fn parse_tagged_struct(
     ctx: &ParseCtx,
     value_end: u64,
 ) -> Result<Value> {
-    let nested = parse_properties_report(r, ctx, value_end, "/properties");
+    let nested = parse_struct_properties_report(r, ctx, value_end, "/properties", struct_name);
     ensure_tagged_payload_parsed(&nested.status, struct_name)?;
     Ok(tagged_struct_value(struct_name, &nested.entries))
 }
