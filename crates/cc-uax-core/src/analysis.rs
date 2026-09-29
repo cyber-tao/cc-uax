@@ -131,23 +131,6 @@ fn analyze_package_of_file(
         .collect::<Vec<_>>();
     diagnostics.extend(rigvm_adapter.diagnostics.iter().cloned());
 
-    // Below the real-corpus-verified floor the version gates still apply, but the
-    // result must not be `complete`: PackageVersion is Partial (see capabilities).
-    if crate::version::is_below_verified_floor(package.summary.file_version_ue5) {
-        diagnostics.push(AnalysisDiagnostic {
-            severity: DiagnosticSeverity::Info,
-            code: "package_below_verified_version".to_string(),
-            path: "/summary/file_version_ue5".to_string(),
-            message: format!(
-                "FileVersionUE5={} is below the real-corpus-verified floor ({}); decoded per the version gates but not yet verified against a real asset",
-                package.summary.file_version_ue5,
-                crate::version::VERIFIED_FILE_VERSION_FLOOR
-            ),
-            offset: None,
-            details: None,
-        });
-    }
-
     let graph_coverage =
         compute_graph_coverage(&report, wants_logic, &control_rig_mirrors, &graphs);
     let property_coverage = compute_property_coverage(&report, package, wants_properties);

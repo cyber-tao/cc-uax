@@ -80,17 +80,6 @@ pub(super) fn build_capabilities(
         },
         detail: None,
     }];
-    if crate::version::is_below_verified_floor(package.summary.file_version_ue5) {
-        capabilities.push(AnalysisCapability {
-            kind: CapabilityKind::PackageVersion,
-            status: AnalysisStatus::Partial,
-            detail: Some(format!(
-                "FileVersionUE5={} is below the real-corpus-verified floor ({})",
-                package.summary.file_version_ue5,
-                crate::version::VERIFIED_FILE_VERSION_FLOOR
-            )),
-        });
-    }
     if wants_references {
         capabilities.push(AnalysisCapability {
             kind: CapabilityKind::ReferenceTables,

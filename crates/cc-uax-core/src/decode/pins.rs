@@ -52,126 +52,110 @@ pub(super) fn decode_pins_for_export(
     // One layout only. Missing custom-version GUIDs already resolve to -1
     // (legacy) in PinSerCtx, and probing alternatives would let a wrong-but-longer
     // consume win over the correct one.
-    let candidates = [*pin_ctx];
-    let mut best = None;
-    let mut best_pos = pin_start;
-    let mut failures = Vec::new();
-    for candidate in candidates {
-        if reader.seek(pin_start).is_err() {
-            continue;
-        }
-        match parse_node_pins_report(reader, pin_end, ctx, &candidate, &path) {
-            Ok(parsed) => {
-                let mut user_defined_pins: Option<Vec<UserDefinedPin>> = None;
-                let mut selected_diagnostics = Vec::new();
-                if editable_pin_class {
-                    let version = framework_version.unwrap_or(-1);
-                    if is_supported_framework_pin_version(version) {
-                        match parse_user_defined_pins_report(
-                            reader,
-                            pin_end,
-                            ctx,
-                            &candidate,
-                            version,
-                            &format!("{path}/user_defined"),
-                        ) {
-                            Ok(pins) => user_defined_pins = Some(pins),
-                            Err(diagnostic) => {
-                                failures.push(diagnostic.with_context(json!({
-                                    "framework_version": framework_version,
-                                    "has_source_index": candidate.has_source_index,
-                                    "has_uobject_wrapper": candidate.has_uobject_wrapper,
-                                    "has_single_precision_float": candidate.has_single_precision_float,
-                                })));
-                                continue;
-                            }
-                        }
-                        if framework_version.is_none() {
-                            selected_diagnostics.push(
-                                Diagnostic::warning(
-                                    "framework_pin_version_missing",
-                                    format!("{path}/user_defined"),
-                                    "Dev-Framework custom version is absent; parsed FUserPinInfo with the legacy FString name layout",
-                                )
-                                .with_offset(reader.pos()),
-                            );
-                        }
-                    } else {
-                        selected_diagnostics.push(
-                            Diagnostic::warning(
-                                "framework_pin_version_unsupported",
-                                format!("{path}/user_defined"),
-                                format!(
-                                    "Dev-Framework custom version {version} is newer than the supported pin layout"
-                                ),
-                            )
-                            .with_offset(reader.pos())
-                            .with_context(json!({ "framework_version": version })),
-                        );
+    let layout = || {
+        json!({
+            "has_source_index": pin_ctx.has_source_index,
+            "has_uobject_wrapper": pin_ctx.has_uobject_wrapper,
+            "has_single_precision_float": pin_ctx.has_single_precision_float,
+        })
+    };
+    let outcome = (|| {
+        let parsed = parse_node_pins_report(reader, pin_end, ctx, pin_ctx, &path)
+            .map_err(|diagnostic| diagnostic.with_context(layout()))?;
+        let mut user_defined_pins: Option<Vec<UserDefinedPin>> = None;
+        let mut selected_diagnostics = Vec::new();
+        if editable_pin_class {
+            let version = framework_version.unwrap_or(-1);
+            if is_supported_framework_pin_version(version) {
+                match parse_user_defined_pins_report(
+                    reader,
+                    pin_end,
+                    ctx,
+                    pin_ctx,
+                    version,
+                    &format!("{path}/user_defined"),
+                ) {
+                    Ok(pins) => user_defined_pins = Some(pins),
+                    Err(diagnostic) => {
+                        return Err(diagnostic.with_context(json!({
+                            "framework_version": framework_version,
+                            "has_source_index": pin_ctx.has_source_index,
+                            "has_uobject_wrapper": pin_ctx.has_uobject_wrapper,
+                            "has_single_precision_float": pin_ctx.has_single_precision_float,
+                        })));
                     }
                 }
-                if let Err(diagnostic) =
-                    consume_known_node_tail(reader, pin_end, ctx, class_full, &path)
-                {
-                    failures.push(diagnostic.with_context(json!({
-                        "has_source_index": candidate.has_source_index,
-                        "has_uobject_wrapper": candidate.has_uobject_wrapper,
-                        "has_single_precision_float": candidate.has_single_precision_float,
-                    })));
-                    continue;
-                }
-                let consumed_pos = reader.pos();
-                if consumed_pos < pin_end {
+                if framework_version.is_none() {
                     selected_diagnostics.push(
                         Diagnostic::warning(
-                            if editable_pin_class {
-                                "user_defined_pins_trailing_bytes"
-                            } else {
-                                "pin_region_trailing_bytes"
-                            },
-                            &path,
-                            format!(
-                                "{} byte(s) remain after the known graph-node serialization",
-                                pin_end - consumed_pos
-                            ),
+                            "framework_pin_version_missing",
+                            format!("{path}/user_defined"),
+                            "Dev-Framework custom version is absent; parsed FUserPinInfo with the legacy FString name layout",
                         )
-                        .with_offset(consumed_pos)
-                        .with_context(json!({
-                            "class": class_full,
-                            "tail_start": consumed_pos,
-                            "serial_end": pin_end,
-                            "tail_size": pin_end - consumed_pos,
-                        })),
+                        .with_offset(reader.pos()),
                     );
                 }
-                if best.is_none() || consumed_pos > best_pos {
-                    best_pos = consumed_pos;
-                    best = Some((
-                        parsed.object_guid,
-                        parsed.pins,
-                        user_defined_pins,
-                        selected_diagnostics,
-                    ));
-                }
+            } else {
+                selected_diagnostics.push(
+                    Diagnostic::warning(
+                        "framework_pin_version_unsupported",
+                        format!("{path}/user_defined"),
+                        format!(
+                            "Dev-Framework custom version {version} is newer than the supported pin layout"
+                        ),
+                    )
+                    .with_offset(reader.pos())
+                    .with_context(json!({ "framework_version": version })),
+                );
             }
-            Err(diag) => failures.push(diag.with_context(json!({
-                "has_source_index": candidate.has_source_index,
-                "has_uobject_wrapper": candidate.has_uobject_wrapper,
-                "has_single_precision_float": candidate.has_single_precision_float,
-            }))),
         }
-    }
-    if let Some((object_guid, pins, user_defined_pins, selected_diagnostics)) = best {
-        export.claim_span(pin_start, best_pos);
-        let _ = reader.seek(best_pos);
-        export.object_guid = object_guid;
-        export.pins = Some(pins);
-        export.user_defined_pins = user_defined_pins;
-        diagnostics.extend(selected_diagnostics);
-        return;
+        consume_known_node_tail(reader, pin_end, ctx, class_full, &path)
+            .map_err(|diagnostic| diagnostic.with_context(layout()))?;
+        let consumed_pos = reader.pos();
+        if consumed_pos < pin_end {
+            selected_diagnostics.push(
+                Diagnostic::warning(
+                    if editable_pin_class {
+                        "user_defined_pins_trailing_bytes"
+                    } else {
+                        "pin_region_trailing_bytes"
+                    },
+                    &path,
+                    format!(
+                        "{} byte(s) remain after the known graph-node serialization",
+                        pin_end - consumed_pos
+                    ),
+                )
+                .with_offset(consumed_pos)
+                .with_context(json!({
+                    "class": class_full,
+                    "tail_start": consumed_pos,
+                    "serial_end": pin_end,
+                    "tail_size": pin_end - consumed_pos,
+                })),
+            );
+        }
+        Ok((
+            parsed.object_guid,
+            parsed.pins,
+            user_defined_pins,
+            selected_diagnostics,
+            consumed_pos,
+        ))
+    })();
+    match outcome {
+        Ok((object_guid, pins, user_defined_pins, selected_diagnostics, consumed_pos)) => {
+            export.claim_span(pin_start, consumed_pos);
+            let _ = reader.seek(consumed_pos);
+            export.object_guid = object_guid;
+            export.pins = Some(pins);
+            export.user_defined_pins = user_defined_pins;
+            diagnostics.extend(selected_diagnostics);
+            return;
+        }
+        Err(failure) => diagnostics.push(failure),
     }
 
-    diagnostics.extend(failures);
     export.pins_failed = true;
     let pin_bytes = pin_end.saturating_sub(pin_start);
     if pin_bytes > 0 {

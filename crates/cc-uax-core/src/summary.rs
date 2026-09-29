@@ -1,4 +1,4 @@
-use crate::reader::{FSTRING_LENGTH_BYTES, Guid, Reader};
+use crate::reader::{FSTRING_LENGTH_BYTES, Guid, Reader, ensure_count_fits};
 use crate::rejection::out_of_scope;
 use crate::version::{PACKAGE_FILE_TAG, PACKAGE_FILE_TAG_SWAPPED, ue4, ue5};
 use anyhow::{Result, bail};
@@ -203,9 +203,7 @@ impl PackageFileSummary {
                 -5..=-3 => GUID_CUSTOM_VERSION_MIN_ENTRY_BYTES,
                 _ => CUSTOM_VERSION_ENTRY_BYTES,
             };
-            if count < 0 || (count as u64).saturating_mul(entry_bytes) > r.remaining() {
-                bail!("custom version count out of range: {count}");
-            }
+            ensure_count_fits(count, r.remaining(), entry_bytes, "custom version")?;
             for _ in 0..count {
                 match legacy_file_version {
                     // FEnumCustomVersion_DEPRECATED: the GUID is invented from
@@ -320,9 +318,7 @@ impl PackageFileSummary {
         }
 
         let generation_count = r.read_i32()?;
-        if generation_count < 0 || (generation_count as u64).saturating_mul(8) > r.remaining() {
-            bail!("generation count out of range: {generation_count}");
-        }
+        ensure_count_fits(generation_count, r.remaining(), 8, "generation")?;
         for _ in 0..generation_count {
             let _gen_export_count = r.read_i32()?;
             let _gen_name_count = r.read_i32()?;
@@ -352,18 +348,17 @@ impl PackageFileSummary {
         }
         // A negative count is not an empty TArray: continuing here would read
         // PackageSource and every later field from the wrong offset.
-        if compressed_chunks_count < 0 {
-            bail!("CompressedChunks count out of range: {compressed_chunks_count}");
-        }
+        ensure_count_fits(compressed_chunks_count, 0, 0, "CompressedChunks")?;
 
         let _package_source = r.read_u32()?;
 
         let additional_count = r.read_i32()?;
-        if additional_count < 0
-            || (additional_count as u64).saturating_mul(FSTRING_LENGTH_BYTES) > r.remaining()
-        {
-            bail!("AdditionalPackagesToCook count out of range: {additional_count}");
-        }
+        ensure_count_fits(
+            additional_count,
+            r.remaining(),
+            FSTRING_LENGTH_BYTES,
+            "AdditionalPackagesToCook",
+        )?;
         for _ in 0..additional_count {
             let _ = r.read_fstring()?;
         }
@@ -381,9 +376,7 @@ impl PackageFileSummary {
 
         if ue4v >= ue4::CHANGED_CHUNKID_TO_BE_AN_ARRAY_OF_CHUNKIDS {
             let chunk_count = r.read_i32()?;
-            if chunk_count < 0 || (chunk_count as u64).saturating_mul(4) > r.remaining() {
-                bail!("ChunkIDs count out of range: {chunk_count}");
-            }
+            ensure_count_fits(chunk_count, r.remaining(), 4, "ChunkIDs")?;
             for _ in 0..chunk_count {
                 let _ = r.read_i32()?;
             }

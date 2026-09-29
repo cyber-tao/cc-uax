@@ -882,7 +882,6 @@ pub enum CapabilityKind {
     RigHierarchy,
     StateTreeSemantics,
     PcgSemantics,
-    PackageVersion,
     /// Compiled Blueprint bytecode (`UStruct::Serialize`'s `Script`). Named for
     /// the same reason as `RigVmBytecode`: the source-level graph is decoded but
     /// the compiled form is not, and a consumer must be told so.

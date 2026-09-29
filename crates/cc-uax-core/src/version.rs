@@ -169,6 +169,9 @@ pub mod custom {
     /// per-object map.
     pub const EDITOR_ROOT_META_DATA_SUPPORT: i32 = 3;
 
+    /// FUE5MainStreamObjectVersion::EdGraphPinSourceIndex: from this version on an
+    /// `FEdGraphPin` writes its `SourceIndex` (compared against
+    /// `UE5_MAIN_STREAM_OBJECT_VERSION` in `PinSerCtx::from_summary`).
     pub const EDGRAPH_PIN_SOURCE_INDEX: i32 = 50;
     /// FFrameworkObjectVersion::PinsStoreFName — pin names serialize as FName
     /// rather than FString from this version on.
@@ -185,7 +188,13 @@ pub mod custom {
     pub const NIAGARA_VARIABLES_USE_TYPE_DEF_REGISTRY: i32 = 64;
     pub const NIAGARA_ADD_VARIADIC_PARAMETERS_TO_GPU_FUNCTION_INFO: i32 = 77;
     pub const NIAGARA_SERIALIZE_USAGE_BITMASK_TO_GPU_FUNCTION_INFO: i32 = 91;
+    /// FReleaseObjectVersion::PinTypeIncludesUObjectWrapperFlag: from this version
+    /// on an `FEdGraphPinType` carries its `bIsUObjectWrapper` flag (compared
+    /// against `RELEASE_OBJECT_VERSION`).
     pub const PIN_TYPE_INCLUDES_UOBJECT_WRAPPER_FLAG: i32 = 32;
+    /// FUE5ReleaseStreamObjectVersion::SerializeFloatPinDefaultValuesAsSinglePrecision:
+    /// from this version on float pin default values are single precision (compared
+    /// against `UE5_RELEASE_STREAM_OBJECT_VERSION`).
     pub const SERIALIZE_FLOAT_PIN_SINGLE_PRECISION: i32 = 36;
     /// FFortniteMainBranchObjectVersion::DynamicCastNodesUsePureStateEnum.
     pub const DYNAMIC_CAST_NODES_USE_PURE_STATE_ENUM: i32 = 85;
@@ -253,19 +262,3 @@ pub const PACKAGE_FILE_TAG_SWAPPED: u32 = 0xC183_2A9E;
 /// first UE5 AUTOMATIC value; 1000–1007 are UE5.0. UE4 packages keep
 /// FileVersionUE5 = 0 and remain out of scope.
 pub const SUPPORTED_FILE_VERSION_FLOOR: i32 = ue5::INITIAL_VERSION;
-
-/// Lowest `FileVersionUE5` treated as real-corpus-verified. Currently equal to
-/// [`SUPPORTED_FILE_VERSION_FLOOR`]: accepted UE5.0–5.8 packages may be `complete`
-/// when their evidence is complete. Packages below this floor still decode per the
-/// version gates, but `CapabilityKind::PackageVersion` stays `partial`.
-pub const VERIFIED_FILE_VERSION_FLOOR: i32 = ue5::INITIAL_VERSION;
-
-/// Whether a package version decodes per the version gates but has not been
-/// checked against a real asset of that version.
-///
-/// Unreachable while the verified floor equals [`SUPPORTED_FILE_VERSION_FLOOR`],
-/// because parsing rejects anything below it first. It exists as one predicate so
-/// the diagnostic and the capability cannot disagree if the floor is ever raised.
-pub fn is_below_verified_floor(file_version_ue5: i32) -> bool {
-    file_version_ue5 < VERIFIED_FILE_VERSION_FLOOR
-}

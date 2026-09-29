@@ -3,8 +3,7 @@ use crate::PackageView;
 use crate::analysis::analyze_package;
 use crate::model::{
     ASSET_ANALYSIS_SCHEMA_VERSION, AnalysisStatus, AssetAnalysis, AssetView, CapabilityKind,
-    DecodedValue, DiagnosticSeverity, KnownOpaqueKind, OpaqueReason, ParseCoverage,
-    PropertyDecodeStatus,
+    DecodedValue, KnownOpaqueKind, OpaqueReason, ParseCoverage, PropertyDecodeStatus,
 };
 use crate::name::NameMap;
 use crate::object::{ObjectImport, PackageIndex};
@@ -1010,31 +1009,7 @@ fn future_file_version_is_reported_as_unsupported() {
 }
 
 #[test]
-fn below_verified_floor_is_partial_with_package_version_capability() {
-    // Parse rejects FileVersionUE5 below SUPPORTED_FILE_VERSION_FLOOR, which currently
-    // equals the verified floor. Mutate a parsed package to lock the diagnostic and
-    // PackageVersion capability path.
-    let bytes = build_minimal_package_with_version(1000, 5, 0);
-    let mut package = Package::parse(&bytes).unwrap();
-    package.summary.file_version_ue5 = crate::version::VERIFIED_FILE_VERSION_FLOOR - 1;
-    let analysis = analyze_package(&package, &bytes, AssetView::Summary);
-    assert!(
-        analysis.diagnostics.iter().any(|diagnostic| diagnostic.code
-            == "package_below_verified_version"
-            && diagnostic.severity == DiagnosticSeverity::Info),
-        "expected a package_below_verified_version info note"
-    );
-    assert_eq!(analysis.status, AnalysisStatus::Partial);
-    let version = analysis
-        .capabilities
-        .iter()
-        .find(|capability| capability.kind == CapabilityKind::PackageVersion)
-        .expect("PackageVersion capability missing");
-    assert_eq!(version.status, AnalysisStatus::Partial);
-}
-
-#[test]
-fn verified_floor_version_adds_no_version_note() {
+fn every_supported_file_version_analyses_as_complete() {
     for (fv, major, minor) in [
         (1000, 5, 0),
         (1004, 5, 0),
@@ -1047,24 +1022,10 @@ fn verified_floor_version_adds_no_version_note() {
         let bytes = build_minimal_package_with_version(fv, major, minor);
         let package = Package::parse(&bytes).unwrap();
         let analysis = analyze_package(&package, &bytes, AssetView::Summary);
-        assert!(
-            !analysis
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "package_below_verified_version"),
-            "FileVersionUE5={fv} is at/above the verified floor"
-        );
-        assert!(
-            !analysis
-                .capabilities
-                .iter()
-                .any(|capability| capability.kind == CapabilityKind::PackageVersion),
-            "FileVersionUE5={fv} must not emit PackageVersion"
-        );
-        assert_eq!(analysis.status, AnalysisStatus::Complete);
+        assert_eq!(analysis.status, AnalysisStatus::Complete, "{fv}");
+        assert!(analysis.diagnostics.is_empty(), "{fv}");
     }
 }
-
 #[test]
 fn references_view_includes_typed_imports_without_decoding_exports() {
     let mut package = Package::parse(&build_minimal_package()).unwrap();

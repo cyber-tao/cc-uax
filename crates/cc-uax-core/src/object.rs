@@ -4,10 +4,10 @@ use crate::version::{ue4, ue5};
 use anyhow::Result;
 
 /// Whether a serialized import-table entry carries `FObjectImport::PackageName`. It is
-/// present whenever `ue4v >= NON_OUTER_PACKAGE_IMPORT`, except that UE5.6/5.7 omit it for
-/// FilterEditorOnly packages while UE5.8 always writes it. Those releases share
-/// FileVersionUE5 = 1018, so the engine version is the only signal that separates the two
-/// layouts (ObjectResource.cpp FObjectImport::Serialize).
+/// present whenever `ue4v >= NON_OUTER_PACKAGE_IMPORT`, except that FilterEditorOnly
+/// packages omit it through UE5.7 while UE5.8 always writes it. UE5.7 and UE5.8 share
+/// FileVersionUE5 = 1018, so the engine version is the only signal that separates the
+/// two layouts (ObjectResource.cpp FObjectImport::Serialize).
 fn import_has_package_name(
     ue4v: i32,
     filter_editor_only: bool,
