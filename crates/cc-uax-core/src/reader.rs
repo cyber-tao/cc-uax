@@ -111,12 +111,14 @@ pub struct RawName {
 pub struct Reader<'a> {
     cur: Cursor<&'a [u8]>,
     len: u64,
+    limit: u64,
 }
 
 impl<'a> Reader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         Reader {
             len: data.len() as u64,
+            limit: data.len() as u64,
             cur: Cursor::new(data),
         }
     }
@@ -131,9 +133,38 @@ impl<'a> Reader<'a> {
         self.len
     }
 
+    /// Exclusive end offset that every read must stay below. It equals [`len`]
+    /// until [`with_limit`] narrows it to an export or property value window.
+    ///
+    /// [`len`]: Reader::len
+    /// [`with_limit`]: Reader::with_limit
+    #[inline]
+    pub fn limit(&self) -> u64 {
+        self.limit
+    }
+
+    /// Bytes left before the read limit (the end of the file when no window is
+    /// active).
     #[inline]
     pub fn remaining(&self) -> u64 {
-        self.len.saturating_sub(self.pos())
+        self.limit().saturating_sub(self.pos())
+    }
+
+    /// Runs `f` with reads confined to `[.., end)`.
+    ///
+    /// A decoder working inside a window then cannot read past it by
+    /// construction, instead of relying on every call site to check. The limit
+    /// can only narrow: a nested call with a larger `end` keeps the outer
+    /// window. The previous limit is restored whatever `f` returns, so a failed
+    /// decode does not leak its window into the caller. `seek` and `skip` stay
+    /// bounded by the file only, because decoders rewind to a value start and the
+    /// tag loop repositions after a value.
+    pub fn with_limit<T>(&mut self, end: u64, f: impl FnOnce(&mut Self) -> T) -> T {
+        let previous = self.limit;
+        self.limit = previous.min(end);
+        let result = f(self);
+        self.limit = previous;
+        result
     }
 
     pub fn seek(&mut self, pos: u64) -> Result<()> {
@@ -153,43 +184,66 @@ impl<'a> Reader<'a> {
         self.seek(target)
     }
 
+    /// The single gate every read passes through, checked before anything is
+    /// consumed so a refused read leaves the position untouched.
+    fn ensure_readable(&self, n: u64) -> Result<()> {
+        let pos = self.pos();
+        if pos.saturating_add(n) > self.limit {
+            bail!(
+                "read of {n} byte(s) at offset {pos} crosses the read limit {}",
+                self.limit
+            );
+        }
+        Ok(())
+    }
+
     pub fn read_u8(&mut self) -> Result<u8> {
+        self.ensure_readable(1)?;
         Ok(self.cur.read_u8()?)
     }
 
     pub fn read_i8(&mut self) -> Result<i8> {
+        self.ensure_readable(1)?;
         Ok(self.cur.read_i8()?)
     }
 
     pub fn read_u16(&mut self) -> Result<u16> {
+        self.ensure_readable(2)?;
         Ok(self.cur.read_u16::<LittleEndian>()?)
     }
 
     pub fn read_i16(&mut self) -> Result<i16> {
+        self.ensure_readable(2)?;
         Ok(self.cur.read_i16::<LittleEndian>()?)
     }
 
     pub fn read_u32(&mut self) -> Result<u32> {
+        self.ensure_readable(4)?;
         Ok(self.cur.read_u32::<LittleEndian>()?)
     }
 
     pub fn read_i32(&mut self) -> Result<i32> {
+        self.ensure_readable(4)?;
         Ok(self.cur.read_i32::<LittleEndian>()?)
     }
 
     pub fn read_u64(&mut self) -> Result<u64> {
+        self.ensure_readable(8)?;
         Ok(self.cur.read_u64::<LittleEndian>()?)
     }
 
     pub fn read_i64(&mut self) -> Result<i64> {
+        self.ensure_readable(8)?;
         Ok(self.cur.read_i64::<LittleEndian>()?)
     }
 
     pub fn read_f32(&mut self) -> Result<f32> {
+        self.ensure_readable(4)?;
         Ok(self.cur.read_f32::<LittleEndian>()?)
     }
 
     pub fn read_f64(&mut self) -> Result<f64> {
+        self.ensure_readable(8)?;
         Ok(self.cur.read_f64::<LittleEndian>()?)
     }
 
@@ -198,19 +252,14 @@ impl<'a> Reader<'a> {
     }
 
     pub fn read_bytes(&mut self, n: usize) -> Result<Vec<u8>> {
-        if n as u64 > self.remaining() {
-            bail!(
-                "read {} bytes out of range, only {} bytes remaining",
-                n,
-                self.remaining()
-            );
-        }
+        self.ensure_readable(n as u64)?;
         let mut buf = vec![0u8; n];
         self.cur.read_exact(&mut buf)?;
         Ok(buf)
     }
 
     pub fn read_guid(&mut self) -> Result<Guid> {
+        self.ensure_readable(16)?;
         Ok(Guid([
             self.read_u32()?,
             self.read_u32()?,
@@ -227,6 +276,7 @@ impl<'a> Reader<'a> {
     }
 
     pub fn read_raw_name(&mut self) -> Result<RawName> {
+        self.ensure_readable(RAW_NAME_BYTES)?;
         Ok(RawName {
             index: self.read_i32()?,
             number: self.read_i32()?,

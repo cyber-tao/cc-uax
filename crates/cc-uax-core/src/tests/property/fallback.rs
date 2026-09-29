@@ -239,3 +239,67 @@ fn vm_external_function_binding_info_parses_as_tagged_fallback() {
     assert_eq!(props[0]["name"].as_str(), Some("NumOutputs"));
     assert_eq!(props[0]["value"].as_i64(), Some(2));
 }
+
+#[test]
+fn value_crossing_its_window_falls_back_through_the_read_limit() {
+    let names = NameMap {
+        names: vec![
+            "Location".to_string(),
+            "StructProperty".to_string(),
+            "Vector".to_string(),
+            "Count".to_string(),
+            "IntProperty".to_string(),
+            "None".to_string(),
+        ],
+    };
+    let mut d = Vec::new();
+    // A double FVector needs 24 bytes; the tag only declares 12.
+    push_raw_name(&mut d, 0); // Location
+    push_raw_name(&mut d, 1); // StructProperty
+    push_i32(&mut d, 1); // one type parameter
+    push_raw_name(&mut d, 2); // Vector
+    push_i32(&mut d, 0);
+    push_i32(&mut d, 12); // declared size
+    d.push(0x08); // HasBinaryOrNativeSerialize
+    let value_start = d.len() as u64;
+    for _ in 0..3 {
+        push_f32(&mut d, 1.0);
+    }
+    push_raw_name(&mut d, 3); // Count
+    push_raw_name(&mut d, 4); // IntProperty
+    push_i32(&mut d, 0);
+    push_i32(&mut d, 4);
+    d.push(0);
+    push_i32(&mut d, 42);
+    push_raw_name(&mut d, 5); // None
+
+    let ctx = ParseCtx {
+        names: &names,
+        resolve_object: &|_idx: i32| crate::DecodedValue::Null,
+        pins: PinSerCtx::default(),
+        soft_object_paths: &[],
+        soft_object_paths_unavailable: false,
+        serialization: crate::version::SerializationPolicy::default(),
+        file_version_ue4: crate::version::ue4::HIGHEST,
+        file_version_ue5: crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME,
+        nested_diagnostics: Default::default(),
+    };
+    let mut r = Reader::new(&d);
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert_eq!(report.entries.len(), 2);
+    assert!(report.entries[0].value.get("@unparsed").is_some());
+    assert_eq!(report.entries[1].name, "Count");
+    assert_eq!(report.entries[1].value.as_i64(), Some(42));
+
+    let diag = report
+        .diagnostics
+        .iter()
+        .find(|diag| diag.code == "property_value_fallback")
+        .expect("fallback diagnostic should be emitted");
+    assert_eq!(diag.path, "/properties/Location");
+    assert_eq!(diag.offset, Some(value_start));
+    assert!(diag.message.contains("failed to decode property"));
+    assert!(!diag.message.contains("past its declared value window"));
+    assert!(diag.message.contains("read limit"), "{}", diag.message);
+}

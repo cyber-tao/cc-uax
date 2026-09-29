@@ -253,7 +253,9 @@ fn decode_bytecode(
         release_object_version: ctx.release_object_version,
         text_literals: ctx.text_literals,
     };
-    let (summary, failure) = bytecode::disassemble(reader, script_end, &bytecode_ctx);
+    let (summary, failure) = reader.with_limit(script_end, |reader| {
+        bytecode::disassemble(reader, script_end, &bytecode_ctx)
+    });
     // The region's length is declared, so a failed walk still leaves the stream
     // positioned correctly for whatever the class writes next.
     reader.seek(script_end)?;

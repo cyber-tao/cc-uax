@@ -157,7 +157,9 @@ pub(super) fn append_serialized_struct_payload(
         return Ok(());
     }
 
-    let parsed = parse_properties_report(r, ctx, payload_end, "/serialized_struct/properties");
+    let parsed = r.with_limit(payload_end, |r| {
+        parse_properties_report(r, ctx, payload_end, "/serialized_struct/properties")
+    });
     if !parsed.entries.is_empty() {
         out.insert("properties".into(), entries_to_values(&parsed.entries));
     }

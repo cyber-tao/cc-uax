@@ -382,7 +382,10 @@ pub(crate) fn parse_properties_report(
         } else if tag.type_name.name == "BoolProperty" {
             json!(tag.bool_val)
         } else {
-            match parse_value(r, &tag.type_name, ctx, tag.is_binary_native, aligned) {
+            let decoded = r.with_limit(aligned, |r| {
+                parse_value(r, &tag.type_name, ctx, tag.is_binary_native, aligned)
+            });
+            match decoded {
                 Ok(v) if r.pos() == aligned => v,
                 Ok(v) if r.pos() < aligned => {
                     // Decoder stopped before the declared window end; retain the gap as evidence.

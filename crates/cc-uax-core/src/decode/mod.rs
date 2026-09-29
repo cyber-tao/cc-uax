@@ -349,13 +349,15 @@ impl Package {
                 && (options.properties || options.pins)
                 && let Some(window) = serial_window
             {
-                decode_rigvm_link_for_export(
-                    &mut reader,
-                    window,
-                    &export_path,
-                    diagnostics,
-                    &mut export,
-                );
+                reader.with_limit(window.serial_end, |reader| {
+                    decode_rigvm_link_for_export(
+                        reader,
+                        window,
+                        &export_path,
+                        diagnostics,
+                        &mut export,
+                    )
+                });
             } else if let Some(window) = serial_window
                 && !window.writes_tagged_block
             {
@@ -363,15 +365,17 @@ impl Package {
                 // has anything to read: every byte is the class's own serializer
                 // data, classified as such by the tail step.
                 export.property_status = Some(PropertyParseStatus::NativeOnly);
-                account_export_tail(
-                    &mut reader,
-                    window,
-                    &class_full,
-                    &script_ctx,
-                    &export_path,
-                    diagnostics,
-                    &mut export,
-                );
+                reader.with_limit(window.serial_end, |reader| {
+                    account_export_tail(
+                        reader,
+                        window,
+                        &class_full,
+                        &script_ctx,
+                        &export_path,
+                        diagnostics,
+                        &mut export,
+                    )
+                });
                 decoded.push(export);
                 continue;
             }
@@ -387,8 +391,10 @@ impl Package {
                     self.summary.file_version_ue4,
                     self.summary.filter_editor_only(),
                 )
-                && let Some((source_files, prefix_end)) =
-                    decode_import_data_prefix(&mut reader, *window)
+                && let Some((source_files, prefix_end)) = reader
+                    .with_limit(window.serial_end, |reader| {
+                        decode_import_data_prefix(reader, *window)
+                    })
             {
                 export.source_files = Some(source_files);
                 export.decoded_prefix_end = Some(prefix_end);
@@ -402,16 +408,18 @@ impl Package {
                 && (options.properties || is_node || capture_adapter_properties)
                 && let Some(window) = serial_window
             {
-                decode_properties_for_export(
-                    &mut reader,
-                    &ctx,
-                    window,
-                    &export_path,
-                    &class_full,
-                    options.properties || capture_adapter_properties,
-                    diagnostics,
-                    &mut export,
-                );
+                reader.with_limit(window.serial_end, |reader| {
+                    decode_properties_for_export(
+                        reader,
+                        &ctx,
+                        window,
+                        &export_path,
+                        &class_full,
+                        options.properties || capture_adapter_properties,
+                        diagnostics,
+                        &mut export,
+                    )
+                });
             }
 
             // A `*Node` export owned by a `*Graph` export that no node rule
@@ -438,30 +446,34 @@ impl Package {
             if options.pins
                 && let Some(window) = serial_window
             {
-                decode_pins_for_export(
-                    self,
-                    &mut reader,
-                    &ctx,
-                    &pin_ctx,
-                    has_script,
-                    window,
-                    &export_path,
-                    &class_full,
-                    diagnostics,
-                    &mut export,
-                );
+                reader.with_limit(window.serial_end, |reader| {
+                    decode_pins_for_export(
+                        self,
+                        reader,
+                        &ctx,
+                        &pin_ctx,
+                        has_script,
+                        window,
+                        &export_path,
+                        &class_full,
+                        diagnostics,
+                        &mut export,
+                    )
+                });
             }
 
             if let Some(window) = serial_window {
-                account_export_tail(
-                    &mut reader,
-                    window,
-                    &class_full,
-                    &script_ctx,
-                    &export_path,
-                    diagnostics,
-                    &mut export,
-                );
+                reader.with_limit(window.serial_end, |reader| {
+                    account_export_tail(
+                        reader,
+                        window,
+                        &class_full,
+                        &script_ctx,
+                        &export_path,
+                        diagnostics,
+                        &mut export,
+                    )
+                });
             }
 
             decoded.push(export);
