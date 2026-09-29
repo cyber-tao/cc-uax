@@ -417,8 +417,19 @@ pub enum DecodedValue {
     /// A value no decoder could read, retained as a byte range. Declared before
     /// `Object` because untagged deserialisation tries variants in order and an
     /// `@opaque` object would otherwise parse as a plain map.
-    Opaque(OpaqueValue),
+    ///
+    /// Boxed: an `OpaqueValue` carries strings and a byte range, and stored inline
+    /// it would make every `DecodedValue` (there are tens of millions on a large
+    /// asset) as big as the rarest variant.
+    Opaque(Box<OpaqueValue>),
     Object(BTreeMap<String, DecodedValue>),
+}
+
+impl DecodedValue {
+    /// Wraps an opaque value; the variant is boxed to keep the enum small.
+    pub fn opaque(value: OpaqueValue) -> Self {
+        Self::Opaque(Box::new(value))
+    }
 }
 
 /// Name `OpaqueValue` serialises under, so [`crate::structured_value`]'s

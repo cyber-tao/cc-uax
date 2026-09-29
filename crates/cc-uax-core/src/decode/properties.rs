@@ -124,7 +124,7 @@ fn consume_known_post_property_data(
         }
         Err(err) => {
             let payload = preview_range(reader, metadata_start, window.serial_end);
-            export.metadata = Some(Value::Opaque(OpaqueValue {
+            export.metadata = Some(Value::opaque(OpaqueValue {
                 reason: OpaqueReason::MetadataUndecoded,
                 message: format!("failed to parse PackageMetaData payload: {err:#}"),
                 type_name: Some("PackageMetaData".to_owned()),

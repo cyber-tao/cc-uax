@@ -263,7 +263,7 @@ pub(super) fn opaque_range(
     let preview_len = size.min(PREVIEW_MAX as u64) as usize;
     let preview = r.read_bytes(preview_len)?;
     r.seek(end)?;
-    Ok(Value::Opaque(OpaqueValue {
+    Ok(Value::opaque(OpaqueValue {
         reason,
         message,
         type_name: Some(type_name.to_owned()),

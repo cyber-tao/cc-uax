@@ -296,7 +296,7 @@ fn parse_legacy_byte_container(
     let preview = r.read_bytes(window.min(PREVIEW_MAX as u64) as usize)?;
     r.seek(value_end)?;
     let layouts: Vec<String> = fits.iter().map(|fit| format!("[{}]", fit.layout)).collect();
-    Ok(Value::Opaque(OpaqueValue {
+    Ok(Value::opaque(OpaqueValue {
         reason: OpaqueReason::AmbiguousLegacyByteWidth,
         message: format!(
             "legacy {} fills its {window}-byte value under more than one layout with different values: {}",

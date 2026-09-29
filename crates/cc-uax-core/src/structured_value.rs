@@ -67,7 +67,7 @@ impl DecodedValue {
 
     pub fn as_opaque(&self) -> Option<&OpaqueValue> {
         match self {
-            Self::Opaque(value) => Some(value),
+            Self::Opaque(value) => Some(value.as_ref()),
             _ => None,
         }
     }
@@ -305,7 +305,7 @@ impl ser::Serializer for ValueSerializer {
     {
         let inner = value.serialize(self)?;
         if name == OPAQUE_VALUE_MARKER {
-            return opaque_from_value(&inner).map(Value::Opaque);
+            return opaque_from_value(&inner).map(Value::opaque);
         }
         Ok(inner)
     }
@@ -906,6 +906,19 @@ pub(crate) use decoded_value_unexpected;
 mod tests {
     use super::*;
 
+    // Every decoded property value is one of these, and a large asset holds tens of
+    // millions of them, so the size of the enum multiplies straight into memory and
+    // CPU time. A variant that stores a large payload inline makes every value that
+    // big; keep such payloads boxed.
+    #[test]
+    fn a_decoded_value_stays_small() {
+        let size = std::mem::size_of::<DecodedValue>();
+        assert!(
+            size <= 32,
+            "DecodedValue is {size} bytes (32 when this guard was written); box the variant that grew it"
+        );
+    }
+
     #[derive(Serialize)]
     struct Example {
         name: &'static str,
@@ -942,7 +955,7 @@ mod tests {
 
     #[test]
     fn an_opaque_value_survives_the_json_macro() {
-        let value = json!({ "a": [DecodedValue::Opaque(opaque_example())] });
+        let value = json!({ "a": [DecodedValue::opaque(opaque_example())] });
 
         assert_eq!(value["a"][0].as_opaque(), Some(&opaque_example()));
         assert!(value["a"][0].is_opaque());
@@ -952,7 +965,7 @@ mod tests {
 
     #[test]
     fn an_opaque_value_renders_and_parses_back_through_its_wire_shape() {
-        let value = DecodedValue::Opaque(opaque_example());
+        let value = DecodedValue::opaque(opaque_example());
         let rendered = serde_json_crate::to_value(&value).unwrap();
 
         assert_eq!(
@@ -969,7 +982,7 @@ mod tests {
 
         let mut untyped = opaque_example();
         untyped.type_name = None;
-        let rendered = serde_json_crate::to_value(DecodedValue::Opaque(untyped)).unwrap();
+        let rendered = serde_json_crate::to_value(DecodedValue::opaque(untyped)).unwrap();
         assert!(rendered.get("type").is_none());
     }
 

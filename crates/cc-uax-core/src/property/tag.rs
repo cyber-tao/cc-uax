@@ -186,7 +186,7 @@ fn fallback_value(
     value_end: u64,
     preview: &[u8],
 ) -> Value {
-    Value::Opaque(OpaqueValue {
+    Value::opaque(OpaqueValue {
         reason: if unnamed_inner_struct {
             OpaqueReason::MissingInnerStructName
         } else {
@@ -467,7 +467,7 @@ pub(crate) fn parse_properties_report(
                             "preview": to_hex(&preview),
                         })),
                     );
-                    Value::Opaque(OpaqueValue {
+                    Value::opaque(OpaqueValue {
                         reason: OpaqueReason::ValueUnderconsumed,
                         message,
                         type_name: Some(tag.type_name.display()),

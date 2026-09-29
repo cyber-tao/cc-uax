@@ -494,7 +494,7 @@ mod tests {
             ("has_data".into(), DecodedValue::Bool(true)),
             (
                 "serialized_data".into(),
-                DecodedValue::Opaque(OpaqueValue {
+                DecodedValue::opaque(OpaqueValue {
                     reason: OpaqueReason::RegistryDependentPayload,
                     message: "test property bag".into(),
                     type_name: Some("InstancedPropertyBag".into()),
