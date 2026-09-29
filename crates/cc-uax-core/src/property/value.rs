@@ -2,9 +2,10 @@ use super::native::{ensure_tagged_payload_parsed, is_tagged_fallback_struct, par
 use super::tag::read_inner_array_struct_name;
 use super::text::parse_text;
 use super::{
-    ParseCtx, TypeName, ensure_within_value, entries_to_values, parse_properties_report,
-    validate_count,
+    PREVIEW_MAX, ParseCtx, TypeName, ensure_within_value, entries_to_values,
+    parse_properties_report, to_hex, validate_count,
 };
+use crate::model::{OpaqueByteRange, OpaqueReason, OpaqueValue};
 use crate::name::NameMap;
 use crate::reader::{RAW_NAME_BYTES, Reader};
 use crate::structured_value::{Value, json};
@@ -26,10 +27,14 @@ pub(crate) fn parse_value(
         "Int64Property" => json!(r.read_i64_within(value_end, "Int64Property")?),
         "ByteProperty" => {
             if has_enum_param(ty) {
-                json!(
-                    ctx.names
-                        .resolve_raw(r.read_raw_name_within(value_end, "ByteProperty enum")?)
-                )
+                let raw = r.read_raw_name_within(value_end, "ByteProperty enum")?;
+                if is_legacy_unnamed_enum(ty) && !ctx.names.is_valid(raw) {
+                    bail!(
+                        "ByteProperty enum name index {} is outside the name table",
+                        raw.index
+                    );
+                }
+                json!(ctx.names.resolve_raw(raw))
             } else {
                 json!(r.read_u8_within(value_end, "ByteProperty")?)
             }
@@ -121,11 +126,33 @@ pub(crate) fn parse_value(
             let struct_name = ty.param(0).map(|p| p.name.as_str()).unwrap_or("");
             parse_struct(r, struct_name, ctx, prefer_native, value_end)?
         }
+        "ArrayProperty" | "SetProperty" | "MapProperty" => {
+            if has_legacy_bare_byte_slot(ctx, ty) {
+                return parse_legacy_byte_container(r, ty, ctx, prefer_native, value_end);
+            }
+            parse_container(r, ty, ctx, prefer_native, value_end)?
+        }
+        _ => bail!("unknown property type: {}", ty.name),
+    };
+    Ok(v)
+}
+
+/// The `TArray`/`TSet`/`TMap` arms of [`parse_value`]. Kept apart so the legacy
+/// byte-width probe can decode a container under an assumed layout without
+/// re-entering its own dispatch.
+fn parse_container(
+    r: &mut Reader,
+    ty: &TypeName,
+    ctx: &ParseCtx,
+    prefer_native: bool,
+    value_end: u64,
+) -> Result<Value> {
+    match ty.name.as_str() {
         "ArrayProperty" => {
             let inner = ty
                 .param(0)
                 .ok_or_else(|| anyhow::anyhow!("ArrayProperty missing element type"))?;
-            parse_array(r, inner, ctx, prefer_native, value_end)?
+            parse_array(r, inner, ctx, prefer_native, value_end)
         }
         "SetProperty" => {
             let inner = ty
@@ -139,7 +166,7 @@ pub(crate) fn parse_value(
                 value_end,
                 "Set removed element",
             )?;
-            parse_collection(r, inner, ctx, prefer_native, value_end)?
+            parse_collection(r, inner, ctx, prefer_native, value_end)
         }
         "MapProperty" => {
             let key_ty = ty
@@ -148,11 +175,147 @@ pub(crate) fn parse_value(
             let val_ty = ty
                 .param(1)
                 .ok_or_else(|| anyhow::anyhow!("MapProperty missing value type"))?;
-            parse_map(r, key_ty, val_ty, ctx, prefer_native, value_end)?
+            parse_map(r, key_ty, val_ty, ctx, prefer_native, value_end)
         }
-        _ => bail!("unknown property type: {}", ty.name),
+        _ => bail!("{} is not a container property", ty.name),
+    }
+}
+
+/// Placeholder enum name for a legacy container whose `ByteProperty` elements
+/// turn out to be enum names: the tag never recorded which enum.
+const LEGACY_UNNAMED_ENUM: &str = "<enum>";
+
+fn is_legacy_unnamed_enum(ty: &TypeName) -> bool {
+    ty.params
+        .first()
+        .is_some_and(|param| param.name == LEGACY_UNNAMED_ENUM)
+}
+
+fn is_bare_byte(ty: &TypeName) -> bool {
+    ty.name == "ByteProperty" && ty.params.is_empty()
+}
+
+/// Whether a container tag below `PROPERTY_TAG_COMPLETE_TYPE_NAME` records a
+/// bare `ByteProperty` as one of its element, key or value types. Such a tag says
+/// nothing about whether the slot is a `uint8` or a `TEnumAsByte<E>`.
+fn has_legacy_bare_byte_slot(ctx: &ParseCtx, ty: &TypeName) -> bool {
+    ctx.file_version_ue5 < ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME
+        && matches!(
+            ty.name.as_str(),
+            "ArrayProperty" | "SetProperty" | "MapProperty"
+        )
+        && ty.params.iter().any(is_bare_byte)
+}
+
+/// Decodes a legacy container whose `ByteProperty` slots are ambiguous.
+///
+/// `FByteProperty::SerializeItem` writes an enum-backed byte as an 8-byte
+/// `FName` and a plain one as a single byte, and below
+/// `PROPERTY_TAG_COMPLETE_TYPE_NAME` the tag records neither. The tag's `Size`
+/// is the criterion: every byte/enum-name assignment of the bare slots is decoded
+/// from the value start, and only one that fills the declared window exactly (with
+/// name indices the table contains) counts. Several fitting layouts with
+/// different values are reported as ambiguous instead of guessed.
+fn parse_legacy_byte_container(
+    r: &mut Reader,
+    ty: &TypeName,
+    ctx: &ParseCtx,
+    prefer_native: bool,
+    value_end: u64,
+) -> Result<Value> {
+    let start = r.pos();
+    let mark = ctx.nested_diagnostics.borrow().len();
+    let slots: Vec<usize> = ty
+        .params
+        .iter()
+        .enumerate()
+        .filter(|(_, param)| is_bare_byte(param))
+        .map(|(index, _)| index)
+        .collect();
+
+    struct Fit {
+        value: Value,
+        diagnostics: Vec<crate::diagnostic::Diagnostic>,
+        layout: String,
+    }
+    let mut fits: Vec<Fit> = Vec::new();
+    for assignment in 0..(1u32 << slots.len()) {
+        let mut candidate = ty.clone();
+        let mut layout = Vec::new();
+        for (bit, &slot) in slots.iter().enumerate() {
+            let is_enum = assignment & (1 << bit) != 0;
+            if is_enum {
+                candidate.params[slot] = TypeName::byte_enum_of(LEGACY_UNNAMED_ENUM.to_string());
+            }
+            layout.push(format!(
+                "{}={}",
+                legacy_slot_label(ty, slot),
+                if is_enum { "enum names" } else { "bytes" }
+            ));
+        }
+        let _ = r.seek(start);
+        ctx.nested_diagnostics.borrow_mut().truncate(mark);
+        let decoded = parse_container(r, &candidate, ctx, prefer_native, value_end);
+        // A nested tag loop drains the sink per property, so it may hold fewer
+        // than `mark` entries by now.
+        let diagnostics = {
+            let mut sink = ctx.nested_diagnostics.borrow_mut();
+            let split = mark.min(sink.len());
+            sink.split_off(split)
+        };
+        if let Ok(value) = decoded
+            && r.pos() == value_end
+        {
+            fits.push(Fit {
+                value,
+                diagnostics,
+                layout: layout.join(", "),
+            });
+        }
+    }
+
+    let window = value_end.saturating_sub(start);
+    let Some(first) = fits.first() else {
+        let _ = r.seek(start);
+        bail!(
+            "legacy {} fills its {window}-byte value neither with byte nor with enum-name elements",
+            ty.display()
+        );
     };
-    Ok(v)
+    if fits.iter().all(|fit| fit.value == first.value) {
+        let fit = fits.swap_remove(0);
+        ctx.nested_diagnostics.borrow_mut().extend(fit.diagnostics);
+        r.seek(value_end)?;
+        return Ok(fit.value);
+    }
+
+    r.seek(start)?;
+    let preview = r.read_bytes(window.min(PREVIEW_MAX as u64) as usize)?;
+    r.seek(value_end)?;
+    let layouts: Vec<String> = fits.iter().map(|fit| format!("[{}]", fit.layout)).collect();
+    Ok(Value::Opaque(OpaqueValue {
+        reason: OpaqueReason::AmbiguousLegacyByteWidth,
+        message: format!(
+            "legacy {} fills its {window}-byte value under more than one layout with different values: {}",
+            ty.display(),
+            layouts.join(" or ")
+        ),
+        type_name: Some(ty.display()),
+        byte_range: OpaqueByteRange {
+            start,
+            end: value_end,
+            size: window,
+            preview: to_hex(&preview),
+        },
+    }))
+}
+
+fn legacy_slot_label(ty: &TypeName, slot: usize) -> &'static str {
+    match (ty.name.as_str(), slot) {
+        ("MapProperty", 0) => "key",
+        ("MapProperty", _) => "value",
+        _ => "element",
+    }
 }
 
 fn has_enum_param(ty: &TypeName) -> bool {
@@ -182,39 +345,10 @@ fn parse_array(
         let struct_name = read_inner_array_struct_name(r, ctx, value_end)?;
         Some(TypeName::struct_of(struct_name))
     } else {
-        legacy_byte_element_type(ctx, inner, count, value_end.saturating_sub(r.pos()))
+        None
     };
     let inner = named_inner.as_ref().unwrap_or(inner);
     read_elements(r, inner, ctx, prefer_native, value_end, count)
-}
-
-/// Placeholder enum name for a legacy container whose `ByteProperty` elements
-/// turn out to be enum names: the tag never recorded which enum.
-const LEGACY_UNNAMED_ENUM: &str = "<enum>";
-
-/// Below `PROPERTY_TAG_COMPLETE_TYPE_NAME` a container tag records its element as
-/// a bare `ByteProperty` whether it is a `uint8` or a `TEnumAsByte<E>`, but
-/// `FByteProperty::SerializeItem` writes an enum as an 8-byte `FName`. The tag's
-/// `Size` bounds the payload, so the element width follows from the count: only
-/// `8 * count` remaining bytes can be names, only `count` can be bytes. Anything
-/// else is left to the caller, whose bounded read then fails rather than
-/// misreading name indices as values.
-fn legacy_byte_element_type(
-    ctx: &ParseCtx,
-    inner: &TypeName,
-    count: i32,
-    remaining: u64,
-) -> Option<TypeName> {
-    if ctx.file_version_ue5 >= ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME
-        || inner.name != "ByteProperty"
-        || !inner.params.is_empty()
-        || count <= 0
-    {
-        return None;
-    }
-    let count = u64::try_from(count).ok()?;
-    (remaining == count.checked_mul(RAW_NAME_BYTES)? && remaining != count)
-        .then(|| TypeName::byte_enum_of(LEGACY_UNNAMED_ENUM.to_string()))
 }
 
 /// Whether `FArrayProperty::SerializeItem` wrote an inner `FPropertyTag` for this
@@ -237,8 +371,6 @@ fn parse_collection(
     let count = r.read_i32_within(value_end, "collection element count")?;
     let remaining_in_value = value_end.saturating_sub(r.pos());
     validate_count(count, remaining_in_value, 1, "collection element")?;
-    let named_inner = legacy_byte_element_type(ctx, inner, count, remaining_in_value);
-    let inner = named_inner.as_ref().unwrap_or(inner);
     read_elements(r, inner, ctx, prefer_native, value_end, count)
 }
 

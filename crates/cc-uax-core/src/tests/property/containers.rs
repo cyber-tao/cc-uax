@@ -863,3 +863,273 @@ fn set_removed_elements_are_discarded() {
     assert_eq!(elems[0].as_i64(), Some(7));
     assert_eq!(elems[1].as_i64(), Some(8));
 }
+
+/// Name table for the legacy `ByteProperty` container tests below.
+fn legacy_byte_container_names() -> NameMap {
+    NameMap {
+        names: vec![
+            "Prop".to_string(),           // 0
+            "MapProperty".to_string(),    // 1
+            "ByteProperty".to_string(),   // 2
+            "DoubleProperty".to_string(), // 3
+            "None".to_string(),           // 4
+            "EMode::Fast".to_string(),    // 5
+            "EMode::Slow".to_string(),    // 6
+            "IntProperty".to_string(),    // 7
+            "NameProperty".to_string(),   // 8
+            "SetProperty".to_string(),    // 9
+            "StructProperty".to_string(), // 10
+            "X".to_string(),              // 11
+            "ArrayProperty".to_string(),  // 12
+        ],
+    }
+}
+
+/// A legacy container tag named `Prop` of the given property type whose type
+/// arguments are `params` (name indices), followed by `payload` and `None`.
+fn legacy_container_property(type_idx: i32, params: &[i32], payload: &[u8]) -> Vec<u8> {
+    let mut d = Vec::new();
+    push_legacy_tag_header(&mut d, 0, type_idx, payload.len() as i32);
+    for &param in params {
+        push_raw_name(&mut d, param);
+    }
+    d.push(0); // HasPropertyGuid
+    d.extend_from_slice(payload);
+    push_raw_name(&mut d, 4);
+    d
+}
+
+fn parse_legacy_container(d: &[u8], ctx: &ParseCtx) -> crate::property::PropertyParse {
+    let mut r = Reader::new(d);
+    crate::property::parse_properties_report(&mut r, ctx, d.len() as u64, "/properties")
+}
+
+#[test]
+fn legacy_byte_keyed_map_reads_enum_name_keys_by_exact_fit() {
+    let names = legacy_byte_container_names();
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0); // NumToRemove
+    push_i32(&mut payload, 2);
+    push_raw_name(&mut payload, 5);
+    push_f64(&mut payload, 1.5);
+    push_raw_name(&mut payload, 6);
+    push_f64(&mut payload, 2.25);
+    let d = legacy_container_property(1, &[2, 3], &payload);
+
+    let parse = parse_legacy_container(&d, &legacy_ctx(&names));
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let value = &parse.entries[0].value;
+    assert_eq!(value[0]["key"].as_str(), Some("EMode::Fast"));
+    assert_eq!(value[0]["value"].as_f64(), Some(1.5));
+    assert_eq!(value[1]["key"].as_str(), Some("EMode::Slow"));
+    assert_eq!(value[1]["value"].as_f64(), Some(2.25));
+}
+
+#[test]
+fn legacy_byte_keyed_map_reads_raw_byte_keys_when_that_is_the_fit() {
+    let names = legacy_byte_container_names();
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0);
+    push_i32(&mut payload, 2);
+    payload.push(7);
+    push_i32(&mut payload, 100);
+    payload.push(9);
+    push_i32(&mut payload, 200);
+    let d = legacy_container_property(1, &[2, 7], &payload);
+
+    let parse = parse_legacy_container(&d, &legacy_ctx(&names));
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let value = &parse.entries[0].value;
+    assert_eq!(value[0]["key"].as_i64(), Some(7));
+    assert_eq!(value[0]["value"].as_i64(), Some(100));
+    assert_eq!(value[1]["key"].as_i64(), Some(9));
+    assert_eq!(value[1]["value"].as_i64(), Some(200));
+}
+
+#[test]
+fn legacy_map_with_byte_values_reads_enum_name_values() {
+    let names = legacy_byte_container_names();
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0);
+    push_i32(&mut payload, 1);
+    push_raw_name(&mut payload, 11); // key: FName "X"
+    push_raw_name(&mut payload, 5); // value: enum name
+    let d = legacy_container_property(1, &[8, 2], &payload);
+
+    let parse = parse_legacy_container(&d, &legacy_ctx(&names));
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let value = &parse.entries[0].value;
+    assert_eq!(value[0]["key"].as_str(), Some("X"));
+    assert_eq!(value[0]["value"].as_str(), Some("EMode::Fast"));
+}
+
+#[test]
+fn legacy_byte_set_with_a_removed_entry_reads_enum_names_in_both_lists() {
+    let names = legacy_byte_container_names();
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 1); // NumToRemove
+    push_raw_name(&mut payload, 5);
+    push_i32(&mut payload, 1); // Num
+    push_raw_name(&mut payload, 6);
+    let d = legacy_container_property(9, &[2], &payload);
+
+    let parse = parse_legacy_container(&d, &legacy_ctx(&names));
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let value = &parse.entries[0].value;
+    assert_eq!(value.as_array().unwrap().len(), 1);
+    assert_eq!(value[0].as_str(), Some("EMode::Slow"));
+}
+
+#[test]
+fn legacy_byte_map_prefers_the_layout_whose_names_are_valid() {
+    let names = legacy_byte_container_names();
+    // Nine bytes fill either (byte key, enum value) or (enum key, byte value).
+    // Read as an enum key they begin with index 3 + (6 << 8), which the table
+    // does not contain, so only the first layout is real.
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0);
+    push_i32(&mut payload, 1);
+    payload.push(3);
+    push_raw_name(&mut payload, 6);
+    let d = legacy_container_property(1, &[2, 2], &payload);
+
+    let parse = parse_legacy_container(&d, &legacy_ctx(&names));
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let value = &parse.entries[0].value;
+    assert_eq!(value[0]["key"].as_i64(), Some(3));
+    assert_eq!(value[0]["value"].as_str(), Some("EMode::Slow"));
+}
+
+#[test]
+fn legacy_byte_map_that_two_layouts_fill_differently_is_ambiguous() {
+    let names = legacy_byte_container_names();
+    // All-zero entry bytes are a valid `Prop` name and a zero byte in either
+    // order, so (byte, enum) and (enum, byte) both fit with different values.
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0);
+    push_i32(&mut payload, 1);
+    payload.extend_from_slice(&[0; 9]);
+    let d = legacy_container_property(1, &[2, 2], &payload);
+    let value_start = (d.len() - 8 - payload.len()) as u64;
+
+    let parse = parse_legacy_container(&d, &legacy_ctx(&names));
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let opaque = parse.entries[0].value.as_opaque().expect("ambiguous value");
+    assert_eq!(opaque.reason, OpaqueReason::AmbiguousLegacyByteWidth);
+    assert_eq!(opaque.byte_range.start, value_start);
+    assert_eq!(opaque.byte_range.end, value_start + payload.len() as u64);
+    assert_eq!(opaque.byte_range.size, payload.len() as u64);
+    assert_eq!(
+        opaque.type_name.as_deref(),
+        Some("MapProperty(ByteProperty,ByteProperty)")
+    );
+    assert!(opaque.message.contains("key=bytes"), "{}", opaque.message);
+    assert!(
+        opaque.message.contains("value=enum names"),
+        "{}",
+        opaque.message
+    );
+}
+
+#[test]
+fn legacy_byte_map_that_neither_width_fills_falls_back_naming_the_container() {
+    let names = legacy_byte_container_names();
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0);
+    push_i32(&mut payload, 1);
+    payload.extend_from_slice(&[1, 2, 3, 4, 5]);
+    let d = legacy_container_property(1, &[2, 3], &payload);
+
+    let parse = parse_legacy_container(&d, &legacy_ctx(&names));
+
+    let opaque = parse.entries[0]
+        .value
+        .as_opaque()
+        .expect("value falls back");
+    assert_eq!(opaque.reason, OpaqueReason::UndecodedValue);
+    assert!(
+        opaque
+            .message
+            .contains("MapProperty(ByteProperty,DoubleProperty)")
+            && opaque.message.contains("13-byte value"),
+        "{}",
+        opaque.message
+    );
+    assert!(
+        parse
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_fallback"),
+        "{:#?}",
+        parse.diagnostics
+    );
+}
+
+#[test]
+fn complete_type_name_byte_array_is_read_as_bytes_without_probing() {
+    let names = legacy_byte_container_names();
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Prop
+    push_raw_name(&mut d, 12); // ArrayProperty
+    push_i32(&mut d, 1); // one type parameter
+    push_raw_name(&mut d, 2); // ByteProperty, no enum
+    push_i32(&mut d, 0);
+    // One element followed by bytes that would be an enum name at the legacy
+    // widths; with a complete type name the element is a plain byte.
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 1);
+    push_raw_name(&mut payload, 5);
+    push_i32(&mut d, payload.len() as i32);
+    d.push(0); // flags
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 4);
+    let mut ctx = legacy_ctx(&names);
+    ctx.file_version_ue5 = crate::version::ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME;
+
+    let parse = parse_legacy_container(&d, &ctx);
+
+    let value = &parse.entries[0].value;
+    assert_eq!(value[0].as_i64(), Some(5));
+    assert!(
+        parse
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_value_incomplete"),
+        "{:#?}",
+        parse.diagnostics
+    );
+}
+#[test]
+fn a_rejected_byte_width_leaves_no_nested_diagnostics() {
+    let names = legacy_byte_container_names();
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 0);
+    push_i32(&mut payload, 1);
+    payload.push(3); // key: a plain byte
+    // Value: an unnamed struct whose tagged block is `X: IntProperty = 1`.
+    push_legacy_tag_header(&mut payload, 0, 7, 4);
+    push_legacy_tag_tail(&mut payload, 1010);
+    push_i32(&mut payload, 1);
+    push_raw_name(&mut payload, 4);
+    let d = legacy_container_property(1, &[2, 10], &payload);
+
+    let parse = parse_legacy_container(&d, &legacy_ctx(&names));
+
+    assert!(parse.diagnostics.is_empty(), "{:#?}", parse.diagnostics);
+    let value = &parse.entries[0].value;
+    assert_eq!(value[0]["key"].as_i64(), Some(3));
+    assert_eq!(
+        value[0]["value"]["properties"][0]["name"].as_str(),
+        Some("Prop")
+    );
+    assert_eq!(
+        value[0]["value"]["properties"][0]["value"].as_i64(),
+        Some(1)
+    );
+}

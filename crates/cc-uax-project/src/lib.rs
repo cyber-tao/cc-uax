@@ -12,13 +12,16 @@ mod scanner;
 /// change to what a cached `AssetAnalysisSummary` means must bump it or a warm
 /// scan will replay summaries built under the old meaning.
 ///
+/// 7: legacy containers with ByteProperty elements are resolved by exact fit, so
+/// cached property values and diagnostics for 5.0–5.3 packages differ.
+///
 /// 6: cached summaries built before typed opaque values carry no `value_bytes`
 /// and group value-level regions under the old ad-hoc reasons.
 ///
 /// 5: cached summaries built before native-only payload classification, decoder
 /// span accounting, the import-data prefix decoder, the TextConst layout gate and
 /// the widened graph-node list carry different statuses and counters.
-pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 6;
+pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 7;
 
 pub use analysis_summary::{
     AnalysisDiagnosticSummary, AssetAnalysisSummary, CapabilitySummary, GraphSummary,

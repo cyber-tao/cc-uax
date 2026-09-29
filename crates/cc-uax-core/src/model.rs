@@ -436,15 +436,17 @@ pub enum OpaqueReason {
     RegistryDependentPayload,
     PayloadTail,
     MetadataUndecoded,
+    AmbiguousLegacyByteWidth,
 }
 
 impl OpaqueReason {
-    const ALL: [OpaqueReason; 5] = [
+    const ALL: [OpaqueReason; 6] = [
         Self::UndecodedValue,
         Self::MissingInnerStructName,
         Self::RegistryDependentPayload,
         Self::PayloadTail,
         Self::MetadataUndecoded,
+        Self::AmbiguousLegacyByteWidth,
     ];
 
     /// The snake_case name rendered as the `@opaque` value.
@@ -455,6 +457,7 @@ impl OpaqueReason {
             Self::RegistryDependentPayload => "registry_dependent_payload",
             Self::PayloadTail => "payload_tail",
             Self::MetadataUndecoded => "metadata_undecoded",
+            Self::AmbiguousLegacyByteWidth => "ambiguous_legacy_byte_width",
         }
     }
 
@@ -479,6 +482,9 @@ impl OpaqueReason {
                 "bytes after the decoded part of the value are the type's own serializer data and are retained opaque"
             }
             Self::MetadataUndecoded => "the package metadata payload could not be decoded",
+            Self::AmbiguousLegacyByteWidth => {
+                "the legacy container tag does not say whether its ByteProperty elements are bytes or enum names, and more than one layout fills the value"
+            }
         }
     }
 }

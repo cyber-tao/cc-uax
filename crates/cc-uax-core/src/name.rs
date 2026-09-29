@@ -36,6 +36,12 @@ impl NameMap {
             .map(|s| s.as_str())
     }
 
+    /// Whether `raw` names an entry of this table with a non-negative suffix.
+    /// Lets a decoder that is guessing a layout reject bytes that are not a name.
+    pub fn is_valid(&self, raw: RawName) -> bool {
+        self.get(raw.index).is_some() && raw.number >= 0
+    }
+
     pub fn resolve(&self, index: i32, number: i32) -> String {
         let base = self
             .get(index)
