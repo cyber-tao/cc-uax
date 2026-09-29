@@ -2,19 +2,25 @@ mod import_data;
 mod member;
 pub(crate) mod pins;
 mod properties;
+mod reflection;
 pub(crate) mod rigvm;
 mod window;
 
 pub(crate) use import_data::ImportSourceFile;
 
 use crate::diagnostic::{ByteRangePreview, Diagnostic};
+use crate::object::ObjectExport;
 use crate::package::Package;
 use crate::pin::{Pin, PinSerCtx, UserDefinedPin};
-use crate::property::{BlockOwner, ParseCtx, PropertyEntry, PropertyParseStatus};
+use crate::property::{
+    BlockOwner, ContainerStructNames, ParseCtx, PropertyEntry, PropertyParseStatus,
+};
 use crate::reader::{Guid, Reader};
 pub(crate) use crate::script::is_script_bytecode_class;
 
-use crate::script::{DecodedScriptStruct, ScriptStructContext, decode_script_struct};
+use crate::script::{
+    DecodedScriptStruct, ScriptStructContext, decode_script_struct, is_reflected_class,
+};
 use crate::structured_value::{Value, json};
 use crate::version::{SerializationPolicy, custom, ue5};
 use std::collections::HashMap;
@@ -24,6 +30,7 @@ use import_data::{
 };
 use pins::{decode_pins_for_export, is_graph_node_class};
 use properties::decode_properties_for_export;
+use reflection::PackageReflection;
 use rigvm::{
     DecodedRigVmLink, decode_rigvm_link_for_export, is_rigvm_link_class,
     is_rigvm_model_object_class,
@@ -170,6 +177,17 @@ pub(crate) struct MemberRef {
     pub(crate) parent: Option<Value>,
 }
 
+/// What decoding one export needs besides the export itself.
+#[derive(Clone, Copy)]
+struct ExportDecodeEnv<'a> {
+    options: &'a DecodeOptions,
+    ctx: &'a ParseCtx<'a>,
+    script_ctx: &'a ScriptStructContext<'a>,
+    pin_ctx: PinSerCtx,
+    has_script: bool,
+    file_len: u64,
+}
+
 impl Package {
     pub(crate) fn decode<'a>(&'a self, data: &[u8], options: &DecodeOptions) -> DecodeReport<'a> {
         let mut diagnostics = self.table_diagnostics();
@@ -287,214 +305,275 @@ impl Package {
         };
         let script_ctx = ScriptStructContext::new(self);
         let mut reader = Reader::new(data);
-        let file_len = reader.len();
-        let has_script = self.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET;
-        let mut decoded = Vec::with_capacity(self.exports.len());
+        let env = ExportDecodeEnv {
+            options,
+            ctx: &ctx,
+            script_ctx: &script_ctx,
+            pin_ctx,
+            has_script: self.summary.file_version_ue5 >= ue5::SCRIPT_SERIALIZATION_OFFSET,
+            file_len: reader.len(),
+        };
+        let class_names: Vec<String> = self
+            .exports
+            .iter()
+            .map(|exp| self.resolve_full_name(exp.class_index.0))
+            .collect();
 
-        for (i, exp) in self.exports.iter().enumerate() {
-            let pkg_index = (i as i32) + 1;
-            let class_full = self.resolve_full_name(exp.class_index.0);
-            let is_node = is_graph_node_class(&class_full);
-            let is_rigvm_link = is_rigvm_link_class(&class_full);
-            let capture_adapter_properties = options.pins
-                && ((is_rigvm_model_object_class(&class_full) && !is_rigvm_link)
-                    || is_pcg_model_object_class(&class_full)
-                    || is_state_tree_model_object_class(&class_full));
-            let mut export = DecodedExport {
-                identity: DecodedExportIdentity {
-                    index: pkg_index,
-                    name: self.names.resolve_raw(exp.object_name),
-                    class: class_full.clone(),
-                    is_asset: exp.is_asset,
-                },
-                properties: None,
-                property_status: None,
-                source_files: None,
-                decoded_prefix_end: None,
-                pre_script_region: None,
-                post_property_tail: None,
-                object_guid: None,
-                metadata: None,
-                pins: None,
-                user_defined_pins: None,
-                member: None,
-                rigvm_link: None,
-                script_struct: None,
-                property_block_closed: false,
-                property_block_end: None,
-                pins_failed: false,
-                decoded_spans: Vec::new(),
-                decoded_gaps: Vec::new(),
-                decoded_end: None,
-                serial_size: 0,
-                unclassified_bytes: 0,
-            };
-
-            let export_path = export.identity.path();
-            let mut serial_window = match export_serial_window(
-                exp,
-                has_script,
-                file_len,
-                is_native_only_payload_class(&class_full),
-            ) {
-                Ok(w) => w,
-                Err(err) => {
-                    diagnostics.push(
-                        Diagnostic::error("serial_window_invalid", export_path.clone(), err)
-                            .with_context(json!({
-                                "export_index": pkg_index,
-                                "serial_offset": exp.serial_offset,
-                                "serial_size": exp.serial_size,
-                            })),
-                    );
-                    // No valid window: the payload cannot be accounted for, so
-                    // every declared byte is unclassified.
-                    let size = exp.serial_size.max(0) as u64;
-                    export.serial_size = size;
-                    export.unclassified_bytes = size;
-                    decoded.push(export);
+        // A legacy set/map tag on an instance names no element struct, and the
+        // package's own class declarations do: an export whose class is a reflected
+        // class of this package is decoded after the classes, whatever the export
+        // order. Each export keeps its own diagnostics until both passes are done,
+        // so everything is reported in export-index order.
+        let mut slots: Vec<Option<(DecodedExport, Vec<Diagnostic>)>> =
+            (0..self.exports.len()).map(|_| None).collect();
+        let mut reflection = None;
+        for reflected_pass in [true, false] {
+            for (i, exp) in self.exports.iter().enumerate() {
+                if is_reflected_class(&class_names[i]) != reflected_pass {
                     continue;
                 }
-            };
-
-            if is_rigvm_link
-                && (options.properties || options.pins)
-                && let Some(window) = serial_window
-            {
-                reader.with_limit(window.serial_end, |reader| {
-                    decode_rigvm_link_for_export(
-                        reader,
-                        window,
-                        &export_path,
-                        diagnostics,
-                        &mut export,
-                    )
-                });
-            } else if let Some(window) = serial_window
-                && !window.writes_tagged_block
-            {
-                // No tagged block means no property, pin, GUID or script decoder
-                // has anything to read: every byte is the class's own serializer
-                // data, classified as such by the tail step.
-                export.property_status = Some(PropertyParseStatus::NativeOnly);
-                reader.with_limit(window.serial_end, |reader| {
-                    account_export_tail(
-                        reader,
-                        window,
-                        &class_full,
-                        &script_ctx,
-                        &export_path,
-                        diagnostics,
-                        &mut export,
-                    )
-                });
-                decoded.push(export);
-                continue;
-            }
-
-            // UAssetImportData writes a JSON FString ahead of its tagged block.
-            // Decoding it is what lets the tag loop start where the block really
-            // starts on packages without a declared range, and turns the
-            // provenance it holds into evidence instead of an opaque prefix.
-            if let Some(window) = serial_window.as_mut()
-                && window.writes_tagged_block
-                && is_asset_import_data_class(&class_full)
-                && writes_import_data_prefix(
-                    self.summary.file_version_ue4,
-                    self.summary.filter_editor_only(),
-                )
-                && let Some((source_files, prefix_end)) = reader
-                    .with_limit(window.serial_end, |reader| {
-                        decode_import_data_prefix(reader, *window)
-                    })
-            {
-                export.source_files = Some(source_files);
-                export.decoded_prefix_end = Some(prefix_end);
-                if !window.has_declared_property_range {
-                    window.property_start = prefix_end;
-                }
-            }
-
-            // URigVMLink has no tagged block either; its two FStrings were read above.
-            if !is_rigvm_link
-                && (options.properties || is_node || capture_adapter_properties)
-                && let Some(window) = serial_window
-            {
-                reader.with_limit(window.serial_end, |reader| {
-                    decode_properties_for_export(
-                        reader,
-                        &ctx,
-                        window,
-                        &export_path,
-                        &class_full,
-                        BlockOwner::Class {
-                            name: &class_full,
-                            reflected: None,
-                        },
-                        options.properties || capture_adapter_properties,
-                        diagnostics,
-                        &mut export,
-                    )
-                });
-            }
-
-            // A `*Node` export owned by a `*Graph` export that no node rule
-            // recognised would have its pin stream filed as class payload and the
-            // graph reported complete without it. Say so instead.
-            if options.pins
-                && !is_node
-                && !is_rigvm_link
-                && serial_window.is_some()
-                && looks_like_unrecognized_graph_node(self, exp, &class_full)
-            {
-                diagnostics.push(
-                    Diagnostic::warning(
-                        "graph_node_class_unrecognized",
-                        format!("{export_path}/pins"),
-                        format!(
-                            "{class_full} is owned by a graph and named like a node but is not a known UEdGraphNode class; its pins were not decoded"
-                        ),
-                    )
-                    .with_context(json!({ "class": class_full })),
+                let mut export_diagnostics = Vec::new();
+                let export = self.decode_export(
+                    &env,
+                    &mut reader,
+                    i,
+                    exp,
+                    &class_names[i],
+                    reflection.as_ref(),
+                    &mut export_diagnostics,
                 );
+                slots[i] = Some((export, export_diagnostics));
             }
-
-            if options.pins
-                && let Some(window) = serial_window
-            {
-                reader.with_limit(window.serial_end, |reader| {
-                    decode_pins_for_export(
-                        self,
-                        reader,
-                        &ctx,
-                        &pin_ctx,
-                        has_script,
-                        window,
-                        &export_path,
-                        &class_full,
-                        diagnostics,
-                        &mut export,
-                    )
-                });
+            if reflected_pass {
+                reflection = Some(PackageReflection::from_classes(
+                    slots.iter().flatten().map(|(export, _)| export),
+                ));
             }
-
-            if let Some(window) = serial_window {
-                reader.with_limit(window.serial_end, |reader| {
-                    account_export_tail(
-                        reader,
-                        window,
-                        &class_full,
-                        &script_ctx,
-                        &export_path,
-                        diagnostics,
-                        &mut export,
-                    )
-                });
-            }
-
+        }
+        let mut decoded = Vec::with_capacity(slots.len());
+        for (export, export_diagnostics) in slots.into_iter().flatten() {
+            diagnostics.extend(export_diagnostics);
             decoded.push(export);
         }
         decoded
+    }
+
+    /// Decodes one export. `reflection` is what the package's reflected classes
+    /// declare, or `None` while those classes themselves are being decoded.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_export(
+        &self,
+        env: &ExportDecodeEnv<'_>,
+        reader: &mut Reader,
+        i: usize,
+        exp: &ObjectExport,
+        class_full: &str,
+        reflection: Option<&PackageReflection>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) -> DecodedExport {
+        let ExportDecodeEnv {
+            options,
+            ctx,
+            script_ctx,
+            pin_ctx,
+            has_script,
+            file_len,
+        } = *env;
+        let pkg_index = (i as i32) + 1;
+        let is_node = is_graph_node_class(class_full);
+        let is_rigvm_link = is_rigvm_link_class(class_full);
+        let capture_adapter_properties = options.pins
+            && ((is_rigvm_model_object_class(class_full) && !is_rigvm_link)
+                || is_pcg_model_object_class(class_full)
+                || is_state_tree_model_object_class(class_full));
+        let mut export = DecodedExport {
+            identity: DecodedExportIdentity {
+                index: pkg_index,
+                name: self.names.resolve_raw(exp.object_name),
+                class: class_full.to_owned(),
+                is_asset: exp.is_asset,
+            },
+            properties: None,
+            property_status: None,
+            source_files: None,
+            decoded_prefix_end: None,
+            pre_script_region: None,
+            post_property_tail: None,
+            object_guid: None,
+            metadata: None,
+            pins: None,
+            user_defined_pins: None,
+            member: None,
+            rigvm_link: None,
+            script_struct: None,
+            property_block_closed: false,
+            property_block_end: None,
+            pins_failed: false,
+            decoded_spans: Vec::new(),
+            decoded_gaps: Vec::new(),
+            decoded_end: None,
+            serial_size: 0,
+            unclassified_bytes: 0,
+        };
+
+        let reflected =
+            reflection.and_then(|reflection| reflection.class_handle(exp.class_index.0));
+        let export_path = export.identity.path();
+        let mut serial_window = match export_serial_window(
+            exp,
+            has_script,
+            file_len,
+            is_native_only_payload_class(class_full),
+        ) {
+            Ok(w) => w,
+            Err(err) => {
+                diagnostics.push(
+                    Diagnostic::error("serial_window_invalid", export_path.clone(), err)
+                        .with_context(json!({
+                            "export_index": pkg_index,
+                            "serial_offset": exp.serial_offset,
+                            "serial_size": exp.serial_size,
+                        })),
+                );
+                // No valid window: the payload cannot be accounted for, so
+                // every declared byte is unclassified.
+                let size = exp.serial_size.max(0) as u64;
+                export.serial_size = size;
+                export.unclassified_bytes = size;
+                return export;
+            }
+        };
+
+        if is_rigvm_link
+            && (options.properties || options.pins)
+            && let Some(window) = serial_window
+        {
+            reader.with_limit(window.serial_end, |reader| {
+                decode_rigvm_link_for_export(reader, window, &export_path, diagnostics, &mut export)
+            });
+        } else if let Some(window) = serial_window
+            && !window.writes_tagged_block
+        {
+            // No tagged block means no property, pin, GUID or script decoder
+            // has anything to read: every byte is the class's own serializer
+            // data, classified as such by the tail step.
+            export.property_status = Some(PropertyParseStatus::NativeOnly);
+            reader.with_limit(window.serial_end, |reader| {
+                account_export_tail(
+                    reader,
+                    window,
+                    class_full,
+                    script_ctx,
+                    &export_path,
+                    diagnostics,
+                    &mut export,
+                )
+            });
+            return export;
+        }
+
+        // UAssetImportData writes a JSON FString ahead of its tagged block.
+        // Decoding it is what lets the tag loop start where the block really
+        // starts on packages without a declared range, and turns the
+        // provenance it holds into evidence instead of an opaque prefix.
+        if let Some(window) = serial_window.as_mut()
+            && window.writes_tagged_block
+            && is_asset_import_data_class(class_full)
+            && writes_import_data_prefix(
+                self.summary.file_version_ue4,
+                self.summary.filter_editor_only(),
+            )
+            && let Some((source_files, prefix_end)) = reader
+                .with_limit(window.serial_end, |reader| {
+                    decode_import_data_prefix(reader, *window)
+                })
+        {
+            export.source_files = Some(source_files);
+            export.decoded_prefix_end = Some(prefix_end);
+            if !window.has_declared_property_range {
+                window.property_start = prefix_end;
+            }
+        }
+
+        // URigVMLink has no tagged block either; its two FStrings were read above.
+        if !is_rigvm_link
+            && (options.properties || is_node || capture_adapter_properties)
+            && let Some(window) = serial_window
+        {
+            reader.with_limit(window.serial_end, |reader| {
+                decode_properties_for_export(
+                    reader,
+                    ctx,
+                    window,
+                    &export_path,
+                    class_full,
+                    BlockOwner::Class {
+                        name: class_full,
+                        reflected: reflected
+                            .as_ref()
+                            .map(|handle| handle as &dyn ContainerStructNames),
+                    },
+                    options.properties || capture_adapter_properties,
+                    diagnostics,
+                    &mut export,
+                )
+            });
+        }
+
+        // A `*Node` export owned by a `*Graph` export that no node rule
+        // recognised would have its pin stream filed as class payload and the
+        // graph reported complete without it. Say so instead.
+        if options.pins
+            && !is_node
+            && !is_rigvm_link
+            && serial_window.is_some()
+            && looks_like_unrecognized_graph_node(self, exp, class_full)
+        {
+            diagnostics.push(
+                Diagnostic::warning(
+                    "graph_node_class_unrecognized",
+                    format!("{export_path}/pins"),
+                    format!(
+                        "{class_full} is owned by a graph and named like a node but is not a known UEdGraphNode class; its pins were not decoded"
+                    ),
+                )
+                .with_context(json!({ "class": class_full })),
+            );
+        }
+
+        if options.pins
+            && let Some(window) = serial_window
+        {
+            reader.with_limit(window.serial_end, |reader| {
+                decode_pins_for_export(
+                    self,
+                    reader,
+                    ctx,
+                    &pin_ctx,
+                    has_script,
+                    window,
+                    &export_path,
+                    class_full,
+                    diagnostics,
+                    &mut export,
+                )
+            });
+        }
+
+        if let Some(window) = serial_window {
+            reader.with_limit(window.serial_end, |reader| {
+                account_export_tail(
+                    reader,
+                    window,
+                    class_full,
+                    script_ctx,
+                    &export_path,
+                    diagnostics,
+                    &mut export,
+                )
+            });
+        }
+        export
     }
 }
 

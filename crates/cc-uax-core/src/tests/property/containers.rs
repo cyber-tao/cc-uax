@@ -482,6 +482,7 @@ fn a_reflected_declaration_of_another_container_kind_is_ignored() {
         "MapProperty(NameProperty,StructProperty(LinearColor))"
     );
 }
+
 // A legacy container tag records `ByteProperty` for a `TEnumAsByte<E>` element
 // too, but `FByteProperty::SerializeItem` writes an enum as an 8-byte FName.
 // The count and the tag's `Size` say which it is; reading names as bytes gave

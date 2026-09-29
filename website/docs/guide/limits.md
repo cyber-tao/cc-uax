@@ -31,7 +31,7 @@ A UE4-format package (`FileVersionUE5` = 0) stays `unsupported`, but a project s
 
 - source-level reconstruction of compiled RigVM bytecode (`rig_vm_bytecode`) and compressed RigHierarchy data (`rig_hierarchy`)
 - compiled Niagara VM/GPU payloads (`niagara_compiled`, a named capability, not an anonymous tail)
-- set and map element structs in legacy (below 1012) property tags, which record no struct name and so stay opaque unless the property's declaration is known from UE source (the engine declarations cc-uax carries, scoped to the type that declares them)
+- set and map element structs in legacy (below 1012) property tags, which record no struct name and so stay opaque unless the property's declaration is known: from the package's own generated class (a Blueprint variable of an instance whose class is in the same package) or from the engine declarations cc-uax carries, scoped to the type that declares them. An instance whose class lives in another package, a struct declared by a `UserDefinedStruct` (its fields are not decoded), and native owners cc-uax does not list stay opaque
 - payloads whose layout depends on UE's reflection or class registry
 - runtime behavior not evidenced by serialized graphs, properties, configuration, or references
 - plugin-native formats without a verified UE5.0–5.8 serialization contract

@@ -31,7 +31,7 @@ UE4 格式的包（`FileVersionUE5` = 0）仍是 `unsupported`，但项目扫描
 
 - RigVM 编译字节码（`rig_vm_bytecode`）、压缩 RigHierarchy（`rig_hierarchy`）的源码级还原
 - 编译后的 Niagara VM/GPU payload（`niagara_compiled`，具名 capability，不是匿名尾巴）
-- 旧版（低于 1012）属性 tag 中的 set/map 元素 struct：tag 不记录 struct 名，除非该属性的声明能从 UE 源码得知（cc-uax 携带的引擎声明，限定在声明它们的类型内），否则保持 opaque
+- 旧版（低于 1012）属性 tag 中的 set/map 元素 struct：tag 不记录 struct 名，除非该属性的声明已知：来自包自身的生成类（其类在同一个包内的实例上的 Blueprint 变量），或来自 cc-uax 携带的引擎声明（限定在声明它们的类型内）。类位于其他包的实例、由 `UserDefinedStruct` 声明的 struct（其字段不会被解码），以及 cc-uax 未列出的原生所有者，仍保持 opaque
 - 布局依赖 UE 反射或类注册表的 payload
 - 无法由序列化图、属性、配置或引用证明的运行时行为
 - 尚未核对 UE5.0–5.8 序列化契约的插件原生格式

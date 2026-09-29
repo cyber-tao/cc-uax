@@ -13,6 +13,10 @@ mod scanner;
 /// change to what a cached `AssetAnalysisSummary` means must bump it or a warm
 /// scan will replay summaries built under the old meaning.
 ///
+/// 14: legacy set/map element structs are named from the declaring type (the
+/// package's own generated classes and an owner-scoped engine table), so cached
+/// property values, statuses and opaque regions for 5.0-5.3 packages differ.
+///
 /// 13: unsupported cache rows carry the references and summary of a UE4-format
 /// package whose linker tables were read, so cached forward edges differ.
 ///
@@ -43,7 +47,7 @@ mod scanner;
 /// 5: cached summaries built before native-only payload classification, decoder
 /// span accounting, the import-data prefix decoder, the TextConst layout gate and
 /// the widened graph-node list carry different statuses and counters.
-pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 13;
+pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 14;
 
 pub use analysis_summary::{
     AnalysisDiagnosticSummary, AssetAnalysisSummary, CapabilitySummary, GraphSummary,

@@ -580,6 +580,8 @@ fn a_generated_class_decodes_its_uclass_block() {
     .expect("a generated class should decode");
 
     assert_eq!(decoded.end, data.len() as u64);
+    assert_eq!(decoded.super_struct_index, 0);
+    assert!(decoded.super_struct.is_none());
     assert!(decoded.function.is_none());
     let class = decoded.class.expect("a class export has UClass data");
     assert_eq!(class.functions.len(), 1);
@@ -590,4 +592,43 @@ fn a_generated_class_decodes_its_uclass_block() {
     );
     assert_eq!(class.interfaces, ["/Game/Fx/NS_Spark"]);
     assert_eq!(class.default_object.as_deref(), Some("/Game/Fx/NS_Spark"));
+}
+
+// The reflection walk follows a class to its super class by the raw package
+// index, which the resolved name alone cannot give back: a positive index is an
+// export of this package, a negative one an import the walk cannot enter.
+#[test]
+fn a_generated_class_records_its_super_struct_index() {
+    let package = package();
+    let ctx = editor_struct_ctx(&package);
+    for super_struct in [-1, 3] {
+        let mut data = Vec::new();
+        push_i32(&mut data, super_struct); // SuperStruct
+        push_i32(&mut data, 0); // Children count
+        push_i32(&mut data, 0); // ChildProperties count
+        push_i32(&mut data, 0); // BytecodeBufferSize
+        push_i32(&mut data, 0); // SerializedScriptSize
+        push_i32(&mut data, 0); // FuncMap count
+        push_u32(&mut data, 0); // ClassFlags
+        push_i32(&mut data, 0); // ClassWithin
+        push_raw_name(&mut data, 0); // ClassConfigName
+        push_i32(&mut data, 0); // ClassGeneratedBy
+        push_i32(&mut data, 0); // Interfaces count
+        push_u32(&mut data, 0); // bDeprecatedForceScriptOrder
+        push_raw_name(&mut data, 0); // reserved name
+        push_u32(&mut data, 0); // bCooked
+        push_i32(&mut data, 0); // ClassDefaultObject
+
+        let mut reader = Reader::new(&data);
+        let decoded = decode_script_struct(
+            &mut reader,
+            data.len() as u64,
+            "/Script/Engine.BlueprintGeneratedClass",
+            &ctx,
+        )
+        .expect("a generated class should decode");
+
+        assert_eq!(decoded.super_struct_index, super_struct);
+        assert!(decoded.super_struct.is_some());
+    }
 }

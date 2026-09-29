@@ -4,7 +4,9 @@
 //! by a hand-assembled `Package`.
 
 use super::common::*;
-use crate::model::{AnalysisStatus, AssetView, KnownOpaqueKind, PropertyDecodeStatus};
+use crate::model::{
+    AnalysisStatus, AssetView, KnownOpaqueKind, OpaqueReason, PropertyDecodeStatus,
+};
 use crate::version::ue5;
 use crate::{CapabilityKind, PackageView};
 
@@ -338,4 +340,218 @@ fn class_decided_export_shapes_survive_the_real_parse_path() {
             .collect();
         assert_eq!(gaps, [CapabilityKind::RigHierarchy], "{fv}");
     }
+}
+
+// A legacy `TMap` tag names no key or value struct, and a Blueprint variable is
+// declared by nothing but its own generated class. These build the class export
+// and an instance of it as real exports of one package (`FileVersionUE5` 1009,
+// where the tags are legacy), so the export order, the class walk and the tag
+// loop are exercised together.
+
+/// One `FField` of the builder's FilterEditorOnly package, which writes no flags
+/// word: type name, field name, then `FProperty`'s fixed block.
+fn push_reflected_field(data: &mut Vec<u8>, type_name: i32, name: i32, none: i32) {
+    push_raw_name(data, type_name);
+    push_raw_name(data, name);
+    push_i32(data, 0); // bHasMetaData, a 32-bit legacy bool
+    push_i32(data, 1); // ArrayDim
+    push_i32(data, 8); // ElementSize
+    push_u64(data, 0x0000_0004); // PropertyFlags
+    push_u16(data, 0); // RepIndex
+    push_raw_name(data, none); // RepNotifyFunc
+    data.push(0); // BlueprintReplicationCondition
+}
+
+/// A package with `Default__BP_Test_C`, an instance whose `ColorMap` is a legacy
+/// `MapProperty(NameProperty, StructProperty)` with one `FName -> FLinearColor`
+/// entry, and `BP_Test_C`, the generated class that declares it. `class_first`
+/// puts the class export before the instance; otherwise it comes after, which is
+/// the order UE writes them in. `instance_uses_local_class` points the instance at
+/// the class export, or at an imported class when the class lives elsewhere.
+fn legacy_map_package(class_first: bool, instance_uses_local_class: bool) -> Vec<u8> {
+    let mut builder = PackageBuilder::new(1009, (5, 3));
+    builder.custom_versions = vec![
+        (
+            crate::version::custom::CORE_OBJECT_VERSION,
+            crate::version::custom::CORE_FPROPERTIES,
+        ),
+        (
+            crate::version::custom::FRAMEWORK_OBJECT_VERSION,
+            crate::version::custom::FRAMEWORK_REMOVE_UFIELD_NEXT,
+        ),
+    ];
+    let generated_class = builder.script_class("/Script/Engine", "BlueprintGeneratedClass");
+    let linear_color = builder.script_class("/Script/CoreUObject", "LinearColor");
+    let color_map = builder.name("ColorMap") as i32;
+    let map_property = builder.name("MapProperty") as i32;
+    let name_property = builder.name("NameProperty") as i32;
+    let struct_property = builder.name("StructProperty") as i32;
+    let none = builder.name("None") as i32;
+    let red = builder.name("Red") as i32;
+    let class_name = builder.name("BP_Test_C");
+    let instance_name = builder.name("Default__BP_Test_C");
+
+    // The instance: one legacy map tag, then the object GUID flag.
+    let mut map_payload = Vec::new();
+    push_i32(&mut map_payload, 0); // NumToRemove
+    push_i32(&mut map_payload, 1); // Num
+    push_raw_name(&mut map_payload, red);
+    for channel in [1.0f32, 0.5, 0.25, 1.0] {
+        push_f32(&mut map_payload, channel);
+    }
+    let mut instance = Vec::new();
+    push_legacy_tag_header(
+        &mut instance,
+        color_map,
+        map_property,
+        map_payload.len() as i32,
+    );
+    push_raw_name(&mut instance, name_property); // key type
+    push_raw_name(&mut instance, struct_property); // value type, no struct name
+    push_legacy_tag_tail(&mut instance, 1009);
+    instance.extend_from_slice(&map_payload);
+    push_raw_name(&mut instance, none);
+    push_i32(&mut instance, 0); // PossiblySerializeObjectGuid: absent
+
+    // The class: an empty tagged block, the GUID flag, then `UStruct` and `UClass`.
+    let mut class = Vec::new();
+    push_raw_name(&mut class, none);
+    push_i32(&mut class, 0);
+    push_i32(&mut class, 0); // SuperStruct
+    push_i32(&mut class, 0); // Children count
+    push_i32(&mut class, 1); // ChildProperties count
+    push_reflected_field(&mut class, map_property, color_map, none);
+    push_reflected_field(&mut class, name_property, color_map, none); // key
+    push_reflected_field(&mut class, struct_property, color_map, none); // value
+    push_i32(&mut class, linear_color); // the value struct
+    push_i32(&mut class, 0); // BytecodeBufferSize
+    push_i32(&mut class, 0); // SerializedScriptSize
+    push_i32(&mut class, 0); // FuncMap count
+    push_u32(&mut class, 0); // ClassFlags
+    push_i32(&mut class, 0); // ClassWithin
+    push_raw_name(&mut class, none); // ClassConfigName
+    push_i32(&mut class, 0); // ClassGeneratedBy
+    push_i32(&mut class, 0); // Interfaces count
+    push_u32(&mut class, 0); // bDeprecatedForceScriptOrder
+    push_raw_name(&mut class, none); // reserved name
+    push_u32(&mut class, 0); // bCooked
+    push_i32(&mut class, 0); // ClassDefaultObject
+
+    // Export package indices are 1-based in table order.
+    let (instance_index, class_index) = if class_first { (2, 1) } else { (1, 2) };
+    let instance_class = if instance_uses_local_class {
+        class_index
+    } else {
+        generated_class
+    };
+    let instance_spec = ExportSpec {
+        class_index: instance_class,
+        outer_index: 0,
+        object_name: instance_name,
+        payload: instance,
+        script_range: None,
+    };
+    let class_spec = ExportSpec {
+        class_index: generated_class,
+        outer_index: 0,
+        object_name: class_name,
+        payload: class,
+        script_range: None,
+    };
+    debug_assert_eq!(instance_index + class_index, 3);
+    if class_first {
+        builder.exports.push(class_spec);
+        builder.exports.push(instance_spec);
+    } else {
+        builder.exports.push(instance_spec);
+        builder.exports.push(class_spec);
+    }
+    builder.build()
+}
+
+#[test]
+fn a_cdo_resolves_a_legacy_map_from_its_class_export_even_when_the_class_comes_later() {
+    let bytes = legacy_map_package(false, true);
+
+    let analysis = PackageView::parse(&bytes)
+        .expect("the package parses")
+        .analyze(AssetView::Full);
+
+    // The instance is export 1 and stays first in the report although the class
+    // export after it is decoded before it.
+    assert_eq!(analysis.exports[0].index, 1);
+    assert_eq!(analysis.exports[0].name, "Default__BP_Test_C");
+    assert_eq!(analysis.exports[1].index, 2);
+    let color_map = &analysis.exports[0].properties[0];
+    assert_eq!(color_map.name, "ColorMap");
+    assert!(
+        !color_map.value.is_opaque(),
+        "{:#?}\n{:#?}",
+        color_map.value,
+        analysis.diagnostics
+    );
+    assert_eq!(color_map.value[0]["key"].as_str(), Some("Red"));
+    assert_eq!(
+        color_map.type_name,
+        "MapProperty(NameProperty,StructProperty(LinearColor))"
+    );
+    let color = &color_map.value[0]["value"];
+    for (channel, expected) in [("r", 1.0), ("g", 0.5), ("b", 0.25), ("a", 1.0)] {
+        assert_eq!(
+            color[channel].as_f64(),
+            Some(expected),
+            "{channel}: {color:#?}"
+        );
+    }
+    assert_eq!(
+        analysis.exports[0].property_status,
+        Some(PropertyDecodeStatus::Complete),
+        "{:#?}",
+        analysis.diagnostics
+    );
+    assert!(
+        !analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_tag_missing_inner_struct_name"),
+        "{:#?}",
+        analysis.diagnostics
+    );
+    let tagged = analysis
+        .capabilities
+        .iter()
+        .find(|capability| capability.kind == CapabilityKind::TaggedProperties)
+        .expect("tagged properties are reported");
+    assert_eq!(tagged.status, AnalysisStatus::Complete, "{tagged:#?}");
+
+    // The class before the instance gives the same result.
+    let class_first = PackageView::parse(&legacy_map_package(true, true))
+        .expect("the package parses")
+        .analyze(AssetView::Full);
+    assert_eq!(class_first.exports[0].index, 1);
+    assert_eq!(class_first.exports[1].name, "Default__BP_Test_C");
+    assert!(!class_first.exports[1].properties[0].value.is_opaque());
+}
+
+#[test]
+fn a_cdo_whose_class_is_imported_keeps_the_legacy_map_opaque() {
+    let bytes = legacy_map_package(false, false);
+
+    let analysis = PackageView::parse(&bytes)
+        .expect("the package parses")
+        .analyze(AssetView::Full);
+
+    let opaque = analysis.exports[0].properties[0]
+        .value
+        .as_opaque()
+        .expect("no class of this package declares the variable, so nothing is guessed");
+    assert_eq!(opaque.reason, OpaqueReason::MissingInnerStructName);
+    assert!(
+        analysis
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "property_tag_missing_inner_struct_name"),
+        "{:#?}",
+        analysis.diagnostics
+    );
 }

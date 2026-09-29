@@ -231,6 +231,9 @@ pub struct PackageBuilder {
     pub names: Vec<String>,
     pub imports: Vec<ImportSpec>,
     pub exports: Vec<ExportSpec>,
+    /// Custom versions the summary records, in the optimized 20-byte entry form
+    /// the builder's `LegacyFileVersion` selects.
+    pub custom_versions: Vec<(crate::reader::Guid, i32)>,
 }
 
 impl PackageBuilder {
@@ -241,6 +244,7 @@ impl PackageBuilder {
             names: Vec::new(),
             imports: Vec::new(),
             exports: Vec::new(),
+            custom_versions: Vec::new(),
         }
     }
 
@@ -282,6 +286,22 @@ impl PackageBuilder {
         let ue4v = 522;
         let filter_editor_only = true;
         let mut d = build_minimal_package_with_version(fv, self.engine.0, self.engine.1);
+        // The summary builder wrote a zero custom version count; record the real
+        // entries right after it and account for their width in the walk below.
+        let custom_count_pos = 4 * 6 + if fv >= ue5::PACKAGE_SAVED_HASH { 24 } else { 0 };
+        let custom_bytes = self.custom_versions.len() * 20;
+        if !self.custom_versions.is_empty() {
+            let mut entries = Vec::new();
+            for (guid, version) in &self.custom_versions {
+                for word in guid.0 {
+                    push_u32(&mut entries, word);
+                }
+                push_i32(&mut entries, *version);
+            }
+            d[custom_count_pos..custom_count_pos + 4]
+                .copy_from_slice(&(self.custom_versions.len() as i32).to_le_bytes());
+            d.splice(custom_count_pos + 4..custom_count_pos + 4, entries);
+        }
         let header_len = d.len();
 
         // The header builder writes fixed-width zeros for every count/offset; find
@@ -291,7 +311,7 @@ impl PackageBuilder {
         if fv >= ue5::PACKAGE_SAVED_HASH {
             cursor += 20 + 4; // saved hash, total header size
         }
-        cursor += 4; // custom version count
+        cursor += 4 + custom_bytes; // custom version count and entries
         if fv < ue5::PACKAGE_SAVED_HASH {
             cursor += 4; // total header size
         }

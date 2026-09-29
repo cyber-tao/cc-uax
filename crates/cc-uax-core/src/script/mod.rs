@@ -34,6 +34,13 @@ pub(crate) fn is_script_bytecode_class(class: &str) -> bool {
     ) || simple.ends_with("GeneratedClass")
 }
 
+/// Whether the export is a reflected class: a `UClass` or generated class, whose
+/// `ChildProperties` declare the type of every variable an instance of it holds.
+/// Its declarations are what a legacy set/map tag on such an instance cannot say.
+pub(crate) fn is_reflected_class(class: &str) -> bool {
+    is_script_bytecode_class(class) && !is_function_class(class)
+}
+
 /// Whether the export is a `UFunction`, which appends its own fields after the
 /// script. `UClass` appends a different block, handled as a named remainder.
 fn is_function_class(class: &str) -> bool {
@@ -49,6 +56,9 @@ fn is_function_class(class: &str) -> bool {
 #[derive(Debug, Clone)]
 pub(crate) struct DecodedScriptStruct {
     pub(crate) super_struct: Option<String>,
+    /// The raw `FPackageIndex` behind `super_struct`: positive for an export of
+    /// this package, negative for an import, `0` for none.
+    pub(crate) super_struct_index: i32,
     pub(crate) children: Vec<String>,
     pub(crate) properties: Vec<DecodedField>,
     pub(crate) bytecode: Option<DecodedBytecode>,
@@ -174,7 +184,9 @@ pub(crate) fn decode_script_struct(
         reader.read_i32_within(end, "UField Next")?;
     }
 
-    let super_struct = read_object(reader, end, ctx, "SuperStruct")?;
+    let super_struct_index = reader.read_i32_within(end, "SuperStruct")?;
+    let super_struct =
+        (super_struct_index != 0).then(|| ctx.package.resolve_full_name(super_struct_index));
 
     let children = if ctx.keeps_ufield_next() {
         // The pre-RemoveUField_Next layout stores the head of a linked list.
@@ -221,6 +233,7 @@ pub(crate) fn decode_script_struct(
 
     Ok(DecodedScriptStruct {
         super_struct,
+        super_struct_index,
         children,
         properties,
         bytecode,
