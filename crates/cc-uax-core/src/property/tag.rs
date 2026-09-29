@@ -1,4 +1,4 @@
-use super::value::parse_value;
+use super::value::parse_property_value;
 use super::{
     OVERRIDABLE_SERIALIZATION_BIT, PREVIEW_MAX, ParseCtx, PropertyEntry, PropertyParse,
     PropertyParseStatus, to_hex,
@@ -431,7 +431,7 @@ pub(crate) fn parse_properties_report(
             json!(tag.bool_val)
         } else {
             let decoded = r.with_limit(aligned, |r| {
-                parse_value(r, &tag.type_name, ctx, tag.is_binary_native, aligned)
+                parse_property_value(r, &tag.type_name, ctx, tag.is_binary_native, aligned)
             });
             match decoded {
                 Ok(v) if r.pos() == aligned => v,

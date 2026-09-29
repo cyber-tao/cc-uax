@@ -1,9 +1,11 @@
-use super::native::{ensure_tagged_payload_parsed, is_tagged_fallback_struct, parse_native_struct};
+use super::native::{
+    ensure_complete_tagged_payload, ensure_tagged_payload_parsed, parse_native_struct,
+};
 use super::tag::read_inner_array_struct_name;
 use super::text::parse_text;
 use super::{
-    PREVIEW_MAX, ParseCtx, TypeName, ensure_within_value, entries_to_values,
-    parse_properties_report, to_hex, validate_count,
+    PREVIEW_MAX, ParseCtx, PropertyEntry, PropertyParseStatus, TypeName, ensure_within_value,
+    entries_to_values, parse_properties_report, to_hex, validate_count,
 };
 use crate::model::{OpaqueByteRange, OpaqueReason, OpaqueValue};
 use crate::name::NameMap;
@@ -124,7 +126,14 @@ pub(crate) fn parse_value(
         }
         "StructProperty" => {
             let struct_name = ty.param(0).map(|p| p.name.as_str()).unwrap_or("");
-            parse_struct(r, struct_name, ctx, prefer_native, value_end)?
+            parse_struct(
+                r,
+                struct_name,
+                ctx,
+                prefer_native,
+                value_end,
+                StructScope::Element,
+            )?
         }
         "ArrayProperty" | "SetProperty" | "MapProperty" => {
             if has_legacy_bare_byte_slot(ctx, ty) {
@@ -428,34 +437,146 @@ fn parse_map(
     Ok(Value::Array(arr))
 }
 
+/// Where a struct sits relative to the tag that declared it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StructScope {
+    /// The struct is the entire property value, so its window is exactly the
+    /// tag's `Size` and a decode that does not fill it is wrong.
+    Property,
+    /// The struct is an element of a container or optional; it has no window of
+    /// its own to check against.
+    Element,
+}
+
+/// Decodes the value of a whole property. Only here is a struct's window known
+/// to be exactly the tag's `Size`, which is what lets [`parse_struct`] re-read a
+/// failed native decode as a strict tagged block.
+pub(crate) fn parse_property_value(
+    r: &mut Reader,
+    ty: &TypeName,
+    ctx: &ParseCtx,
+    prefer_native: bool,
+    value_end: u64,
+) -> Result<Value> {
+    if ty.name == "StructProperty" {
+        let struct_name = ty.param(0).map(|p| p.name.as_str()).unwrap_or("");
+        return parse_struct(
+            r,
+            struct_name,
+            ctx,
+            prefer_native,
+            value_end,
+            StructScope::Property,
+        );
+    }
+    parse_value(r, ty, ctx, prefer_native, value_end)
+}
+
 fn parse_struct(
     r: &mut Reader,
     struct_name: &str,
     ctx: &ParseCtx,
-    prefer_native_for_unknown: bool,
+    prefer_native: bool,
     value_end: u64,
+    scope: StructScope,
 ) -> Result<Value> {
     if struct_name == "SoftObjectPath" || struct_name == "SoftClassPath" {
         return parse_soft_object(r, ctx, value_end);
     }
-    if let Some(v) = parse_native_struct(r, struct_name, ctx, value_end)? {
-        return Ok(v);
+    // From PROPERTY_TAG_COMPLETE_TYPE_NAME the tag carries HasBinaryOrNativeSerialize.
+    // For a struct property UE derives it from the struct alone
+    // (`FStructProperty::UseBinaryOrNativeSerialization`, PropertyStruct.cpp):
+    // binary or native serialization on the struct, whatever its `Serialize`
+    // returns. A container's flag is the OR of its elements' flags
+    // (`FArrayProperty`, `FSetProperty`, `FMapProperty` and `FOptionalProperty`
+    // `::UseBinaryOrNativeSerialization`), and `prefer_native` is that flag. Without
+    // it no struct in the value is native, so the payload is tagged and no native
+    // decoder may read it. A flagged map can still hold a tagged key next to a
+    // native value, which is what the paths below are for.
+    if ctx.file_version_ue5 >= ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME && !prefer_native {
+        return parse_tagged_struct(r, struct_name, ctx, value_end);
     }
-    if prefer_native_for_unknown && !is_tagged_fallback_struct(struct_name) {
-        bail!("unknown native struct: {struct_name}");
+
+    let start = r.pos();
+    let mark = ctx.nested_diagnostics.borrow().len();
+    let native = parse_native_struct(r, struct_name, ctx, value_end);
+    match native {
+        Ok(None) => {}
+        Ok(Some(v)) if scope == StructScope::Element || r.pos() == value_end => return Ok(v),
+        other if scope == StructScope::Element => return other.map(|v| v.unwrap_or(Value::Null)),
+        native => {
+            // The window is the whole value and the native layout did not fill
+            // it, so try the one other thing a struct with a native flag can be:
+            // a tagged block that fills it exactly. Some serializers register
+            // versions and return false, and UE still sets the flag for them.
+            let native_end = r.pos();
+            let native_diagnostics = ctx.nested_diagnostics.borrow_mut().split_off(mark);
+            r.seek(start)?;
+            let tagged = parse_properties_report(r, ctx, value_end, "/properties");
+            if ensure_complete_tagged_payload(r, value_end, &tagged.status, struct_name).is_ok() {
+                return Ok(tagged_struct_value(struct_name, &tagged.entries));
+            }
+            ctx.nested_diagnostics.borrow_mut().truncate(mark);
+            return match native {
+                Ok(v) => {
+                    r.seek(native_end)?;
+                    ctx.nested_diagnostics
+                        .borrow_mut()
+                        .extend(native_diagnostics);
+                    Ok(v.unwrap_or(Value::Null))
+                }
+                Err(err) => {
+                    r.seek(start)?;
+                    Err(err)
+                }
+            };
+        }
     }
-    // The block has to have parsed. Its failure paths seek to `value_end`, so
-    // without consulting the status the caller sees a cursor that looks like a
-    // clean decode and records an opaque payload as a decoded empty struct.
-    //
-    // Only the status, not the position: a struct whose serializer writes its own
-    // data after the tagged block ends cleanly short of `value_end`, and the tag
-    // loop already reports that gap as `property_value_incomplete` while keeping
-    // the properties that did decode. Demanding exact consumption here threw that
-    // evidence away instead.
+
+    if prefer_native && ctx.file_version_ue5 >= ue5::PROPERTY_TAG_COMPLETE_TYPE_NAME {
+        // The flag is set for every `WithSerializer` struct, including those
+        // whose `Serialize` returns false and writes a plain tagged block
+        // (`FFontOutlineSettings`), so a flagged struct nobody decodes natively is
+        // read as tagged; only a payload that is not a tagged block either is unknown.
+        let nested = parse_properties_report(r, ctx, value_end, "/properties");
+        if matches!(
+            nested.status,
+            PropertyParseStatus::NonTaggedPayload | PropertyParseStatus::FailedAfterEntries
+        ) {
+            ctx.nested_diagnostics.borrow_mut().truncate(mark);
+            bail!(
+                "unknown native struct: {struct_name}; its payload is not a tagged-property block either"
+            );
+        }
+        return Ok(tagged_struct_value(struct_name, &nested.entries));
+    }
+    parse_tagged_struct(r, struct_name, ctx, value_end)
+}
+
+/// The tagged-property block of a struct with no native layout.
+///
+/// The block has to have parsed. Its failure paths seek to `value_end`, so
+/// without consulting the status the caller sees a cursor that looks like a
+/// clean decode and records an opaque payload as a decoded empty struct.
+///
+/// Only the status, not the position: a struct whose serializer writes its own
+/// data after the tagged block ends cleanly short of `value_end`, and the tag
+/// loop already reports that gap as `property_value_incomplete` while keeping
+/// the properties that did decode. Demanding exact consumption here threw that
+/// evidence away instead.
+fn parse_tagged_struct(
+    r: &mut Reader,
+    struct_name: &str,
+    ctx: &ParseCtx,
+    value_end: u64,
+) -> Result<Value> {
     let nested = parse_properties_report(r, ctx, value_end, "/properties");
     ensure_tagged_payload_parsed(&nested.status, struct_name)?;
-    Ok(json!({ "@struct": struct_name, "properties": entries_to_values(&nested.entries) }))
+    Ok(tagged_struct_value(struct_name, &nested.entries))
+}
+
+fn tagged_struct_value(struct_name: &str, entries: &[PropertyEntry]) -> Value {
+    json!({ "@struct": struct_name, "properties": entries_to_values(entries) })
 }
 
 /// Decode an `FSoftObjectPath` value. When the package carries a soft-object-path

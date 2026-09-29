@@ -498,3 +498,265 @@ fn nested_diagnostics_stay_with_the_element_that_raised_them() {
         .collect();
     assert_eq!(paths, ["/exports/0/properties/M/properties/X"], "{paths:?}");
 }
+
+/// `Outline: IntProperty = value` as a tagged block ending in `None`
+/// (`OutlineSize` is name 3, `IntProperty` 4, `None` 5).
+fn push_outline_block(v: &mut Vec<u8>, value: i32) {
+    push_raw_name(v, 3);
+    push_raw_name(v, 4);
+    push_i32(v, 0);
+    push_i32(v, 4);
+    v.push(0);
+    push_i32(v, value);
+    push_raw_name(v, 5);
+}
+
+fn font_outline_names() -> NameMap {
+    NameMap {
+        names: vec![
+            "Font".to_string(),                // 0
+            "StructProperty".to_string(),      // 1
+            "FontOutlineSettings".to_string(), // 2
+            "OutlineSize".to_string(),         // 3
+            "IntProperty".to_string(),         // 4
+            "None".to_string(),                // 5
+            "ArrayProperty".to_string(),       // 6
+        ],
+    }
+}
+
+#[test]
+fn a_flagged_struct_without_a_native_decoder_is_read_as_tagged() {
+    let names = font_outline_names();
+    let mut value = Vec::new();
+    push_outline_block(&mut value, 2);
+    let d = build_struct_property(2, 5, &value);
+    let ctx = complete_name_ctx(&names);
+    let mut r = Reader::new(&d);
+
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert!(report.diagnostics.is_empty(), "{:#?}", report.diagnostics);
+    let v = &report.entries[0].value;
+    assert_eq!(v["@struct"].as_str(), Some("FontOutlineSettings"));
+    assert_eq!(v["properties"][0]["name"].as_str(), Some("OutlineSize"));
+    assert_eq!(v["properties"][0]["value"].as_i64(), Some(2));
+}
+
+#[test]
+fn an_unflagged_struct_is_tagged_even_when_a_native_decoder_exists() {
+    let names = NameMap {
+        names: vec![
+            "Loc".to_string(),            // 0
+            "StructProperty".to_string(), // 1
+            "Vector".to_string(),         // 2
+            "X".to_string(),              // 3
+            "DoubleProperty".to_string(), // 4
+            "None".to_string(),           // 5
+        ],
+    };
+    let mut value = Vec::new();
+    for x in [1.0f64, 2.0, 3.0] {
+        push_raw_name(&mut value, 3);
+        push_raw_name(&mut value, 4);
+        push_i32(&mut value, 0);
+        push_i32(&mut value, 8);
+        value.push(0);
+        push_f64(&mut value, x);
+    }
+    push_raw_name(&mut value, 5);
+    let mut d = build_struct_property(2, 5, &value);
+    d[8 + 8 + 4 + 8 + 4 + 4] = 0; // clear HasBinaryOrNativeSerialize
+    let ctx = complete_name_ctx(&names);
+    let mut r = Reader::new(&d);
+
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert!(report.diagnostics.is_empty(), "{:#?}", report.diagnostics);
+    let v = &report.entries[0].value;
+    assert_eq!(v["@struct"].as_str(), Some("Vector"));
+    assert_eq!(v["properties"].as_array().unwrap().len(), 3);
+    assert_eq!(v["properties"][2]["value"].as_f64(), Some(3.0));
+}
+
+#[test]
+fn a_whole_value_struct_whose_native_layout_overruns_is_reread_as_tagged() {
+    let names = NameMap {
+        names: vec![
+            "ShadingModelFromMaterialExpression".to_string(), // 0
+            "StructProperty".to_string(),                     // 1
+            "ShadingModelMaterialInput".to_string(),          // 2
+            "None".to_string(),                               // 3
+            "Expression".to_string(),                         // 4
+            "ObjectProperty".to_string(),                     // 5
+        ],
+    };
+    let mut block = Vec::new();
+    push_legacy_tag_header(&mut block, 4, 5, 4);
+    push_legacy_tag_tail(&mut block, 1009);
+    push_i32(&mut block, 7); // Expression
+    push_raw_name(&mut block, 3); // None
+    assert_eq!(block.len(), 37);
+    let mut d = Vec::new();
+    push_legacy_tag_header(&mut d, 0, 1, block.len() as i32);
+    push_raw_name(&mut d, 2); // struct name
+    push_guid(&mut d, 0, 0, 0, 0);
+    push_legacy_tag_tail(&mut d, 1009);
+    d.extend_from_slice(&block);
+    push_raw_name(&mut d, 3);
+    let mut ctx = complete_name_ctx(&names);
+    ctx.file_version_ue5 = 1009;
+    let mut r = Reader::new(&d);
+
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert!(report.diagnostics.is_empty(), "{:#?}", report.diagnostics);
+    let v = &report.entries[0].value;
+    assert_eq!(v["@struct"].as_str(), Some("ShadingModelMaterialInput"));
+    assert_eq!(v["properties"][0]["name"].as_str(), Some("Expression"));
+}
+
+#[test]
+fn a_failed_native_decode_keeps_its_own_error_when_the_payload_is_not_tagged() {
+    let names = NameMap {
+        names: vec![
+            "Loc".to_string(),            // 0
+            "StructProperty".to_string(), // 1
+            "Vector".to_string(),         // 2
+            "None".to_string(),           // 3
+        ],
+    };
+    let mut d = Vec::new();
+    push_legacy_tag_header(&mut d, 0, 1, 5);
+    push_raw_name(&mut d, 2);
+    push_guid(&mut d, 0, 0, 0, 0);
+    push_legacy_tag_tail(&mut d, 1009);
+    d.extend_from_slice(&[1, 2, 3, 4, 5]); // a float FVector needs 12 bytes
+    push_raw_name(&mut d, 3);
+    let mut ctx = complete_name_ctx(&names);
+    ctx.file_version_ue5 = 1009;
+    let mut r = Reader::new(&d);
+
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    let opaque = report.entries[0].value.as_opaque().expect("falls back");
+    assert_eq!(opaque.reason, OpaqueReason::UndecodedValue);
+    assert!(opaque.message.contains("read limit"), "{}", opaque.message);
+    assert!(
+        !opaque.message.contains("tagged payload"),
+        "{}",
+        opaque.message
+    );
+    let codes: Vec<&str> = report
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code.as_str())
+        .collect();
+    assert_eq!(
+        codes,
+        ["property_value_fallback"],
+        "{:#?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn a_flagged_struct_that_is_not_a_tagged_block_is_an_unknown_native_struct() {
+    let names = font_outline_names();
+    let d = build_struct_property(2, 5, &[0xDE, 0xAD, 0xBE, 0xEF]);
+    let ctx = complete_name_ctx(&names);
+    let mut r = Reader::new(&d);
+
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    let opaque = report.entries[0].value.as_opaque().expect("falls back");
+    assert!(
+        opaque.message.contains("unknown native struct"),
+        "{}",
+        opaque.message
+    );
+    assert_eq!(report.diagnostics.len(), 1, "{:#?}", report.diagnostics);
+}
+
+#[test]
+fn a_flagged_array_of_tagged_structs_decodes_every_element() {
+    let names = font_outline_names();
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 2);
+    push_outline_block(&mut payload, 1);
+    push_outline_block(&mut payload, 9);
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0); // Font
+    push_raw_name(&mut d, 6); // ArrayProperty
+    push_i32(&mut d, 1);
+    push_raw_name(&mut d, 1); // StructProperty
+    push_i32(&mut d, 1);
+    push_raw_name(&mut d, 2); // FontOutlineSettings
+    push_i32(&mut d, 0);
+    push_i32(&mut d, payload.len() as i32);
+    d.push(0x08);
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 5);
+    let ctx = complete_name_ctx(&names);
+    let mut r = Reader::new(&d);
+
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert!(report.diagnostics.is_empty(), "{:#?}", report.diagnostics);
+    let v = &report.entries[0].value;
+    assert_eq!(v[0]["@struct"].as_str(), Some("FontOutlineSettings"));
+    assert_eq!(v[0]["properties"][0]["value"].as_i64(), Some(1));
+    assert_eq!(v[1]["@struct"].as_str(), Some("FontOutlineSettings"));
+    assert_eq!(v[1]["properties"][0]["value"].as_i64(), Some(9));
+}
+
+#[test]
+fn an_unflagged_array_proves_its_struct_elements_are_tagged() {
+    let names = NameMap {
+        names: vec![
+            "Locs".to_string(),           // 0
+            "ArrayProperty".to_string(),  // 1
+            "StructProperty".to_string(), // 2
+            "Vector".to_string(),         // 3
+            "X".to_string(),              // 4
+            "DoubleProperty".to_string(), // 5
+            "None".to_string(),           // 6
+        ],
+    };
+    let mut payload = Vec::new();
+    push_i32(&mut payload, 2);
+    for base in [1.0f64, 10.0] {
+        for offset in 0..3 {
+            push_raw_name(&mut payload, 4);
+            push_raw_name(&mut payload, 5);
+            push_i32(&mut payload, 0);
+            push_i32(&mut payload, 8);
+            payload.push(0);
+            push_f64(&mut payload, base + f64::from(offset));
+        }
+        push_raw_name(&mut payload, 6);
+    }
+    let mut d = Vec::new();
+    push_raw_name(&mut d, 0);
+    push_raw_name(&mut d, 1);
+    push_i32(&mut d, 1);
+    push_raw_name(&mut d, 2);
+    push_i32(&mut d, 1);
+    push_raw_name(&mut d, 3);
+    push_i32(&mut d, 0);
+    push_i32(&mut d, payload.len() as i32);
+    d.push(0); // no HasBinaryOrNativeSerialize: no element is native
+    d.extend_from_slice(&payload);
+    push_raw_name(&mut d, 6);
+    let ctx = complete_name_ctx(&names);
+    let mut r = Reader::new(&d);
+
+    let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
+
+    assert!(report.diagnostics.is_empty(), "{:#?}", report.diagnostics);
+    let v = &report.entries[0].value;
+    assert_eq!(v[0]["@struct"].as_str(), Some("Vector"));
+    assert_eq!(v[0]["properties"][2]["value"].as_f64(), Some(3.0));
+    assert_eq!(v[1]["@struct"].as_str(), Some("Vector"));
+    assert_eq!(v[1]["properties"][0]["value"].as_f64(), Some(10.0));
+}

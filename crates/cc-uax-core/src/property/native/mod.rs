@@ -56,49 +56,6 @@ pub(crate) fn ensure_complete_tagged_payload(
     Ok(())
 }
 
-pub(crate) fn is_tagged_fallback_struct(name: &str) -> bool {
-    matches!(
-        name,
-        "ConstraintInstance"
-            | "Timeline"
-            | "AnimNotifyEvent"
-            | "PostProcessSettings"
-            | "HierarchicalSimplification"
-            // FAlphaBlend / FAnimCurveBase-derived curves declare WithSerializer but
-            // their Serialize returns false, so the payload is tagged properties.
-            | "AlphaBlend"
-            | "FloatCurve"
-            | "TransformCurve"
-            | "VectorCurve"
-            // FGameplayEffectModifierMagnitude::Serialize also returns false; the
-            // landscape per-layer struct has no custom serializer (the enclosing map
-            // carries the native flag), so both are tagged-property payloads.
-            | "GameplayEffectModifierMagnitude"
-            | "LandscapeLayerComponentData"
-            // FVMExternalFunctionBindingInfo::Serialize and FAnimSyncMarker::Serialize
-            // both call SerializeTaggedProperties, so their payload is tagged properties.
-            | "VMExternalFunctionBindingInfo"
-            | "AnimSyncMarker"
-            | "NiagaraVariant"
-            | "StateTreeStateLink"
-            | "MetaSoundFrontendGraphComment"
-            // These serializers only register custom versions and return false,
-            // so the actual payload remains ordinary tagged properties.
-            | "StateTreeReference"
-            | "GeometryCollectionSizeSpecificData"
-            | "PCGAttributePropertySelector"
-            | "PCGAttributePropertyInputSelector"
-            | "PCGAttributePropertyOutputNoSourceSelector"
-            | "PCGAttributePropertyOutputSelector"
-            // FTransform is the one core math type whose USTRUCT is not
-            // `immutable` and whose TTransformStructOpsTypeTraits leaves
-            // `WithSerializer` commented out (UE5.0-5.8), so UE writes a tagged
-            // Rotation/Translation/Scale3D block. FTransform3f/FTransform3d are
-            // immutable and keep their binary layout.
-            | "Transform"
-    )
-}
-
 pub(crate) fn parse_native_struct(
     r: &mut Reader,
     name: &str,

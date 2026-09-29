@@ -431,7 +431,9 @@ fn a_complete_type_name_struct_array_has_no_inner_tag() {
     push_raw_name(&mut d, 7); // Guid
     push_i32(&mut d, 0);
     push_i32(&mut d, payload.len() as i32);
-    d.push(0); // flags
+    // Guid has native serialization, so UE sets HasBinaryOrNativeSerialize on the
+    // array tag (a container's flag is the OR of its elements').
+    d.push(0x08);
     d.extend_from_slice(&payload);
     push_raw_name(&mut d, 3); // None
 
