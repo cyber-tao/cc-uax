@@ -69,6 +69,8 @@ Use package path plus adapter and graph/model identity as the namespace. Display
 
 Every unstructured region should say *why*, not just *that*. Asset reports list per-region ranges. Project reports group by `(kind, type, reason)` with region and byte totals so opaque bytes stay attributable without listing every mesh tail.
 
+A value no decoder could read is a typed `@opaque` value with a byte range, and its bytes are counted in `coverage.opaque_value_bytes`, separately from `opaque_bytes`, which totals the export-level regions. See [`report-contract.md`](https://github.com/cyber-tao/cc-uax/blob/master/skills/cc-uax/references/report-contract.md) for the exact shape.
+
 Coverage separates expected class serializer tails (`class_payload_bytes`) from unattributed tails after a property block that never closed (`unattributed_tail_bytes`). The second is the signal that a decoder is missing something.
 
 ## Exit codes

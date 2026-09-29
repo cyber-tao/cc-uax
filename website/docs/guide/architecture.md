@@ -28,6 +28,13 @@ cc-uax-cli ──> cc-uax-project ──> cc-uax-core
 - `cc-uax-project` owns mounts, project discovery, the shared inventory scan, reference adjacency, World Partition ownership, reachability/resource summaries, and cache placement.
 - `cc-uax-cli` selects views/focuses, attaches requested full asset analyses, enforces exit behavior, and renders typed reports.
 
-The public site in `website/` is not a Cargo workspace member. It is built by GitHub Actions and published to GitHub Pages.
+Stable public core types include `PackageView<'a>`, `AssetAnalysis`, `DecodedValue`, `LogicGraph`, `GraphNode`, `GraphEdge`, and `ParseCoverage`. `PackageView<'a>` binds parsing and decoding to the same byte slice so callers cannot accidentally parse one file and decode another.
+
+The public site in `website/` is not a Cargo workspace member. It is built by GitHub Actions (`.github/workflows/pages.yml`) and published to GitHub Pages. To work on it locally:
+
+```bash
+bun install --cwd website
+bun run --cwd website dev
+```
 
 Contributor-level parsing rules live in [`CLAUDE.md`](https://github.com/cyber-tao/cc-uax/blob/master/CLAUDE.md).

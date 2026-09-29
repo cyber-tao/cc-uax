@@ -75,7 +75,9 @@ reverse["/Game/Blueprints/BP_Player"]  →  引用它的包
 forward["/Game/Blueprints/BP_Player"] →  它引用的包
 ```
 
-`reachability.isolated_project_assets` 和 `reachability.unreachable_project_assets` 只是已扫描 mount 下的图事实，不能当成可以安全删除的证明。
+`reachability.isolated_project_assets` 和 `reachability.unreachable_project_assets` 只是已扫描 mount 下的图事实，不能当成可以安全删除的证明。软加载、Primary Asset 规则、本地化和运行时拼出来的名字都不在这张图里。
+
+从未在 UE5 中重新保存的 UE4 格式包（`FileVersionUE5` = 0）仍是 `unsupported`，但它的 linker 引用表会被读取：它像其他包一样提供 `forward` 和 `reverse` 边，所以它引用的内容可以通过它到达，不会仅仅因为只有 UE4 格式的包指向它就被报告为不可达。
 
 ## 5. 从启动地图追踪玩法
 
@@ -85,7 +87,7 @@ cc-uax project D:/Games/MyGame --output project-report.json --focus "/Game/Maps/
 
 1. 解析 `entry_points.defaults`（`GameDefaultMap`、`GameInstanceClass`、`GlobalDefaultGameMode` 等）。平台覆盖在 `entry_points.platforms`。
 2. 沿 `reachability.configured_roots` → `reachable_runtime_packages` 走。
-3. 把 `ownership_closure` / `reachability.ownership_closure_members` 里的 World Partition 成员算进去。
+3. 把 `ownership_closure` / `reachability.ownership_closure_members` 里的 World Partition 成员算进去（ExternalActors、ExternalObjects，以及已解码 `WorldAsset` / `PackedWorldAsset` 的 Level Instance / Packed Level Actor 子关卡）。
 4. 对地图、GameMode 和需要逐步走的蓝图用 `--focus` 附加完整分析。`--focus` 可重复。
 
 ## 6. 用 `--focus` 选择包
@@ -103,13 +105,17 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/BP_Player.uasset"
 
 ## 7. 纳入插件或其他 Content
 
-`Plugins/` 下的插件 content 会自动挂载，挂载名 `/{name}` 取自各自 `.uplugin` 文件的基名。目录叫 `MetaXR` 但内含 `OculusXR.uplugin` 时挂载为 `/OculusXR`——请看报告里的 `mounts`，不要猜。
+`Plugins/` 下的插件 content 会自动挂载，挂载名 `/{name}` 取自各自 `.uplugin` 文件的基名。这个名字常常不是目录名——目录叫 `MetaXR` 但内含 `OculusXR.uplugin` 时挂载为 `/OculusXR`——所以请看报告里的 `mounts`，不要猜。
+
+`Plugins/` 之外的 content root，或要重定向某个已发现的根，用 `--mount`：
 
 ```powershell
 cc-uax project D:/Games/MyGame `
   --mount "/Extra=ExtraContent" `
   --output project-report.json
 ```
+
+`=` 后面的路径相对项目根；显式 mount 是在自动发现的集合上追加（指定同名根时只替换那一个）。`--mount` 语法错误会以退出码 `1` 结束，且不会产出报告。
 
 ## 8. 把报告限制在上下文窗口内
 
@@ -118,30 +124,37 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/BP_Player" --compact --
 cc-uax asset Content/Blueprints/BP_Player.uasset --view logic --max-output-bytes 80000
 ```
 
-`--compact` 去掉 pretty-print 空白。`--max-output-bytes` 会省略较重的细节，并在顶层增加 `output` 块。用更窄的 `--view` 或 `--focus` 把丢掉的区段再查回来。
+`--compact` 去掉 pretty-print 空白。`--max-output-bytes` 会省略较重的细节，并在顶层增加 `output` 块（`truncated`、`elided` 等）。`output.truncated=true` 只表示体积被截断，不表示证据不完整 — 用更窄的 `--view` 或 `--focus` 把丢掉的区段再查回来。始终保留哪些字段见 [`report-contract.md`](https://github.com/cyber-tao/cc-uax/blob/master/skills/cc-uax/references/report-contract.md)。
 
 ## 9. 把 status、coverage 和退出码一起看
 
 | 现象 | 含义 | 下一步 |
 |---|---|---|
 | `status=complete`，退出码 `0` | 请求的证据已解码 | 直接使用图 / 引用 |
-| `status=partial`，退出码 `0` | 报告可用，但有具名缺口 | 结论里保留缺口，不要补造缺失路径 |
+| `status=partial`，退出码 `0` | 报告可用，但有具名缺口（`known_opaque`、某区域失败等） | 结论里保留缺口，不要补造缺失路径 |
 | `status=unsupported`，退出码 `0`（`project`） | 扫描到的每个包都超出支持范围 | 当作限制，不是崩溃 |
-| 对 cooked / UE4 / 超范围包执行 `asset` 时退出码 `1` | 没有报告：本工具按设计不处理它 | 改扫整个项目 |
-| 退出码 `2`（`project`） | Hard scan failure | 读 `failures`；必要时加 `--allow-partial` 重跑 |
+| 对 cooked / UE4 / 超范围包执行 `asset` 时退出码 `1` | 没有报告：本工具按设计不处理它 | 改扫整个项目：同一个包会作为 `unsupported` 证据进入 inventory |
+| 退出码 `2`（`project`） | Hard scan failure：已映射资产不可读、扫描中的 mount/cache 错误，或 `--focus` 未命中 | 读 `failures`；必要时加 `--allow-partial` 重跑 |
 | 退出码 `1` | 根本没有报告 | 检查路径、`--mount` 语法或输出位置 |
+
+超出支持范围的包不会产出 `status=unsupported` 的资产报告：`cc-uax asset` 无法为它生成报告，会以退出码 `1` 输出 error 文档；而 `cc-uax project` 会把它记入 `inventory` 并标为 `unsupported` 附带原因，进程仍以 `0` 退出。
 
 `--allow-partial` 只改退出码，不会改写 `status`、`failures` 或 coverage。
 
 ## 10. 控制项目缓存
 
 ```powershell
+# 默认：操作系统缓存目录，不会写进 Unreal 项目
 cc-uax project D:/Games/MyGame --output project-report.json
+
+# 指定缓存文件
 cc-uax project D:/Games/MyGame --cache-file D:/caches/mygame-uax.sqlite --output project-report.json
+
+# 不用缓存（CI，或刚改过 decoder）
 cc-uax project D:/Games/MyGame --no-cache --output project-report.json
 ```
 
-对未变化的包，fresh cache entry 会复用已验证的引用列表和紧凑逐资产分析摘要。
+对未变化的包，fresh cache entry 会复用已验证的引用列表和紧凑逐资产分析摘要。扫描只读取每个包的头部表和 export 数据，不读最后一个 export 之后的 bulk 数据；`stats.bytes_read` 记录实际读取的字节数，缓存命中不读任何字节。
 
 ## 11. 从源码 checkout 运行
 

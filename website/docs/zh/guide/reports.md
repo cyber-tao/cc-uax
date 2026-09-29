@@ -69,6 +69,8 @@ description: 如何阅读 cc-uax 的资产报告和项目报告，不要把缺�
 
 每一块未结构化区域都应该说明*为什么*，而不只是*有*。资产报告列出逐区域范围；项目报告按 `(kind, type, reason)` 分组并给出区域数和字节合计，这样 opaque 字节仍然可归因，而不必列出每一段 mesh 尾巴。
 
+没有 decoder 能读出的值是带字节范围的类型化 `@opaque` 值，其字节计入 `coverage.opaque_value_bytes`，与合计 export 级区域的 `opaque_bytes` 分开。确切形状见 [`report-contract.md`](https://github.com/cyber-tao/cc-uax/blob/master/skills/cc-uax/references/report-contract.md)。
+
 coverage 把类自身 serializer 写下的尾巴（`class_payload_bytes`）和属性块未正常关闭后的无归属尾巴（`unattributed_tail_bytes`）分开。后者才是 decoder 漏了东西的信号。
 
 ## 退出码

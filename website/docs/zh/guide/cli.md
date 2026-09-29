@@ -28,10 +28,19 @@ cc-uax asset <FILE> [--view summary|logic|properties|references|full]
 | `full` | 单个体积可控的资产，含 export `serialization` | 以上全部 |
 
 ```powershell
+# 资产身份、状态、coverage 和 capabilities
 cc-uax asset Content/Blueprints/BP_Player.uasset --view summary
+
+# 图、节点、exec/data edge、成员引用和 pin 默认值
 cc-uax asset Content/Blueprints/BP_Player.uasset --view logic
+
+# 带标签属性和类默认值
 cc-uax asset Content/Blueprints/BP_Player.uasset --view properties
+
+# 该文件的 import 与 soft path（仅出边）
 cc-uax asset Content/Blueprints/BP_Player.uasset --view references
+
+# 完整强类型报告
 cc-uax asset Content/Blueprints/BP_Player.uasset --view full --output BP_Player.json
 ```
 
@@ -46,9 +55,15 @@ cc-uax project <PROJECT_OR_CONTENT_DIR>
 ```
 
 ```powershell
+# 对 .uproject 目录或 Content 目录执行一次扫描。
+# 同一 Content 树下有多个 .uproject 时，显式传入其中一个文件。
 cc-uax project D:/Games/MyGame --output project-report.json
 cc-uax project D:/Games/MyGame/MyGame.uproject --output project-report.json
+
+# 复用同一项目索引，并为匹配包附加完整分析
 cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
+
+# 添加显式 package mount
 cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 ```
 
@@ -58,16 +73,16 @@ cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 
 默认挂载是 `/Game` 加上 `Plugins/` 下每一个插件的 content root，挂载名与 Unreal 一致：取自 `.uplugin` 文件的基名，而这个名字常常不等于插件目录名。没有它们，插件里的包对 inventory、邻接和可达性完全不可见。
 
-`--mount` 用于追加其他 content root，或重定向其中一个。`=` 后面的路径相对项目根。`--mount` 语法错误会以退出码 `1` 结束，且不会产出报告。
+`--mount` 用于追加其他 content root，或重定向其中一个。`=` 后面的路径相对项目根；显式 mount 是在自动发现的集合上追加（指定同名根时只替换那一个）。`--mount` 语法错误会以退出码 `1` 结束，且不会产出报告。
 
 ### Configured roots
 
-Configured root 同时来自 `GameMapsSettings` 和 `ProjectPackagingSettings` 的 cook 列表（`+MapsToCook`、`+DirectoriesToAlwaysCook`）。`GameDefaultMap` 经常是开发者地图，cook 列表才是真正会打包发布的内容。
+Configured root 同时来自 `GameMapsSettings` 和 `ProjectPackagingSettings` 的 cook 列表（`+MapsToCook`、`+DirectoriesToAlwaysCook`）。`GameDefaultMap` 经常是开发者地图，cook 列表才是真正会打包发布的内容。`+DirectoriesToAlwaysCook` 目录会作为一个 configured root 报告，并带 `matched_packages`（该目录下已索引包的数量）；这些包都会作为可达性的起点。
 
 ### Strict 模式与缓存
 
-项目分析默认采用 **strict** 模式。任何已映射资产读取、索引或解析失败都会生成结构化 failure 并以退出码 `2` 结束。本工具按设计不处理的包——UE4、cooked、unversioned、UE3、大端或包级压缩——会作为 `unsupported` 证据进入 inventory，进程仍以 `0` 退出。
+项目分析默认采用 **strict** 模式。任何已映射资产读取、索引或解析失败都会生成结构化 failure 并以退出码 `2` 结束。本工具按设计不处理的包——UE4、cooked、unversioned、UE3、大端或包级压缩——会作为 `unsupported` 证据进入 inventory，进程仍以 `0` 退出。UE4 格式的包（`FileVersionUE5` = 0）同样是 `unsupported`，但会读取它的 linker 引用表，因此它提供引用边并带有 `file_version_ue4`。
 
-`--allow-partial` 只是把 hard scan failure 降级为零退出，不会改写 `status`、`failures` 或 coverage。退出码 `1` 表示根本没能产出报告。
+`--allow-partial` 只是把 hard scan failure 降级为零退出，不会改写 `status`、`failures` 或 coverage。退出码 `1` 表示根本没能产出报告（资产不可读、项目无法发现、`--mount` 语法错误、写出失败）。
 
-项目缓存默认放在操作系统缓存目录，不写入被分析项目。使用 `--cache-file` 指定位置，或用 `--no-cache` 完全禁用缓存。设置环境变量 `CC_UAX_CACHE_ROOT` 可以改写默认位置的根目录（适用于 CI 或沙箱运行），其下按项目划分的子目录保持不变。
+项目缓存默认放在操作系统缓存目录，不写入被分析项目。对未变化的包，fresh cache entry 会复用已验证的引用列表和紧凑逐资产分析摘要。扫描只读取每个包的头部表和 export 数据，不读最后一个 export 之后的 bulk 数据；`stats.bytes_read` 记录实际读取的字节数，缓存命中不读任何字节。使用 `--cache-file` 指定位置，或用 `--no-cache` 完全禁用缓存。设置环境变量 `CC_UAX_CACHE_ROOT` 可以改写默认位置的根目录（适用于 CI 或沙箱运行），其下按项目划分的子目录保持不变。

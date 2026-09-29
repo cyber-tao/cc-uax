@@ -75,7 +75,9 @@ reverse["/Game/Blueprints/BP_Player"]  →  packages that reference it
 forward["/Game/Blueprints/BP_Player"] →  packages it references
 ```
 
-`reachability.isolated_project_assets` and `reachability.unreachable_project_assets` are graph facts under the scanned mounts, not proof that deletion is safe.
+`reachability.isolated_project_assets` and `reachability.unreachable_project_assets` are graph facts under the scanned mounts, not proof that deletion is safe. Soft loads, primary asset rules, localization, and runtime-generated names sit outside that graph.
+
+A UE4-format package that was never resaved in UE5 (`FileVersionUE5` = 0) stays `unsupported`, but its linker reference tables are read: it contributes `forward` and `reverse` edges like any other package, so what it references is reachable through it and is not reported as unreachable merely because only a UE4-format package points to it.
 
 ## 5. Trace gameplay from the startup map
 
@@ -85,7 +87,7 @@ cc-uax project D:/Games/MyGame --output project-report.json --focus "/Game/Maps/
 
 1. Resolve `entry_points.defaults` (`GameDefaultMap`, `GameInstanceClass`, `GlobalDefaultGameMode`, and the other keys). Platform overrides live under `entry_points.platforms`.
 2. Walk `reachability.configured_roots` → `reachable_runtime_packages`.
-3. Include World Partition members from `ownership_closure` / `reachability.ownership_closure_members`.
+3. Include World Partition members from `ownership_closure` / `reachability.ownership_closure_members` (ExternalActors, ExternalObjects, and Level Instance / Packed Level Actor sub-levels whose `WorldAsset` / `PackedWorldAsset` was decoded).
 4. Attach full analyses with `--focus` for the map, GameMode, and any Blueprint you need to walk. `--focus` is repeatable.
 
 ## 6. Select packages with `--focus`
@@ -103,13 +105,17 @@ A pattern that matches nothing is a hard failure (exit `2`) and is recorded unde
 
 ## 7. Include plugin or extra content
 
-Plugin content under `Plugins/` is mounted for you, as `/{name}` taken from each `.uplugin` file's base name. A `MetaXR` folder shipping `OculusXR.uplugin` mounts as `/OculusXR` — check `mounts` in the report rather than guessing.
+Plugin content under `Plugins/` is mounted for you, as `/{name}` taken from each `.uplugin` file's base name. That name is often not the directory name — a `MetaXR` folder shipping `OculusXR.uplugin` mounts as `/OculusXR` — so check `mounts` in the report rather than guessing.
+
+Add `--mount` for content roots outside `Plugins/`, or to redirect one of the discovered roots:
 
 ```powershell
 cc-uax project D:/Games/MyGame `
   --mount "/Extra=ExtraContent" `
   --output project-report.json
 ```
+
+The path after `=` is project-relative, and an explicit mount is added to the discovered set (naming an existing root replaces just that one). A malformed `--mount` exits `1` and produces no report.
 
 ## 8. Keep a report inside a context window
 
@@ -118,30 +124,37 @@ cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/BP_Player" --compact --
 cc-uax asset Content/Blueprints/BP_Player.uasset --view logic --max-output-bytes 80000
 ```
 
-`--compact` removes pretty-print whitespace. `--max-output-bytes` elides heavy detail and adds a top-level `output` block. Re-query a narrower `--view` or `--focus` for dropped sections.
+`--compact` removes pretty-print whitespace. `--max-output-bytes` elides heavy detail and adds a top-level `output` block (`truncated`, `elided`, …). `output.truncated=true` is a size cap, not incomplete evidence — re-query a narrower `--view` or `--focus` for dropped sections. See [`report-contract.md`](https://github.com/cyber-tao/cc-uax/blob/master/skills/cc-uax/references/report-contract.md) for what is always preserved.
 
 ## 9. Read status, coverage, and exit codes together
 
 | You see | Meaning | Typical next step |
 |---|---|---|
 | `status=complete`, exit `0` | Requested evidence decoded | Use the graphs / references as-is |
-| `status=partial`, exit `0` | Usable report with a named gap | Keep the gap; do not invent the missing path |
+| `status=partial`, exit `0` | Usable report with a named gap (`known_opaque`, a failed region, …) | Keep the gap; do not invent the missing path |
 | `status=unsupported`, exit `0` (`project`) | Every scanned package is out of scope | Treat as a limitation, not a crash |
-| exit `1` (`asset`) on a cooked / UE4 / out-of-range package | No report: the parser does not target it | Scan the project instead |
-| exit `2` (`project`) | Hard scan failure | Read `failures`; optionally rerun with `--allow-partial` |
+| exit `1` (`asset`) on a cooked / UE4 / out-of-range package | No report: the parser does not target it | Scan the project instead: the same package is indexed as `unsupported` evidence |
+| exit `2` (`project`) | Hard scan failure: unreadable mapped asset, in-scan mount/cache error, or `--focus` miss | Read `failures`; optionally rerun with `--allow-partial` |
 | exit `1` | No report at all | Fix the path, `--mount` syntax, or output location |
+
+An out-of-scope package is not a `status=unsupported` asset report: `cc-uax asset` cannot produce a report for one and exits `1` with an error document, while `cc-uax project` records it in `inventory` as `unsupported` with a reason and still exits `0`.
 
 `--allow-partial` only changes the exit code. It does not rewrite `status`, `failures`, or coverage.
 
 ## 10. Control the project cache
 
 ```powershell
+# Default: OS cache directory, never inside the Unreal project
 cc-uax project D:/Games/MyGame --output project-report.json
+
+# Explicit cache file
 cc-uax project D:/Games/MyGame --cache-file D:/caches/mygame-uax.sqlite --output project-report.json
+
+# No cache (CI, or after a decoder change)
 cc-uax project D:/Games/MyGame --no-cache --output project-report.json
 ```
 
-Fresh cache entries reuse validated references and compact per-asset summaries for unchanged packages.
+Fresh cache entries reuse validated references and compact per-asset summaries for unchanged packages. A scan reads only each package's header tables and export data, not the bulk data after the last export; `stats.bytes_read` records the bytes actually read, and a cache hit reads nothing.
 
 ## 11. Run from a source checkout
 

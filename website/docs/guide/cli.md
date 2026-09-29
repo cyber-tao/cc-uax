@@ -28,10 +28,19 @@ cc-uax asset <FILE> [--view summary|logic|properties|references|full]
 | `full` | One bounded asset, including export `serialization` | all of the above |
 
 ```powershell
+# High-level identity, status, coverage, and capabilities
 cc-uax asset Content/Blueprints/BP_Player.uasset --view summary
+
+# Graphs, nodes, exec/data edges, member references, and pin defaults
 cc-uax asset Content/Blueprints/BP_Player.uasset --view logic
+
+# Tagged properties and class defaults
 cc-uax asset Content/Blueprints/BP_Player.uasset --view properties
+
+# This file's imports and soft paths (outbound only)
 cc-uax asset Content/Blueprints/BP_Player.uasset --view references
+
+# Complete typed report
 cc-uax asset Content/Blueprints/BP_Player.uasset --view full --output BP_Player.json
 ```
 
@@ -46,9 +55,15 @@ cc-uax project <PROJECT_OR_CONTENT_DIR>
 ```
 
 ```powershell
+# Scan a .uproject directory or Content directory once.
+# If several .uproject files share one Content tree, pass one file explicitly.
 cc-uax project D:/Games/MyGame --output project-report.json
 cc-uax project D:/Games/MyGame/MyGame.uproject --output project-report.json
+
+# Add full analyses for matching packages while retaining one shared project index
 cc-uax project D:/Games/MyGame --focus "/Game/Blueprints/**"
+
+# Add explicit package mounts
 cc-uax project D:/Games/MyGame --mount "/Plugin=Plugins/MyPlugin/Content"
 ```
 
@@ -58,16 +73,16 @@ Passing an explicit `.uproject` file selects that file even when sibling platfor
 
 The default mounts are `/Game` plus every plugin content root under `Plugins/`, mounted the way Unreal mounts them: `/{name}` from the `.uplugin` file's base name, which is often not the plugin's directory name. Without them, plugin packages are invisible to inventory, adjacency, and reachability.
 
-`--mount` adds other content roots or redirects one of the discovered roots. The path after `=` is project-relative. A malformed `--mount` exits `1` and produces no report.
+`--mount` adds other content roots or redirects one of the discovered roots. The path after `=` is project-relative, and an explicit mount is added to the discovered set (naming an existing root replaces just that one). A malformed `--mount` exits `1` and produces no report.
 
 ### Configured roots
 
-Configured roots come from `GameMapsSettings` and from the `ProjectPackagingSettings` cook lists (`+MapsToCook`, `+DirectoriesToAlwaysCook`). `GameDefaultMap` is frequently a developer map; the cook list is what a build actually ships.
+Configured roots come from `GameMapsSettings` and from the `ProjectPackagingSettings` cook lists (`+MapsToCook`, `+DirectoriesToAlwaysCook`). `GameDefaultMap` is frequently a developer map; the cook list is what a build actually ships. A `+DirectoriesToAlwaysCook` directory is reported as one configured root with `matched_packages` (the number of indexed packages beneath it); every one of those packages seeds reachability.
 
 ### Strict mode and cache
 
-Project analysis is **strict by default**. A mapped asset that cannot be read, indexed, or parsed produces a structured failure and exit code `2`. A package this tool deliberately does not target — UE4, cooked, unversioned, UE3, big-endian, or package-compressed — is indexed as `unsupported` evidence and the run still exits `0`.
+Project analysis is **strict by default**. A mapped asset that cannot be read, indexed, or parsed produces a structured failure and exit code `2`. A package this tool deliberately does not target — UE4, cooked, unversioned, UE3, big-endian, or package-compressed — is indexed as `unsupported` evidence and the run still exits `0`. A UE4-format package (`FileVersionUE5` = 0) is still `unsupported`, but its linker reference tables are read, so it contributes reference edges and carries `file_version_ue4`.
 
-`--allow-partial` downgrades a hard scan failure to a zero exit. It does not rewrite `status`, `failures`, or coverage. Exit `1` means no report could be produced at all.
+`--allow-partial` downgrades a hard scan failure to a zero exit. It does not rewrite `status`, `failures`, or coverage. Exit `1` means no report could be produced at all (unreadable asset, undiscoverable project, malformed `--mount`, failed write).
 
-Project cache data defaults to the operating system's cache directory, never the analyzed project. Use `--cache-file` for an explicit location or `--no-cache` for a cache-free run. Setting `CC_UAX_CACHE_ROOT` redirects the default location's root (for CI or sandboxed runs); the per-project subdirectory beneath it is unchanged.
+Project cache data defaults to the operating system's cache directory, never the analyzed project. Fresh cache entries reuse validated references and compact per-asset analysis summaries for unchanged packages. A scan reads only each package's header tables and export data, not the bulk data after the last export; `stats.bytes_read` records the bytes actually read, and a cache hit reads nothing. Use `--cache-file` for an explicit location or `--no-cache` for a cache-free run. Setting `CC_UAX_CACHE_ROOT` redirects the default location's root (for CI or sandboxed runs); the per-project subdirectory beneath it is unchanged.

@@ -5,28 +5,34 @@ description: What cc-uax targets, what it rejects, and current named gaps.
 
 # Scope and limits
 
-Serialization decisions are checked against UE5.0–5.8 source and exercised against external, real editor assets across that range. `FileVersionUE5` 1000–1018 is the accepted window. Both ends are enforced in `PackageFileSummary::parse` as out of scope, not inferred later.
+Serialization decisions are checked against UE5.0–5.8 source. `FileVersionUE5` 1000–1018 is the accepted window. Both ends are enforced in `PackageFileSummary::parse` as out of scope, not inferred later.
 
 ## In scope
 
-Versioned, uncooked UE5.0–5.8 editor packages. That range is real-corpus-verified and may be `status=complete` when evidence is complete.
+Versioned, uncooked UE5.0–5.8 editor packages (`FileVersionUE5` 1000–1018). A package may be `status=complete` when its evidence is complete.
+
+Real projects have exercised `FileVersionUE5` 1002–1004, 1006–1009 and 1012–1018. 1000, 1001, 1005, 1010 and 1011 have not been seen in a real asset yet: they decode per version gates checked against source, but no real package has confirmed them.
 
 ## Out of scope
 
 Rejected rather than guessed at:
 
-- below 1000 (UE4 and older)
+- UE4 and older (`FileVersionUE5` below 1000)
 - above 1018 (a layout this parser has not seen)
-- cooked or unversioned packages
+- cooked packages, including anything flagged `PKG_Cooked` or `PKG_UnversionedProperties`
+- unversioned packages
 - UE3, big-endian, and package-level compression
 
 `cc-uax asset` exits `1` with an error document for an out-of-scope package. `cc-uax project` indexes it as `unsupported` evidence and still exits `0`.
 
+A UE4-format package (`FileVersionUE5` = 0) stays `unsupported`, but a project scan still reads its linker reference tables (names, imports, soft package references). It contributes reference edges and reachability and carries `file_version_ue4`; its properties and graphs are not analysed.
+
 ## Current limitations
 
-- cooked/unversioned packages and UE4 package formats
-- source-level reconstruction of compiled RigVM bytecode and compressed RigHierarchy data
-- compiled Niagara VM/GPU payloads (a named capability, not an anonymous tail)
+- source-level reconstruction of compiled RigVM bytecode (`rig_vm_bytecode`) and compressed RigHierarchy data (`rig_hierarchy`)
+- compiled Niagara VM/GPU payloads (`niagara_compiled`, a named capability, not an anonymous tail)
+- set and map element structs in legacy (below 1012) property tags, which record no struct name and so stay opaque unless the property's declaration is known from UE source
+- payloads whose layout depends on UE's reflection or class registry
 - runtime behavior not evidenced by serialized graphs, properties, configuration, or references
 - plugin-native formats without a verified UE5.0–5.8 serialization contract
 
@@ -38,7 +44,7 @@ The same `FileVersionUE5` does not guarantee the same layout: UE5.7 and UE5.8 sh
 
 ## Validation
 
-Real-corpus acceptance is separate from ordinary workspace tests. External assets and machine-specific paths stay local; the repository does not commit them.
+Serialization decisions are checked against UE5.0–5.8 source and exercised against external, real editor assets. Real-corpus acceptance gates are defined by a harness that is maintained separately from the workspace crates and is not committed as a workspace member; it is separate from ordinary workspace tests. External assets and machine-specific paths stay local; the repository does not commit them.
 
 ## License
 
