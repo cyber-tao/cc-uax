@@ -4,6 +4,7 @@ use super::{
     PropertyParseStatus, to_hex,
 };
 use crate::diagnostic::Diagnostic;
+use crate::model::{OpaqueByteRange, OpaqueReason, OpaqueValue};
 use crate::name::NameMap;
 use crate::reader::{RAW_NAME_BYTES, Reader};
 use crate::structured_value::{Value, json};
@@ -11,10 +12,6 @@ use crate::version::{ue4, ue5};
 use anyhow::{Result, bail};
 
 const MAX_TYPE_NAME_DEPTH: usize = 64;
-/// `known_opaque` reason for a set element or map key/value whose struct name the
-/// legacy `FPropertyTag` layout never wrote (see [`has_unnamed_inner_struct`]).
-const MISSING_INNER_STRUCT_NAME_REASON: &str = "the legacy property tag does not record a set/map element struct name, and unlike TArray the payload carries no inner tag, so the element cannot be decoded without a reflection registry";
-
 // FPropertyTag flag bits (EPropertyTagFlags).
 const TAG_FLAG_HAS_ARRAY_INDEX: u8 = 0x01;
 const TAG_FLAG_HAS_PROPERTY_GUID: u8 = 0x02;
@@ -142,20 +139,32 @@ fn fallback_code(unnamed_inner_struct: bool) -> &'static str {
     }
 }
 
-/// The value kept for a property whose payload could not be decoded: an
-/// `@unparsed` preview normally, or a named opaque region when the cause is the
-/// legacy tag's missing inner struct name.
-fn fallback_value(unnamed_inner_struct: bool, preview: &[u8], size: i32) -> Value {
-    if unnamed_inner_struct {
-        json!({
-            "status": "opaque",
-            "reason": MISSING_INNER_STRUCT_NAME_REASON,
-            "size": size,
-            "preview": to_hex(preview),
-        })
-    } else {
-        json!({ "@unparsed": to_hex(preview), "size": size })
-    }
+/// The value kept for a property whose payload could not be decoded: an opaque
+/// range over the whole value window, attributed to the legacy tag's missing
+/// inner struct name when that is the cause.
+fn fallback_value(
+    unnamed_inner_struct: bool,
+    tag: &PropertyTag,
+    message: String,
+    value_start: u64,
+    value_end: u64,
+    preview: &[u8],
+) -> Value {
+    Value::Opaque(OpaqueValue {
+        reason: if unnamed_inner_struct {
+            OpaqueReason::MissingInnerStructName
+        } else {
+            OpaqueReason::UndecodedValue
+        },
+        message,
+        type_name: Some(tag.type_name.display()),
+        byte_range: OpaqueByteRange {
+            start: value_start,
+            end: value_end,
+            size: tag.size.max(0) as u64,
+            preview: to_hex(preview),
+        },
+    })
 }
 
 impl TypeName {
@@ -422,15 +431,16 @@ pub(crate) fn parse_properties_report(
                     let n = (tag.size as usize).min(PREVIEW_MAX);
                     let preview = r.read_bytes(n).unwrap_or_default();
                     let unnamed_struct = has_unnamed_inner_struct(&tag.type_name);
+                    let message = format!(
+                        "decoded property '{}' as {} past its declared value window: read to {consumed_to}, expected end {aligned}",
+                        tag.name,
+                        tag.type_name.display()
+                    );
                     diagnostics.push(
                         Diagnostic::warning(
                             fallback_code(unnamed_struct),
                             prop_path.clone(),
-                            format!(
-                                "decoded property '{}' as {} past its declared value window: read to {consumed_to}, expected end {aligned}",
-                                tag.name,
-                                tag.type_name.display()
-                            ),
+                            message.clone(),
                         )
                         .with_offset(value_start)
                         .with_context(json!({
@@ -442,22 +452,30 @@ pub(crate) fn parse_properties_report(
                             "consumed_to": consumed_to,
                         })),
                     );
-                    fallback_value(unnamed_struct, &preview, tag.size)
+                    fallback_value(
+                        unnamed_struct,
+                        &tag,
+                        message,
+                        value_start,
+                        aligned,
+                        &preview,
+                    )
                 }
                 Err(err) => {
                     let _ = r.seek(value_start);
                     let n = (tag.size as usize).min(PREVIEW_MAX);
                     let preview = r.read_bytes(n).unwrap_or_default();
                     let unnamed_struct = has_unnamed_inner_struct(&tag.type_name);
+                    let message = format!(
+                        "failed to decode property '{}' as {}: {err:#}",
+                        tag.name,
+                        tag.type_name.display()
+                    );
                     diagnostics.push(
                         Diagnostic::warning(
                             fallback_code(unnamed_struct),
                             prop_path.clone(),
-                            format!(
-                                "failed to decode property '{}' as {}: {err:#}",
-                                tag.name,
-                                tag.type_name.display()
-                            ),
+                            message.clone(),
                         )
                         .with_offset(value_start)
                         .with_context(json!({
@@ -467,7 +485,14 @@ pub(crate) fn parse_properties_report(
                             "preview": to_hex(&preview),
                         })),
                     );
-                    fallback_value(unnamed_struct, &preview, tag.size)
+                    fallback_value(
+                        unnamed_struct,
+                        &tag,
+                        message,
+                        value_start,
+                        aligned,
+                        &preview,
+                    )
                 }
             }
         };

@@ -1,4 +1,5 @@
 use super::super::common::*;
+use crate::model::OpaqueReason;
 use crate::name::NameMap;
 use crate::pin::PinSerCtx;
 use crate::property::{ParseCtx, parse_properties};
@@ -121,11 +122,19 @@ fn a_legacy_map_without_an_inner_struct_name_is_its_own_limitation() {
 
     assert_eq!(parse.entries.len(), 1, "{:#?}", parse.entries);
     let value = &parse.entries[0].value;
-    assert_eq!(value["status"].as_str(), Some("opaque"));
-    let reason = value["reason"].as_str().unwrap();
+    let opaque = value.as_opaque().expect("the value stays opaque");
+    assert_eq!(opaque.reason, OpaqueReason::MissingInnerStructName);
     assert!(
-        reason.contains("does not record a set/map element struct name"),
-        "{reason}"
+        opaque
+            .reason
+            .description()
+            .contains("does not record a set/map element struct name"),
+        "{}",
+        opaque.reason.description()
+    );
+    assert_eq!(
+        opaque.byte_range.size,
+        opaque.byte_range.end - opaque.byte_range.start
     );
     // The generic fallback code would read as a decoder defect; this one does not.
     assert!(
@@ -465,7 +474,7 @@ fn a_truncated_inner_array_tag_falls_back_without_desyncing() {
         crate::property::parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
 
     assert_eq!(parse.entries.len(), 2, "{:#?}", parse.entries);
-    assert!(parse.entries[0].value["@unparsed"].is_string());
+    assert!(parse.entries[0].value.is_opaque());
     assert!(
         parse
             .diagnostics

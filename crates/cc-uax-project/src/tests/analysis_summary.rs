@@ -2,8 +2,8 @@ use super::common::minimal_package;
 use crate::{AssetAnalysisSummary, CapabilitySummary, ProjectAnalysisSummary};
 use cc_uax_core::{
     AnalysisCapability, AnalysisDiagnostic, AnalysisStatus, AssetView, CapabilityKind,
-    DiagnosticSeverity, KnownOpaque, KnownOpaqueKind, PackageView, ReferenceEvidence,
-    ReferenceEvidenceSources,
+    DiagnosticSeverity, KnownOpaque, KnownOpaqueKind, OpaqueByteRange, PackageView,
+    ReferenceEvidence, ReferenceEvidenceSources,
 };
 
 fn complete_summary() -> AssetAnalysisSummary {
@@ -256,5 +256,64 @@ fn reference_evidence_totals_count_distinct_value_only_packages_across_assets() 
     assert_eq!(
         evidence.value_only_packages, 2,
         "the shared package is one project-wide gap, not two"
+    );
+}
+
+#[test]
+fn known_opaque_bytes_split_between_export_level_and_value_level_regions() {
+    let bytes = minimal_package();
+    let mut analysis = PackageView::parse(&bytes).unwrap().analyze(AssetView::Full);
+    let region = |path: &str, kind, size: u64| KnownOpaque {
+        path: path.to_string(),
+        kind,
+        type_name: None,
+        reason: "fixed reason".to_string(),
+        byte_range: Some(OpaqueByteRange {
+            start: 0,
+            end: size,
+            size,
+            preview: String::new(),
+        }),
+    };
+    analysis.known_opaque = vec![
+        region(
+            "/exports/1/post_property_tail",
+            KnownOpaqueKind::PostPropertyTail,
+            10,
+        ),
+        region("/exports/1/properties/A", KnownOpaqueKind::PropertyValue, 4),
+        region("/exports/1/metadata", KnownOpaqueKind::Metadata, 2),
+    ];
+    analysis.coverage.known_opaque_regions = 3;
+    analysis.coverage.opaque_bytes = 10;
+    analysis.coverage.opaque_value_bytes = 6;
+
+    let summary = AssetAnalysisSummary::from_analysis(&analysis);
+
+    assert_eq!(summary.known_opaque.bytes, 10);
+    assert_eq!(summary.known_opaque.value_bytes, 6);
+    assert_eq!(
+        summary
+            .known_opaque
+            .groups
+            .iter()
+            .map(|group| group.bytes)
+            .sum::<u64>(),
+        16,
+        "groups keep their own bytes whatever the level"
+    );
+
+    let aggregate = ProjectAnalysisSummary::aggregate([&summary, &summary].into_iter(), 0);
+
+    assert_eq!(aggregate.grouped_opaque_regions, 6);
+    assert_eq!(aggregate.grouped_opaque_bytes, 20);
+    assert_eq!(aggregate.grouped_opaque_value_bytes, 12);
+    assert_eq!(
+        aggregate.grouped_opaque_bytes,
+        aggregate.coverage.opaque_bytes
+    );
+    assert_eq!(
+        aggregate.grouped_opaque_value_bytes,
+        aggregate.coverage.opaque_value_bytes
     );
 }

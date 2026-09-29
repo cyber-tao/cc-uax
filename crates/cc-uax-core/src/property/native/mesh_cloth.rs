@@ -1,7 +1,8 @@
+use super::gameplay::opaque_range;
 use super::{ensure_complete_tagged_payload, ensure_tagged_payload_parsed};
+use crate::model::OpaqueReason;
 use crate::property::{
-    PREVIEW_MAX, ParseCtx, ensure_within_value, entries_to_values, parse_properties_report, to_hex,
-    validate_count,
+    ParseCtx, ensure_within_value, entries_to_values, parse_properties_report, validate_count,
 };
 use crate::reader::Reader;
 use crate::structured_value::{Map, Value, json};
@@ -45,16 +46,16 @@ fn parse_tagged_struct_with_payload(
     o.insert("@struct".into(), json!(name));
     o.insert("properties".into(), entries_to_values(&nested.entries));
     if r.pos() < value_end {
-        let payload_size = value_end - r.pos();
-        let preview_len = payload_size.min(PREVIEW_MAX as u64) as usize;
-        let preview = r.read_bytes(preview_len)?;
-        if r.pos() < value_end {
-            r.seek(value_end)?;
-        }
-        o.insert(
-            payload_key.into(),
-            json!({ "size": payload_size, "preview": to_hex(&preview) }),
-        );
+        let payload_start = r.pos();
+        let payload = opaque_range(
+            r,
+            payload_start,
+            value_end,
+            OpaqueReason::PayloadTail,
+            name,
+            format!("{name} has bytes after its decoded tagged properties"),
+        )?;
+        o.insert(payload_key.into(), payload);
     }
     Ok(Value::Object(o))
 }
@@ -204,28 +205,23 @@ fn parse_instanced_property_bag(r: &mut Reader, ctx: &ParseCtx, value_end: u64) 
         return Ok(Value::Object(o));
     }
 
-    r.seek(body_start)?;
-    let payload_size = value_end.saturating_sub(r.pos());
-    let preview_len = payload_size.min(PREVIEW_MAX as u64) as usize;
-    let preview = r.read_bytes(preview_len)?;
-    if r.pos() < value_end {
-        r.seek(value_end)?;
-    }
-    let mut serialized = Map::new();
-    if version > custom::PROPERTY_BAG_HIGHEST_KNOWN {
-        serialized.insert(
-            "reason".into(),
-            json!(format!(
-                "property bag custom version {version} exceeds the highest verified layout {}",
-                custom::PROPERTY_BAG_HIGHEST_KNOWN
-            )),
-        );
-    }
-    serialized.insert("start".into(), json!(body_start));
-    serialized.insert("end".into(), json!(value_end));
-    serialized.insert("size".into(), json!(payload_size));
-    serialized.insert("preview".into(), json!(to_hex(&preview)));
-    o.insert("serialized_data".into(), Value::Object(serialized));
+    let message = if version > custom::PROPERTY_BAG_HIGHEST_KNOWN {
+        format!(
+            "property bag custom version {version} exceeds the highest verified layout {}",
+            custom::PROPERTY_BAG_HIGHEST_KNOWN
+        )
+    } else {
+        "property bag descriptors did not validate against the declared serial size".to_owned()
+    };
+    let serialized = opaque_range(
+        r,
+        body_start,
+        value_end,
+        OpaqueReason::RegistryDependentPayload,
+        "InstancedPropertyBag",
+        message,
+    )?;
+    o.insert("serialized_data".into(), serialized);
     Ok(Value::Object(o))
 }
 

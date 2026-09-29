@@ -1,4 +1,5 @@
 use super::super::common::*;
+use crate::model::OpaqueReason;
 use crate::name::NameMap;
 use crate::pin::PinSerCtx;
 use crate::property::{ParseCtx, parse_properties};
@@ -45,8 +46,9 @@ fn text_property_unknown_history_falls_back_to_hex() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "MyText");
     assert_eq!(entries[0].type_str, "TextProperty");
-    let unparsed = entries[0].value.get("@unparsed").and_then(|v| v.as_str());
-    assert_eq!(unparsed, Some("0000000004"));
+    let opaque = entries[0].value.as_opaque().expect("the value falls back");
+    assert_eq!(opaque.reason, OpaqueReason::UndecodedValue);
+    assert_eq!(opaque.byte_range.preview, "0000000004");
 }
 
 fn parse_text_property_value(value: &[u8]) -> crate::DecodedValue {
@@ -109,7 +111,7 @@ fn text_history_as_number_decodes() {
     assert_eq!(value["format_options"]["use_grouping"], true);
     assert_eq!(value["format_options"]["maximum_integral_digits"], 324);
     assert_eq!(value["culture"], "");
-    assert!(value.get("@unparsed").is_none());
+    assert!(!value.is_opaque());
 }
 
 #[test]

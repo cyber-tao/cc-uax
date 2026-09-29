@@ -3,7 +3,8 @@ use crate::PackageView;
 use crate::analysis::analyze_package;
 use crate::model::{
     ASSET_ANALYSIS_SCHEMA_VERSION, AnalysisStatus, AssetAnalysis, AssetView, CapabilityKind,
-    DecodedValue, DiagnosticSeverity, KnownOpaqueKind, ParseCoverage, PropertyDecodeStatus,
+    DecodedValue, DiagnosticSeverity, KnownOpaqueKind, OpaqueReason, ParseCoverage,
+    PropertyDecodeStatus,
 };
 use crate::name::NameMap;
 use crate::object::{ObjectImport, PackageIndex};
@@ -641,6 +642,7 @@ fn parse_coverage_add_assign_doubles_every_serialized_field() {
         script_expressions_decoded: 41,
         known_opaque_regions: 42,
         opaque_bytes: 43,
+        opaque_value_bytes: 50,
         class_payload_bytes: 44,
         unattributed_tail_bytes: 45,
         unclassified_bytes: 46,
@@ -657,7 +659,7 @@ fn parse_coverage_add_assign_doubles_every_serialized_field() {
     let doubled_obj = doubled_map.as_object().unwrap();
     assert_eq!(
         base_obj.len(),
-        49,
+        50,
         "every coverage field must be non-zero here"
     );
     for (key, value) in base_obj {
@@ -1195,4 +1197,139 @@ fn rigvm_edgraph_mirrors_are_excluded_from_edgraph_coverage_when_model_exists() 
     );
     assert_eq!(analysis.coverage.pins_decoded, 0);
     assert!(analysis.graphs.is_empty());
+}
+
+/// A property whose value falls back is one value-level opaque region covering
+/// exactly the value window. Its bytes sit inside the property's own span, so
+/// they are totalled in `opaque_value_bytes` and never in `opaque_bytes`, which
+/// only counts the regions that partition export bytes.
+#[test]
+fn a_fallback_property_value_is_a_value_level_region_over_its_window() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut data = Vec::new();
+    data.push(0); // object property serialization control
+    push_raw_name(&mut data, 1); // Nums
+    push_raw_name(&mut data, 2); // ArrayProperty
+    push_i32(&mut data, 1); // one type parameter
+    push_raw_name(&mut data, 3); // IntProperty
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 4); // value is only the array count
+    data.push(0); // property tag flags
+    let value_start = data.len() as u64;
+    push_i32(&mut data, 1_000_001); // count no window can satisfy
+    push_raw_name(&mut data, 4); // None
+    let tagged_end = data.len();
+
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "Obj".into(),
+                "Nums".into(),
+                "ArrayProperty".into(),
+                "IntProperty".into(),
+                "None".into(),
+            ],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, tagged_end as i64)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+
+    let regions: Vec<_> = analysis
+        .known_opaque
+        .iter()
+        .filter(|region| region.kind == KnownOpaqueKind::PropertyValue)
+        .collect();
+    assert_eq!(regions.len(), 1, "{:#?}", analysis.known_opaque);
+    let region = regions[0];
+    assert_eq!(region.path, "/exports/1/properties/Nums");
+    assert_eq!(
+        region.reason,
+        OpaqueReason::UndecodedValue.description(),
+        "the reason must be the fixed sentence, not per-value text"
+    );
+    let range = region
+        .byte_range
+        .as_ref()
+        .expect("value regions have a range");
+    assert_eq!(
+        (range.start, range.end, range.size),
+        (value_start, value_start + 4, 4)
+    );
+    assert_eq!(range.preview, "41420f00");
+
+    assert_eq!(analysis.coverage.opaque_value_bytes, 4);
+    assert_eq!(analysis.coverage.opaque_bytes, 0);
+    assert_eq!(analysis.coverage.unclassified_bytes, 0);
+}
+
+/// A property bag that stays opaque is reported once, at its `serialized_data`
+/// node: the adapter's PropertyBag gap and the generic value walk must agree on
+/// that path or the dedupe leaves the same bytes counted twice.
+#[test]
+fn a_property_bag_fallback_is_one_region_at_serialized_data() {
+    let base = Package::parse(&build_minimal_package()).unwrap();
+    let mut data = Vec::new();
+    data.push(0); // object property serialization control
+    push_raw_name(&mut data, 1); // Bag
+    push_raw_name(&mut data, 2); // StructProperty
+    push_i32(&mut data, 1); // one type parameter
+    push_raw_name(&mut data, 3); // InstancedPropertyBag
+    push_i32(&mut data, 0);
+    push_i32(&mut data, 9); // legacy version byte + bHasData + 4 undecodable bytes
+    data.push(0x08); // HasBinaryOrNativeSerialize
+    data.push(0); // obsolete inline EVersion (custom version absent)
+    push_i32(&mut data, 1); // bHasData
+    data.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+    push_raw_name(&mut data, 4); // None
+    let tagged_end = data.len();
+
+    let package = Package {
+        summary: base.summary,
+        names: NameMap {
+            names: vec![
+                "Obj".into(),
+                "Bag".into(),
+                "StructProperty".into(),
+                "InstancedPropertyBag".into(),
+                "None".into(),
+            ],
+        },
+        imports: Vec::new(),
+        exports: vec![test_export(0, data.len() as i64, 0, tagged_end as i64)],
+        soft_object_paths: Vec::new(),
+        soft_object_path_error: None,
+        soft_package_references: Vec::new(),
+        soft_package_reference_error: None,
+        package_metadata: None,
+        package_metadata_error: None,
+    };
+
+    let analysis = analyze_package(&package, &data, AssetView::Full);
+
+    let regions: Vec<_> = analysis
+        .known_opaque
+        .iter()
+        .filter(|region| region.kind == KnownOpaqueKind::PropertyValue)
+        .collect();
+    assert_eq!(regions.len(), 1, "{:#?}", analysis.known_opaque);
+    assert_eq!(regions[0].path, "/exports/1/properties/Bag/serialized_data");
+    assert_eq!(
+        regions[0].type_name.as_deref(),
+        Some("InstancedPropertyBag")
+    );
+    assert_eq!(
+        regions[0].reason,
+        OpaqueReason::RegistryDependentPayload.description()
+    );
+    assert_eq!(regions[0].byte_range.as_ref().unwrap().size, 4);
+    assert_eq!(analysis.coverage.opaque_value_bytes, 4);
 }

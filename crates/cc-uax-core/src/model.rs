@@ -3,13 +3,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::AddAssign;
 
+/// Bumped to 10 when a value no decoder could read became one typed `@opaque`
+/// value instead of five ad-hoc shapes guessed back by `known_opaque`: every
+/// value-level region now carries a byte range, `coverage.opaque_bytes` counts
+/// only the export-level regions that partition export bytes, and the value-level
+/// ones moved to the new `coverage.opaque_value_bytes` (they sit inside decoded
+/// property spans, so adding them to the export total counted bytes twice).
 /// Bumped to 9 when export paths in `diagnostics` and `known_opaque` switched to
 /// the package index `exports[].index` carries; `property_status` gained
 /// `native_only` and `known_opaque[].kind` gained `class_payload` and
 /// `decoder_gap`; `coverage` gained `property_exports_native_only`; exports
 /// gained `source_files`; and nested decode failures started reaching
 /// `diagnostics` and the tagged-property capability.
-pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 9;
+pub const ASSET_ANALYSIS_SCHEMA_VERSION: u32 = 10;
 
 /// serde `skip_serializing_if` helper: drop `false` booleans from the rendered
 /// report so only set flags are emitted.
@@ -204,9 +210,17 @@ pub struct ParseCoverage {
     pub script_expressions_decoded: usize,
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub known_opaque_regions: usize,
-    /// Total bytes covered by `known_opaque` regions that carry a byte range.
+    /// Bytes covered by the export-level `known_opaque` regions (pre-script
+    /// prefix, post-property tail, class payload, decoder gap). These partition
+    /// export bytes, so the total never exceeds `export_bytes_total`.
     #[serde(skip_serializing_if = "is_zero_u64")]
     pub opaque_bytes: u64,
+    /// Bytes covered by the value-level `known_opaque` regions (a property value
+    /// or metadata payload no decoder could read). They sit inside the span of a
+    /// decoded property, so they are reported apart from [`Self::opaque_bytes`]
+    /// rather than counted twice.
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub opaque_value_bytes: u64,
     /// Subset of [`Self::opaque_bytes`]: export tails a class's own `Serialize`
     /// override wrote after a cleanly closed property block (mesh render data,
     /// lightmaps, compiled bytecode). Expected bulk data, not a decoding gap.
@@ -278,6 +292,7 @@ impl AddAssign<&ParseCoverage> for ParseCoverage {
             script_expressions_decoded,
             known_opaque_regions,
             opaque_bytes,
+            opaque_value_bytes,
             class_payload_bytes,
             unattributed_tail_bytes,
             unclassified_bytes,
@@ -374,6 +389,7 @@ impl AddAssign<&ParseCoverage> for ParseCoverage {
             .known_opaque_regions
             .saturating_add(*known_opaque_regions);
         self.opaque_bytes = self.opaque_bytes.saturating_add(*opaque_bytes);
+        self.opaque_value_bytes = self.opaque_value_bytes.saturating_add(*opaque_value_bytes);
         self.class_payload_bytes = self
             .class_payload_bytes
             .saturating_add(*class_payload_bytes);
@@ -398,7 +414,120 @@ pub enum DecodedValue {
     Float(f64),
     String(String),
     Array(Vec<DecodedValue>),
+    /// A value no decoder could read, retained as a byte range. Declared before
+    /// `Object` because untagged deserialisation tries variants in order and an
+    /// `@opaque` object would otherwise parse as a plain map.
+    Opaque(OpaqueValue),
     Object(BTreeMap<String, DecodedValue>),
+}
+
+/// Name `OpaqueValue` serialises under, so [`crate::structured_value`]'s
+/// `ValueSerializer` can rebuild the variant instead of flattening it to an
+/// object when a value is embedded through `json!`.
+pub(crate) const OPAQUE_VALUE_MARKER: &str = "@opaque";
+
+/// Why a value's bytes are kept opaque. The code is the rendered `@opaque` tag;
+/// the description becomes `KnownOpaque.reason` and the project grouping key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpaqueReason {
+    UndecodedValue,
+    MissingInnerStructName,
+    RegistryDependentPayload,
+    PayloadTail,
+    MetadataUndecoded,
+}
+
+impl OpaqueReason {
+    const ALL: [OpaqueReason; 5] = [
+        Self::UndecodedValue,
+        Self::MissingInnerStructName,
+        Self::RegistryDependentPayload,
+        Self::PayloadTail,
+        Self::MetadataUndecoded,
+    ];
+
+    /// The snake_case name rendered as the `@opaque` value.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::UndecodedValue => "undecoded_value",
+            Self::MissingInnerStructName => "missing_inner_struct_name",
+            Self::RegistryDependentPayload => "registry_dependent_payload",
+            Self::PayloadTail => "payload_tail",
+            Self::MetadataUndecoded => "metadata_undecoded",
+        }
+    }
+
+    pub(crate) fn from_code(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|reason| reason.code() == code)
+    }
+
+    /// A fixed sentence per reason. It is the project-level grouping key, so it
+    /// must never carry per-value text; that belongs in [`OpaqueValue::message`].
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::UndecodedValue => {
+                "the value's bytes could not be decoded and are retained as an opaque range"
+            }
+            Self::MissingInnerStructName => {
+                "the legacy property tag does not record a set/map element struct name, and unlike TArray the payload carries no inner tag, so the element cannot be decoded without a reflection registry"
+            }
+            Self::RegistryDependentPayload => {
+                "the payload layout is selected by an Unreal runtime registry and is retained without semantic decoding"
+            }
+            Self::PayloadTail => {
+                "bytes after the decoded part of the value are the type's own serializer data and are retained opaque"
+            }
+            Self::MetadataUndecoded => "the package metadata payload could not be decoded",
+        }
+    }
+}
+
+/// A value whose bytes no decoder could read, retained as a range with a preview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpaqueValue {
+    pub reason: OpaqueReason,
+    /// Per-value detail (the decode error, the version that exceeded the known
+    /// layout); the stable sentence lives on [`OpaqueReason::description`].
+    pub message: String,
+    pub type_name: Option<String>,
+    pub byte_range: OpaqueByteRange,
+}
+
+/// Rendered shape of an [`OpaqueValue`].
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpaqueValueWire {
+    #[serde(rename = "@opaque")]
+    code: OpaqueReason,
+    reason: String,
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    type_name: Option<String>,
+    byte_range: OpaqueByteRange,
+}
+
+impl Serialize for OpaqueValue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let wire = OpaqueValueWire {
+            code: self.reason,
+            reason: self.message.clone(),
+            type_name: self.type_name.clone(),
+            byte_range: self.byte_range.clone(),
+        };
+        serializer.serialize_newtype_struct(OPAQUE_VALUE_MARKER, &wire)
+    }
+}
+
+impl<'de> Deserialize<'de> for OpaqueValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = OpaqueValueWire::deserialize(deserializer)?;
+        Ok(Self {
+            reason: wire.code,
+            message: wire.reason,
+            type_name: wire.type_name,
+            byte_range: wire.byte_range,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -785,6 +914,15 @@ pub enum KnownOpaqueKind {
     DecoderGap,
     Metadata,
     Capability,
+}
+
+impl KnownOpaqueKind {
+    /// Regions inside the span of a decoded property or metadata payload. Their
+    /// bytes overlap decoded evidence, so they are totalled apart from the
+    /// export-level regions that partition export bytes.
+    pub fn is_value_level(self) -> bool {
+        matches!(self, Self::PropertyValue | Self::Metadata)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

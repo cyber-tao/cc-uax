@@ -131,7 +131,7 @@ fn nested_struct_with_unparsable_payload_falls_back_instead_of_reporting_success
         parsed.entries[0].value
     );
     assert!(
-        parsed.entries[0].value.get("@unparsed").is_some(),
+        parsed.entries[0].value.is_opaque(),
         "the undecoded payload must be retained as evidence: {:?}",
         parsed.entries[0].value
     );
@@ -781,7 +781,7 @@ fn variable_length_values_are_bounded_by_the_declared_window_not_the_file() {
 
         assert_eq!(parse.entries.len(), 1, "{label}: {:#?}", parse.entries);
         assert!(
-            parse.entries[0].value.get("@unparsed").is_some(),
+            parse.entries[0].value.is_opaque(),
             "{label}: an out-of-window read must fall back, got {:?}",
             parse.entries[0].value
         );

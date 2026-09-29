@@ -1,3 +1,4 @@
+use crate::model::{OpaqueByteRange, OpaqueReason, OpaqueValue};
 use crate::property::{
     PREVIEW_MAX, ParseCtx, PropertyParseStatus, entries_to_values, parse_properties_report, to_hex,
     validate_count,
@@ -17,7 +18,16 @@ pub(super) fn parse_gameplay_struct(
         "InstancedStruct" => parse_instanced_struct(r, ctx, value_end)?,
         "InstancedStructContainer" => parse_instanced_struct_container(r, ctx, value_end)?,
         "UniversalObjectLocatorFragment" => {
-            json!({ "@struct": name, "payload": preview_payload(r, r.pos(), value_end)? })
+            let start = r.pos();
+            opaque_range(
+                r,
+                start,
+                value_end,
+                OpaqueReason::RegistryDependentPayload,
+                name,
+                "the locator fragment payload is interpreted by a runtime-registered locator type"
+                    .into(),
+            )?
         }
         "GameplayEffectVersion" => {
             // FGameplayEffectVersion::Serialize writes the EGameplayEffectVersion byte.
@@ -83,8 +93,9 @@ fn parse_instanced_struct(r: &mut Reader, ctx: &ParseCtx, value_end: u64) -> Res
     }
 
     let script_struct = r.read_i32()?;
-    o.insert("script_struct".into(), (ctx.resolve_object)(script_struct));
-    append_serialized_struct_payload(r, ctx, value_end, &mut o)?;
+    let script_struct = (ctx.resolve_object)(script_struct);
+    o.insert("script_struct".into(), script_struct.clone());
+    append_serialized_struct_payload(r, ctx, value_end, &script_struct, &mut o)?;
     if r.pos() != value_end {
         bail!(
             "InstancedStruct ended at byte {}, expected {value_end}",
@@ -118,8 +129,9 @@ fn parse_instanced_struct_container(
     for (index, script_struct) in script_structs.into_iter().enumerate() {
         let mut item = Map::new();
         item.insert("index".into(), json!(index));
-        item.insert("script_struct".into(), (ctx.resolve_object)(script_struct));
-        append_serialized_struct_payload(r, ctx, value_end, &mut item)?;
+        let script_struct = (ctx.resolve_object)(script_struct);
+        item.insert("script_struct".into(), script_struct.clone());
+        append_serialized_struct_payload(r, ctx, value_end, &script_struct, &mut item)?;
         items.push(Value::Object(item));
     }
 
@@ -140,6 +152,7 @@ pub(super) fn append_serialized_struct_payload(
     r: &mut Reader,
     ctx: &ParseCtx,
     value_end: u64,
+    script_struct: &Value,
     out: &mut Map,
 ) -> Result<()> {
     let serial_size = r.read_i32()?;
@@ -148,6 +161,10 @@ pub(super) fn append_serialized_struct_payload(
     }
     out.insert("serial_size".into(), json!(serial_size));
 
+    let struct_type = script_struct
+        .get("ref")
+        .and_then(Value::as_str)
+        .unwrap_or("InstancedStruct");
     let payload_start = r.pos();
     let payload_end = payload_start.saturating_add(serial_size as u64);
     if payload_end > value_end {
@@ -170,14 +187,30 @@ pub(super) fn append_serialized_struct_payload(
     }
 
     if parsed.entries.is_empty() && parsed.status == PropertyParseStatus::NonTaggedPayload {
-        let payload = preview_payload(r, payload_start, payload_end)?;
+        let payload = opaque_range(
+            r,
+            payload_start,
+            payload_end,
+            OpaqueReason::RegistryDependentPayload,
+            struct_type,
+            format!(
+                "{struct_type} payload is not a tagged-property block, so its layout comes from the struct's native serializer"
+            ),
+        )?;
         out.insert("payload".into(), payload);
         return Ok(());
     }
 
     if r.pos() < payload_end {
         let tail_start = r.pos();
-        let payload = preview_payload(r, tail_start, payload_end)?;
+        let payload = opaque_range(
+            r,
+            tail_start,
+            payload_end,
+            OpaqueReason::PayloadTail,
+            struct_type,
+            format!("{struct_type} payload has bytes after its decoded tagged properties"),
+        )?;
         out.insert("payload_tail".into(), payload);
     } else {
         r.seek(payload_end)?;
@@ -185,14 +218,30 @@ pub(super) fn append_serialized_struct_payload(
     Ok(())
 }
 
-pub(super) fn preview_payload(r: &mut Reader, start: u64, end: u64) -> Result<Value> {
+/// Reads the preview of `[start, end)`, leaves the reader at `end`, and returns
+/// the range as an opaque value so the bytes stay attributable in the report.
+pub(super) fn opaque_range(
+    r: &mut Reader,
+    start: u64,
+    end: u64,
+    reason: OpaqueReason,
+    type_name: &str,
+    message: String,
+) -> Result<Value> {
     let size = end.saturating_sub(start);
     r.seek(start)?;
     let preview_len = size.min(PREVIEW_MAX as u64) as usize;
     let preview = r.read_bytes(preview_len)?;
     r.seek(end)?;
-    Ok(json!({
-        "size": size,
-        "preview": to_hex(&preview)
+    Ok(Value::Opaque(OpaqueValue {
+        reason,
+        message,
+        type_name: Some(type_name.to_owned()),
+        byte_range: OpaqueByteRange {
+            start,
+            end,
+            size,
+            preview: to_hex(&preview),
+        },
     }))
 }

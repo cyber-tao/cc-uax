@@ -12,10 +12,13 @@ mod scanner;
 /// change to what a cached `AssetAnalysisSummary` means must bump it or a warm
 /// scan will replay summaries built under the old meaning.
 ///
+/// 6: cached summaries built before typed opaque values carry no `value_bytes`
+/// and group value-level regions under the old ad-hoc reasons.
+///
 /// 5: cached summaries built before native-only payload classification, decoder
 /// span accounting, the import-data prefix decoder, the TextConst layout gate and
 /// the widened graph-node list carry different statuses and counters.
-pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 5;
+pub const PROJECT_INDEX_SCHEMA_VERSION: u32 = 6;
 
 pub use analysis_summary::{
     AnalysisDiagnosticSummary, AssetAnalysisSummary, CapabilitySummary, GraphSummary,

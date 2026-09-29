@@ -1,5 +1,5 @@
 use crate::model::{
-    AssetExport, AssetProperty, DecodedValue, KnownOpaque, KnownOpaqueKind, OpaqueByteRange,
+    AssetExport, AssetProperty, DecodedValue, KnownOpaque, KnownOpaqueKind, OpaqueValue,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -182,51 +182,40 @@ fn collect_nested_property_bags(
     }
 }
 
-fn has_serialized_payload(value: &DecodedValue) -> bool {
+fn serialized_payload(value: &DecodedValue) -> Option<&OpaqueValue> {
     object(value)
         .and_then(|value| value.get("serialized_data"))
-        .and_then(object)
-        .and_then(|value| value.get("size"))
-        .and_then(integer)
-        .is_some_and(|size| size > 0)
+        .and_then(DecodedValue::as_opaque)
 }
 
+fn has_serialized_payload(value: &DecodedValue) -> bool {
+    serialized_payload(value).is_some_and(|payload| payload.byte_range.size > 0)
+}
+
+/// `path` is the bag's own path; the gap is filed at the `serialized_data` node
+/// under it, the same path the generic value walk gives that opaque value, so
+/// the two copies collapse when known_opaque is deduplicated.
 fn push_property_bag_gap(
     path: &str,
     value: &DecodedValue,
     seen_paths: &mut BTreeSet<String>,
     opaque: &mut Vec<KnownOpaque>,
 ) {
-    if !seen_paths.insert(path.to_owned()) {
+    let Some(payload) = serialized_payload(value) else {
+        return;
+    };
+    let path = format!("{path}/serialized_data");
+    if !seen_paths.insert(path.clone()) {
         return;
     }
     opaque.push(KnownOpaque {
-        path: path.to_owned(),
+        path,
         kind: KnownOpaqueKind::PropertyValue,
-        type_name: Some(PROPERTY_BAG_TYPE.to_owned()),
-        reason: "registry-dependent PropertyBag serialized_data is retained as opaque".to_owned(),
-        byte_range: serialized_payload_range(value),
+        type_name: payload
+            .type_name
+            .clone()
+            .or_else(|| Some(PROPERTY_BAG_TYPE.to_owned())),
+        reason: payload.reason.description().to_owned(),
+        byte_range: Some(payload.byte_range.clone()),
     });
-}
-
-fn serialized_payload_range(value: &DecodedValue) -> Option<OpaqueByteRange> {
-    let payload = object(value)
-        .and_then(|value| value.get("serialized_data"))
-        .and_then(object)?;
-    let start = payload.get("start").and_then(integer)?;
-    let end = payload.get("end").and_then(integer)?;
-    let size = payload.get("size").and_then(integer)?;
-    if start < 0 || end < start || size < 0 || end - start != size {
-        return None;
-    }
-    Some(OpaqueByteRange {
-        start: start as u64,
-        end: end as u64,
-        size: size as u64,
-        preview: payload
-            .get("preview")
-            .and_then(string)
-            .unwrap_or_default()
-            .to_owned(),
-    })
 }

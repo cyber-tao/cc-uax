@@ -10,7 +10,7 @@ use crate::decode::{
 };
 use crate::model::{KnownOpaque, KnownOpaqueKind, OpaqueByteRange};
 use crate::property::PropertyParseStatus;
-use crate::structured_value::{Map, Value};
+use crate::structured_value::Value;
 use std::collections::BTreeSet;
 
 /// Why an export has bytes left after every decoder ran.
@@ -152,6 +152,17 @@ pub(super) fn collect_opaque_value(
     output: &mut Vec<KnownOpaque>,
 ) {
     match value {
+        Value::Opaque(opaque) => output.push(KnownOpaque {
+            path: path.to_string(),
+            kind,
+            type_name: opaque
+                .type_name
+                .as_deref()
+                .or(type_name)
+                .map(normalize_opaque_type_name),
+            reason: opaque.reason.description().into(),
+            byte_range: Some(opaque.byte_range.clone()),
+        }),
         Value::Array(values) => {
             for (index, value) in values.iter().enumerate() {
                 collect_opaque_value(value, &format!("{path}/{index}"), type_name, kind, output);
@@ -178,39 +189,6 @@ pub(super) fn collect_opaque_value(
                     );
                 }
             }
-            let reason = if object.contains_key("@unparsed") {
-                Some("property decoder emitted an unparsed byte preview".to_string())
-            } else if object.get("status").and_then(Value::as_str) == Some("opaque") {
-                Some(
-                    object
-                        .get("reason")
-                        .and_then(Value::as_str)
-                        .unwrap_or("decoder marked the value opaque")
-                        .to_string(),
-                )
-            } else if object.contains_key("@struct") && object.contains_key("payload") {
-                Some("custom struct payload is retained without semantic decoding".to_string())
-            } else if is_byte_preview_object(object) {
-                Some("byte payload is represented only by a bounded preview".to_string())
-            } else {
-                None
-            };
-            if let Some(reason) = reason {
-                let path = path.strip_suffix("/serialized_data").unwrap_or(path);
-                output.push(KnownOpaque {
-                    path: path.to_string(),
-                    kind,
-                    type_name: type_name.map(normalize_opaque_type_name),
-                    reason,
-                    byte_range: opaque_byte_range(object).or_else(|| {
-                        object
-                            .get("payload")
-                            .and_then(Value::as_object)
-                            .and_then(opaque_byte_range)
-                    }),
-                });
-                return;
-            }
             for (key, value) in object {
                 if key == "properties" {
                     continue;
@@ -220,22 +198,6 @@ pub(super) fn collect_opaque_value(
         }
         _ => {}
     }
-}
-
-/// The shape every bounded byte preview the value decoders emit has: a numeric
-/// `size`, a hex `preview`, and at most a byte range and a reason. Requiring the
-/// key set to be exactly that — not merely to contain `size` and `preview` — is
-/// what keeps a diagnostic's `context` object, or a struct that happens to have
-/// fields by those names, from being mistaken for an opaque region.
-fn is_byte_preview_object(object: &Map) -> bool {
-    object.get("size").is_some_and(Value::is_number)
-        && object.get("preview").is_some_and(Value::is_string)
-        && object.keys().all(|key| {
-            matches!(
-                key.as_str(),
-                "size" | "preview" | "start" | "end" | "reason"
-            )
-        })
 }
 
 pub(super) fn normalize_opaque_type_name(type_name: &str) -> String {
@@ -267,23 +229,4 @@ pub(super) fn opaque_kind_rank(kind: KnownOpaqueKind) -> u8 {
         KnownOpaqueKind::Metadata => 5,
         KnownOpaqueKind::Capability => 6,
     }
-}
-
-pub(super) fn opaque_byte_range(object: &Map) -> Option<OpaqueByteRange> {
-    let start = object.get("start")?.as_u64()?;
-    let end = object.get("end")?.as_u64()?;
-    let size = object.get("size")?.as_u64()?;
-    if end.checked_sub(start)? != size {
-        return None;
-    }
-    Some(OpaqueByteRange {
-        start,
-        end,
-        size,
-        preview: object
-            .get("preview")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-    })
 }

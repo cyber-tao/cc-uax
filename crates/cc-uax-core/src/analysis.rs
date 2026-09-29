@@ -185,11 +185,18 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
     );
 
     let known_opaque_regions = known_opaque.len();
-    let opaque_bytes = known_opaque
-        .iter()
-        .filter_map(|region| region.byte_range.as_ref())
-        .map(|range| range.size)
-        .sum();
+    // Export-level regions partition export bytes; value-level ones sit inside
+    // a decoded property's span, so summing both would count those bytes twice.
+    let region_bytes = |value_level: bool| -> u64 {
+        known_opaque
+            .iter()
+            .filter(|region| region.kind.is_value_level() == value_level)
+            .filter_map(|region| region.byte_range.as_ref())
+            .map(|range| range.size)
+            .sum()
+    };
+    let opaque_bytes = region_bytes(false);
+    let opaque_value_bytes = region_bytes(true);
     // Split the export tails so a project-scale `opaque_bytes` can be read: bulk
     // class data dwarfs everything else, and lumping it with unattributed bytes
     // makes a healthy scan look like a decoder failure.
@@ -267,6 +274,7 @@ pub(crate) fn analyze_package(package: &Package, bytes: &[u8], view: AssetView) 
         script_expressions_decoded: script_coverage.expressions_decoded,
         known_opaque_regions,
         opaque_bytes,
+        opaque_value_bytes,
         class_payload_bytes,
         unattributed_tail_bytes,
         unclassified_bytes,

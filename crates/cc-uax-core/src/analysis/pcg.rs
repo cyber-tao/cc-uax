@@ -261,7 +261,7 @@ fn build_pin(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::AssetProperty;
+    use crate::model::{AssetProperty, OpaqueByteRange, OpaqueReason, OpaqueValue};
 
     #[test]
     fn graph_closure_keeps_subclass_nodes_and_engine_edge_direction() {
@@ -386,7 +386,7 @@ mod tests {
         assert_eq!(result.known_opaque.len(), 1);
         assert_eq!(
             result.known_opaque[0].path,
-            "/exports/1/properties/UserParameters"
+            "/exports/1/properties/UserParameters/serialized_data"
         );
     }
 
@@ -444,6 +444,33 @@ mod tests {
         )
     }
 
+    #[test]
+    fn property_bag_gap_collapses_with_the_generic_value_walk() {
+        let bag = prop(
+            "UserParameters",
+            "StructProperty(InstancedPropertyBag(/Script/CoreUObject))",
+            property_bag(8),
+        );
+        let path = "/exports/1/properties/UserParameters";
+        let mut walked = Vec::new();
+        crate::analysis::opaque::collect_opaque_value(
+            &bag.value,
+            path,
+            Some(&bag.type_name),
+            crate::model::KnownOpaqueKind::PropertyValue,
+            &mut walked,
+        );
+        let exports = vec![export(1, "Graph", PCG_GRAPH_CLASS, 0, vec![bag])];
+        let mut merged = walked;
+        merged.extend(build_pcg_graphs(&exports).known_opaque);
+        assert_eq!(merged.len(), 2);
+
+        crate::analysis::opaque::dedupe_known_opaque(&mut merged);
+
+        assert_eq!(merged.len(), 1, "{merged:#?}");
+        assert_eq!(merged[0].path, format!("{path}/serialized_data"));
+    }
+
     fn struct_value(name: &str, properties: Vec<AssetProperty>) -> DecodedValue {
         DecodedValue::Object(BTreeMap::from([
             ("@struct".into(), text_value(name)),
@@ -467,10 +494,17 @@ mod tests {
             ("has_data".into(), DecodedValue::Bool(true)),
             (
                 "serialized_data".into(),
-                DecodedValue::Object(BTreeMap::from([(
-                    "size".into(),
-                    DecodedValue::Integer(size),
-                )])),
+                DecodedValue::Opaque(OpaqueValue {
+                    reason: OpaqueReason::RegistryDependentPayload,
+                    message: "test property bag".into(),
+                    type_name: Some("InstancedPropertyBag".into()),
+                    byte_range: OpaqueByteRange {
+                        start: 0,
+                        end: size as u64,
+                        size: size as u64,
+                        preview: String::new(),
+                    },
+                }),
             ),
         ]))
     }

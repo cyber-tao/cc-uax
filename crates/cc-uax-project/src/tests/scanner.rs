@@ -442,6 +442,22 @@ fn scans_real_project_from_environment() {
             .map(|asset| asset.analysis.coverage.opaque_bytes)
             .sum::<u64>()
     );
+    assert_eq!(
+        index.analysis.coverage.opaque_value_bytes,
+        index
+            .assets
+            .values()
+            .map(|asset| asset.analysis.coverage.opaque_value_bytes)
+            .sum::<u64>()
+    );
+    assert_eq!(
+        index.analysis.grouped_opaque_bytes,
+        index.analysis.coverage.opaque_bytes
+    );
+    assert_eq!(
+        index.analysis.grouped_opaque_value_bytes,
+        index.analysis.coverage.opaque_value_bytes
+    );
     // Adjacency carries no package self-loop (P2).
     let self_loops = index
         .forward

@@ -1,4 +1,4 @@
-use crate::model::DecodedValue;
+use crate::model::{DecodedValue, OPAQUE_VALUE_MARKER, OpaqueByteRange, OpaqueReason, OpaqueValue};
 use serde::Serialize;
 use serde::ser::{
     self, Impossible, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
@@ -63,6 +63,17 @@ impl DecodedValue {
             Self::Object(value) => Some(value),
             _ => None,
         }
+    }
+
+    pub fn as_opaque(&self) -> Option<&OpaqueValue> {
+        match self {
+            Self::Opaque(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn is_opaque(&self) -> bool {
+        matches!(self, Self::Opaque(_))
     }
 
     pub fn get(&self, key: &str) -> Option<&DecodedValue> {
@@ -286,13 +297,17 @@ impl ser::Serializer for ValueSerializer {
 
     fn serialize_newtype_struct<T>(
         self,
-        _name: &'static str,
+        name: &'static str,
         value: &T,
     ) -> Result<Self::Ok, Self::Error>
     where
         T: Serialize + ?Sized,
     {
-        value.serialize(self)
+        let inner = value.serialize(self)?;
+        if name == OPAQUE_VALUE_MARKER {
+            return opaque_from_value(&inner).map(Value::Opaque);
+        }
+        Ok(inner)
     }
 
     fn serialize_newtype_variant<T>(
@@ -370,6 +385,38 @@ impl ser::Serializer for ValueSerializer {
     {
         self.serialize_str(&value.to_string())
     }
+}
+
+/// Rebuilds an [`OpaqueValue`] from the object its wire shape serialised to.
+fn opaque_from_value(value: &Value) -> Result<OpaqueValue, ValueError> {
+    let malformed = || ValueError("malformed @opaque value".into());
+    let reason = value
+        .get("@opaque")
+        .and_then(Value::as_str)
+        .and_then(OpaqueReason::from_code)
+        .ok_or_else(malformed)?;
+    let message = value
+        .get("reason")
+        .and_then(Value::as_str)
+        .ok_or_else(malformed)?
+        .to_owned();
+    let range = value.get("byte_range").ok_or_else(malformed)?;
+    let number = |key: &str| range.get(key).and_then(Value::as_u64).ok_or_else(malformed);
+    Ok(OpaqueValue {
+        reason,
+        message,
+        type_name: value.get("type").and_then(Value::as_str).map(str::to_owned),
+        byte_range: OpaqueByteRange {
+            start: number("start")?,
+            end: number("end")?,
+            size: number("size")?,
+            preview: range
+                .get("preview")
+                .and_then(Value::as_str)
+                .ok_or_else(malformed)?
+                .to_owned(),
+        },
+    })
 }
 
 pub(crate) struct SequenceSerializer {
@@ -877,5 +924,65 @@ mod tests {
         assert_eq!(value["nested"].as_array().unwrap().len(), 3);
         assert_eq!(value["typed"]["name"].as_str(), Some("asset"));
         assert_eq!(value["typed"]["count"].as_u64(), Some(3));
+    }
+
+    fn opaque_example() -> OpaqueValue {
+        OpaqueValue {
+            reason: OpaqueReason::PayloadTail,
+            message: "3 bytes follow the decoded fields".into(),
+            type_name: Some("Example".into()),
+            byte_range: OpaqueByteRange {
+                start: 10,
+                end: 13,
+                size: 3,
+                preview: "aabbcc".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn an_opaque_value_survives_the_json_macro() {
+        let value = json!({ "a": [DecodedValue::Opaque(opaque_example())] });
+
+        assert_eq!(value["a"][0].as_opaque(), Some(&opaque_example()));
+        assert!(value["a"][0].is_opaque());
+        assert!(value["a"][0].as_object().is_none());
+        assert!(value["a"][0].get("reason").is_none());
+    }
+
+    #[test]
+    fn an_opaque_value_renders_and_parses_back_through_its_wire_shape() {
+        let value = DecodedValue::Opaque(opaque_example());
+        let rendered = serde_json_crate::to_value(&value).unwrap();
+
+        assert_eq!(
+            rendered,
+            serde_json_crate::json!({
+                "@opaque": "payload_tail",
+                "reason": "3 bytes follow the decoded fields",
+                "type": "Example",
+                "byte_range": { "start": 10, "end": 13, "size": 3, "preview": "aabbcc" },
+            })
+        );
+        let parsed: DecodedValue = serde_json_crate::from_value(rendered).unwrap();
+        assert_eq!(parsed, value);
+
+        let mut untyped = opaque_example();
+        untyped.type_name = None;
+        let rendered = serde_json_crate::to_value(DecodedValue::Opaque(untyped)).unwrap();
+        assert!(rendered.get("type").is_none());
+    }
+
+    #[test]
+    fn an_object_with_extra_keys_is_not_mistaken_for_an_opaque_value() {
+        let rendered = serde_json_crate::json!({
+            "@opaque": "payload_tail",
+            "reason": "x",
+            "byte_range": { "start": 0, "end": 0, "size": 0, "preview": "" },
+            "extra": 1,
+        });
+        let parsed: DecodedValue = serde_json_crate::from_value(rendered).unwrap();
+        assert!(!parsed.is_opaque());
+        assert!(parsed.as_object().is_some());
     }
 }

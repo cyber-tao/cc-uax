@@ -2,6 +2,7 @@ use super::DecodedExport;
 use super::member::distill_member;
 use super::window::{ExportSerialWindow, preview_range};
 use crate::diagnostic::Diagnostic;
+use crate::model::{OpaqueByteRange, OpaqueReason, OpaqueValue};
 use crate::property::{
     ParseCtx, PropertyParse, PropertyParseStatus, parse_object_properties_report,
 };
@@ -123,10 +124,16 @@ fn consume_known_post_property_data(
         }
         Err(err) => {
             let payload = preview_range(reader, metadata_start, window.serial_end);
-            export.metadata = Some(json!({
-                "status": "opaque",
-                "reason": format!("failed to parse PackageMetaData payload: {err:#}"),
-                "payload": payload
+            export.metadata = Some(Value::Opaque(OpaqueValue {
+                reason: OpaqueReason::MetadataUndecoded,
+                message: format!("failed to parse PackageMetaData payload: {err:#}"),
+                type_name: Some("PackageMetaData".to_owned()),
+                byte_range: OpaqueByteRange {
+                    start: payload.start,
+                    end: payload.end,
+                    size: payload.size,
+                    preview: payload.preview,
+                },
             }));
             let _ = reader.seek(metadata_start);
             false

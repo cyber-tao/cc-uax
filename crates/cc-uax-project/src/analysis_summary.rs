@@ -141,10 +141,15 @@ pub struct KnownOpaqueSummary {
     pub metadata: usize,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub capabilities: usize,
-    /// Total bytes across every opaque region in this asset. Equal to
+    /// Bytes across the export-level regions of this asset. Equal to
     /// `coverage.opaque_bytes`, repeated here so `groups` sums back to a whole.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub bytes: u64,
+    /// Bytes across the value-level regions (property values and metadata) of
+    /// this asset. Equal to `coverage.opaque_value_bytes`; kept apart from
+    /// `bytes` because those bytes sit inside decoded property spans.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub value_bytes: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<KnownOpaqueGroup>,
 }
@@ -479,7 +484,11 @@ impl KnownOpaqueSummary {
                 .or_default();
             entry.0 += 1;
             entry.1 += bytes;
-            summary.bytes += bytes;
+            if region.kind.is_value_level() {
+                summary.value_bytes += bytes;
+            } else {
+                summary.bytes += bytes;
+            }
         }
         summary.groups = grouped
             .into_iter()
@@ -559,12 +568,14 @@ pub struct ProjectAnalysisSummary {
     pub reference_evidence: ProjectReferenceEvidence,
     /// Regions and bytes summed from the per-asset `known_opaque` groups.
     ///
-    /// These must equal `coverage.known_opaque_regions` and
-    /// `coverage.opaque_bytes`. Reporting both sides makes it verifiable that
-    /// grouping did not lose a region, which is otherwise only checkable by
-    /// re-summing tens of thousands of inventory entries.
+    /// These must equal `coverage.known_opaque_regions`, `coverage.opaque_bytes`
+    /// (export-level groups) and `coverage.opaque_value_bytes` (value-level
+    /// groups). Reporting both sides makes it verifiable that grouping did not
+    /// lose a region, which is otherwise only checkable by re-summing tens of
+    /// thousands of inventory entries.
     pub grouped_opaque_regions: usize,
     pub grouped_opaque_bytes: u64,
+    pub grouped_opaque_value_bytes: u64,
     /// How many parsed packages carried each `FileVersionUE5`, keyed by version.
     ///
     /// This is the only statement of which version gates a scan actually
@@ -593,6 +604,7 @@ impl ProjectAnalysisSummary {
             reference_evidence: ProjectReferenceEvidence::default(),
             grouped_opaque_regions: 0,
             grouped_opaque_bytes: 0,
+            grouped_opaque_value_bytes: 0,
             file_versions: BTreeMap::new(),
             coverage: ParseCoverage::default(),
         };
@@ -629,7 +641,11 @@ impl ProjectAnalysisSummary {
             }
             for group in &summary.known_opaque.groups {
                 aggregate.grouped_opaque_regions += group.regions;
-                aggregate.grouped_opaque_bytes += group.bytes;
+                if group.kind.is_value_level() {
+                    aggregate.grouped_opaque_value_bytes += group.bytes;
+                } else {
+                    aggregate.grouped_opaque_bytes += group.bytes;
+                }
             }
             if let Some(version) = summary.file_version_ue5 {
                 *aggregate.file_versions.entry(version).or_default() += 1;

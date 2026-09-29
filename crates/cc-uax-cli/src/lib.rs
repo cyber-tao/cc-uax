@@ -16,6 +16,12 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+/// Bumped to 11 alongside asset schema 10: the per-asset `known_opaque` summary
+/// splits `bytes` (export-level regions) from the new `value_bytes` (value-level
+/// regions), the project summary gained `grouped_opaque_value_bytes`, and value
+/// regions are grouped under the fixed `OpaqueReason` sentences, so opaque byte
+/// totals and group reasons are not comparable with earlier reports.
+///
 /// Bumped to 10 alongside asset schema 9: the per-asset `known_opaque` summary
 /// gained the `class_payloads`/`decoder_gaps` kinds, `coverage` gained
 /// `property_exports_native_only`, and the tagged-property capability and
@@ -23,7 +29,7 @@ use std::process::ExitCode;
 /// capability histograms are not comparable with earlier reports.
 ///
 /// Public so tests assert against the constant rather than a copied literal.
-pub const PROJECT_REPORT_SCHEMA_VERSION: u32 = 10;
+pub const PROJECT_REPORT_SCHEMA_VERSION: u32 = 11;
 
 pub fn run(cli: Cli) -> ExitCode {
     match execute(&cli) {

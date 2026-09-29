@@ -1,4 +1,5 @@
 use super::super::common::*;
+use crate::model::OpaqueReason;
 use crate::name::NameMap;
 use crate::pin::PinSerCtx;
 use crate::property::{ParseCtx, PropertyParse, parse_properties, parse_properties_report};
@@ -343,8 +344,10 @@ fn native_struct_array_falls_back_to_hex() {
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
 
     assert_eq!(entries.len(), 1);
-    let unparsed = entries[0].value.get("@unparsed").and_then(|v| v.as_str());
-    assert_eq!(unparsed, Some("01000000aabbccdd"));
+    let opaque = entries[0].value.as_opaque().expect("the value falls back");
+    assert_eq!(opaque.reason, OpaqueReason::UndecodedValue);
+    assert_eq!(opaque.byte_range.preview, "01000000aabbccdd");
+    assert_eq!(opaque.byte_range.size, 8);
 }
 
 #[test]
@@ -619,7 +622,7 @@ fn native_struct_skeletal_mesh_sampling_lod_built_data_decodes() {
     assert_eq!(sampler["prob"][0].as_f64(), Some(0.25));
     assert_eq!(sampler["alias"][0].as_i64(), Some(7));
     assert_eq!(sampler["total_weight"].as_f64(), Some(2.5));
-    assert!(entries[0].value.get("@unparsed").is_none());
+    assert!(!entries[0].value.is_opaque());
 }
 
 #[test]
@@ -665,7 +668,7 @@ fn native_struct_niagara_variable_decodes() {
     };
     let mut r = Reader::new(&d);
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
-    assert!(entries[0].value.get("@unparsed").is_some());
+    assert!(entries[0].value.is_opaque());
 
     // Modern Niagara version decodes Name + type definition + empty VarData.
     ctx.serialization.niagara_version = 64;
@@ -734,7 +737,7 @@ fn native_struct_niagara_gpu_param_info_decodes() {
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
 
     assert_eq!(entries.len(), 1);
-    assert!(entries[0].value.get("@unparsed").is_none());
+    assert!(!entries[0].value.is_opaque());
     let v = &entries[0].value;
     assert_eq!(v["data_interface_hlsl_symbol"].as_str(), Some("DI_Spline"));
     assert_eq!(
@@ -973,7 +976,7 @@ fn material_color_input_uses_packed_color_before_linear_color_version() {
     assert_eq!(v["expression"]["index"].as_i64(), Some(-5));
     assert_eq!(v["use_constant"].as_bool(), Some(true));
     assert_eq!(v["constant"]["packed_bgra"].as_u64(), Some(0xAABBCCDD));
-    assert!(v.get("@unparsed").is_none());
+    assert!(!v.is_opaque());
 }
 
 #[test]
@@ -1476,7 +1479,16 @@ fn native_struct_instanced_property_bag_bad_size_falls_back_to_opaque() {
     assert_eq!(entries.len(), 1);
     let v = &entries[0].value;
     assert_eq!(v["has_data"].as_bool(), Some(true));
-    assert!(v.get("serialized_data").is_some());
+    let serialized = v["serialized_data"].as_opaque().expect("bag stays opaque");
+    assert_eq!(serialized.reason, OpaqueReason::RegistryDependentPayload);
+    assert_eq!(
+        serialized.type_name.as_deref(),
+        Some("InstancedPropertyBag")
+    );
+    assert_eq!(
+        serialized.byte_range.end - serialized.byte_range.start,
+        serialized.byte_range.size
+    );
     assert!(v.get("property_descs").is_none());
 }
 
@@ -1671,14 +1683,18 @@ fn native_struct_property_bag_future_version_falls_back_with_reason() {
 
     let v = &entries[0].value;
     assert!(v.get("property_descs").is_none());
-    let serialized = v
-        .get("serialized_data")
+    let serialized = v["serialized_data"]
+        .as_opaque()
         .expect("future version stays opaque");
-    let reason = serialized["reason"].as_str().unwrap();
+    assert_eq!(serialized.reason, OpaqueReason::RegistryDependentPayload);
     assert!(
-        reason.contains("exceeds the highest verified layout"),
-        "reason should flag the version: {reason}"
+        serialized
+            .message
+            .contains("exceeds the highest verified layout"),
+        "message should flag the version: {}",
+        serialized.message
     );
+    assert!(serialized.byte_range.size > 0);
 }
 
 #[test]
@@ -1742,7 +1758,7 @@ fn native_struct_instanced_struct_truncation_falls_back() {
         },
     );
 
-    assert!(parsed.entries[0].value["@unparsed"].is_string());
+    assert!(parsed.entries[0].value.is_opaque());
     assert!(
         parsed
             .diagnostics
@@ -1802,7 +1818,7 @@ fn native_struct_instanced_struct_container_decodes_items() {
     assert_eq!(v["version"].as_u64(), Some(0));
     assert_eq!(v["item_count"].as_i64(), Some(2));
     assert_eq!(v["items"][0]["script_struct"]["index"].as_i64(), Some(-7));
-    assert!(v["items"][0].get("@unparsed").is_none());
+    assert!(!v["items"][0].is_opaque());
     let props = v["items"][0]["properties"].as_array().unwrap();
     assert_eq!(props[0]["name"].as_str(), Some("Inner"));
     assert_eq!(props[0]["value"].as_i64(), Some(42));
@@ -1857,7 +1873,7 @@ fn native_struct_state_tree_instance_data_decodes_storage() {
     let props = storage["properties"].as_array().unwrap();
     assert_eq!(props[0]["name"].as_str(), Some("InstanceStructs"));
     assert_eq!(props[0]["value"]["item_count"].as_i64(), Some(0));
-    assert!(entries[0].value.get("@unparsed").is_none());
+    assert!(!entries[0].value.is_opaque());
 }
 
 #[test]
@@ -1928,7 +1944,7 @@ fn native_struct_state_tree_truncation_falls_back() {
         },
     );
 
-    assert!(parsed.entries[0].value["@unparsed"].is_string());
+    assert!(parsed.entries[0].value.is_opaque());
     assert!(
         parsed
             .diagnostics
@@ -1985,7 +2001,7 @@ fn pcg_input_and_output_selectors_parse_as_tagged_properties() {
         let props = entry.value["properties"].as_array().unwrap();
         assert_eq!(props[0]["name"].as_str(), Some("AttributeName"));
         assert_eq!(props[0]["value"].as_str(), Some("Height"));
-        assert!(entry.value.get("@unparsed").is_none());
+        assert!(!entry.value.is_opaque());
     }
 }
 
@@ -2037,7 +2053,7 @@ fn native_struct_pcg_point_array_decodes_channels() {
     assert_eq!(v["density"]["default"].as_f64(), Some(0.5));
     assert_eq!(v["seed"]["default"].as_i64(), Some(123));
     assert_eq!(v["metadata_entry"]["default"].as_i64(), Some(456));
-    assert!(v.get("@unparsed").is_none());
+    assert!(!v.is_opaque());
     assert!(v.get("payload_tail").is_none());
 }
 
@@ -2073,7 +2089,7 @@ fn native_struct_pcg_point_array_rejects_channel_count_mismatches() {
         ),
     ] {
         let parsed = parse_test_native_struct(&names, 2, 3, &value, SerializationPolicy::default());
-        assert!(parsed.entries[0].value["@unparsed"].is_string());
+        assert!(parsed.entries[0].value.is_opaque());
         assert!(
             parsed
                 .diagnostics
@@ -2129,7 +2145,7 @@ fn native_struct_pcg_point_decodes_structured_mask() {
     assert_eq!(v["steepness"].as_f64(), Some(0.25));
     assert_eq!(v["seed"].as_i64(), Some(0));
     assert_eq!(v["metadata_entry"].as_i64(), Some(-1));
-    assert!(v.get("@unparsed").is_none());
+    assert!(!v.is_opaque());
 }
 
 #[test]
@@ -2199,7 +2215,7 @@ fn native_struct_pcg_point_truncation_falls_back() {
         },
     );
 
-    assert!(parsed.entries[0].value["@unparsed"].is_string());
+    assert!(parsed.entries[0].value.is_opaque());
     assert!(
         parsed
             .diagnostics
@@ -2249,7 +2265,7 @@ fn niagara_variant_parses_as_tagged_properties() {
     let props = entries[0].value["properties"].as_array().unwrap();
     assert_eq!(props[0]["name"].as_str(), Some("Object"));
     assert_eq!(props[0]["value"]["index"].as_i64(), Some(-9));
-    assert!(entries[0].value.get("@unparsed").is_none());
+    assert!(!entries[0].value.is_opaque());
 }
 
 #[test]
@@ -2296,7 +2312,7 @@ fn state_tree_reference_parses_as_tagged_properties() {
     let props = entries[0].value["properties"].as_array().unwrap();
     assert_eq!(props[0]["name"].as_str(), Some("StateTree"));
     assert_eq!(props[0]["value"]["index"].as_i64(), Some(-2));
-    assert!(entries[0].value.get("@unparsed").is_none());
+    assert!(!entries[0].value.is_opaque());
 }
 
 #[test]
@@ -2467,7 +2483,7 @@ fn cloth_lod_data_common_decodes_transition_payloads() {
     assert_eq!(entries.len(), 1);
     assert_eq!(r.pos(), d.len() as u64);
     let v = &entries[0].value;
-    assert!(v.get("@unparsed").is_none());
+    assert!(!v.is_opaque());
     assert_eq!(v["properties"][0]["name"].as_str(), Some("LODIndex"));
     assert_eq!(v["transition_up_skin_data"]["count"].as_i64(), Some(1));
     assert_eq!(
@@ -2517,9 +2533,12 @@ fn groom_dataflow_settings_keeps_named_tail_payload() {
     assert_eq!(entries.len(), 1);
     assert_eq!(r.pos(), d.len() as u64);
     let v = &entries[0].value;
-    assert!(v.get("@unparsed").is_none());
-    assert_eq!(v["rest_collection"]["size"].as_u64(), Some(3));
-    assert_eq!(v["rest_collection"]["preview"].as_str(), Some("aabbcc"));
+    assert!(!v.is_opaque());
+    let tail = v["rest_collection"].as_opaque().expect("tail stays opaque");
+    assert_eq!(tail.reason, OpaqueReason::PayloadTail);
+    assert_eq!(tail.type_name.as_deref(), Some("GroomDataflowSettings"));
+    assert_eq!(tail.byte_range.size, 3);
+    assert_eq!(tail.byte_range.preview, "aabbcc");
 }
 
 #[test]
@@ -2555,7 +2574,7 @@ fn instanced_property_bag_empty_decodes() {
 
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].value["has_data"].as_bool(), Some(false));
-    assert!(entries[0].value.get("@unparsed").is_none());
+    assert!(!entries[0].value.is_opaque());
 }
 
 #[test]
@@ -2594,7 +2613,7 @@ fn cloth_tether_data_decodes_batches() {
 
     assert_eq!(entries.len(), 1);
     let v = &entries[0].value;
-    assert!(v.get("@unparsed").is_none());
+    assert!(!v.is_opaque());
     assert_eq!(v["batch_count"].as_i64(), Some(2));
     assert_eq!(v["tether_count"].as_i64(), Some(1));
     assert_eq!(
@@ -2896,7 +2915,7 @@ fn native_struct_property_bag_v0_reads_inline_version_before_has_data() {
         let entries = parse_properties(&mut r, &ctx, d.len() as u64);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].value["has_data"].as_bool(), Some(false));
-        assert!(entries[0].value.get("@unparsed").is_none());
+        assert!(!entries[0].value.is_opaque());
         assert_eq!(r.pos(), d.len() as u64);
     }
 }
@@ -2971,7 +2990,7 @@ fn a_struct_the_engine_does_not_define_is_not_decoded_natively() {
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
     assert_eq!(entries.len(), 1);
     assert!(entries[0].value.get("default").is_none());
-    assert!(entries[0].value["@unparsed"].is_string());
+    assert!(entries[0].value.is_opaque());
 }
 
 #[test]
@@ -3015,7 +3034,7 @@ fn native_struct_niagara_data_channel_variable_alias_decodes() {
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].value["name"].as_str(), Some("Color"));
-    assert!(entries[0].value.get("@unparsed").is_none());
+    assert!(!entries[0].value.is_opaque());
 }
 
 // FTransform is the one core math struct UE does not serialize in binary form:

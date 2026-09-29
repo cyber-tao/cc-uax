@@ -300,6 +300,7 @@ function Measure-Project {
         mounts                = Measure-JsonArray (Get-JsonSection -Json $json -Key 'mounts')
         export_bytes_total    = & $number $coverage 'export_bytes_total'
         opaque_bytes          = & $number $coverage 'opaque_bytes'
+        opaque_value_bytes    = & $number $coverage 'opaque_value_bytes'
         class_payload_bytes   = & $number $coverage 'class_payload_bytes'
         unattributed_tail_bytes = & $number $coverage 'unattributed_tail_bytes'
         known_opaque_regions  = & $number $coverage 'known_opaque_regions'
@@ -308,6 +309,7 @@ function Measure-Project {
         diagnostic_warnings   = & $number $coverage 'diagnostic_warnings'
         grouped_regions       = $analysis.grouped_opaque_regions
         grouped_bytes         = $analysis.grouped_opaque_bytes
+        grouped_value_bytes   = & $number $analysis 'grouped_opaque_value_bytes'
         unexplained_partials  = $analysis.partial_assets_without_explanation
         compiled_payload_only_partials = & $number $analysis 'partial_assets_compiled_payload_only'
         capabilities          = $capabilities
@@ -353,6 +355,12 @@ function Test-Invariants {
     }
     if ($Result.grouped_bytes -ne $Result.opaque_bytes) {
         $problems += "grouped opaque bytes $($Result.grouped_bytes) != coverage.opaque_bytes $($Result.opaque_bytes)"
+    }
+    # Value-level regions (an undecodable property value, a metadata payload) sit
+    # inside decoded spans, so they are accounted separately from the export-level
+    # regions that partition export bytes; each side must reconcile on its own.
+    if ($Result.grouped_value_bytes -ne $Result.opaque_value_bytes) {
+        $problems += "grouped opaque value bytes $($Result.grouped_value_bytes) != coverage.opaque_value_bytes $($Result.opaque_value_bytes)"
     }
     if ($Result.exit_code -ne 0 -and $Result.exit_code -ne 2) {
         $problems += "unexpected exit code $($Result.exit_code); a scan should exit 0 or 2"

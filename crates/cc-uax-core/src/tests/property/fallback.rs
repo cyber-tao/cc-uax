@@ -1,4 +1,5 @@
 use super::super::common::*;
+use crate::model::OpaqueReason;
 use crate::name::NameMap;
 use crate::pin::PinSerCtx;
 use crate::property::{ParseCtx, parse_properties, parse_properties_report};
@@ -40,10 +41,13 @@ fn excessive_array_count_falls_back_to_hex() {
     let entries = parse_properties(&mut r, &ctx, d.len() as u64);
 
     assert_eq!(entries.len(), 1);
-    assert_eq!(
-        entries[0].value.get("@unparsed").and_then(|v| v.as_str()),
-        Some("41420f00")
-    );
+    let opaque = entries[0]
+        .value
+        .as_opaque()
+        .expect("count out of range stays opaque");
+    assert_eq!(opaque.reason, OpaqueReason::UndecodedValue);
+    assert_eq!(opaque.byte_range.preview, "41420f00");
+    assert_eq!(opaque.byte_range.size, 4);
 }
 
 #[test]
@@ -83,7 +87,16 @@ fn property_value_fallback_reports_diagnostic_context() {
     let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/exports/0/properties");
 
     assert_eq!(report.entries.len(), 1);
-    assert_eq!(report.entries[0].value["@unparsed"], "41420f00");
+    let opaque = report.entries[0].value.as_opaque().unwrap();
+    assert_eq!(opaque.reason, OpaqueReason::UndecodedValue);
+    assert_eq!(
+        opaque.type_name.as_deref(),
+        Some("ArrayProperty(IntProperty)")
+    );
+    assert_eq!(opaque.byte_range.start, value_start);
+    assert_eq!(opaque.byte_range.end, value_start + 4);
+    assert_eq!(opaque.byte_range.size, 4);
+    assert_eq!(opaque.byte_range.preview, "41420f00");
     let diag = report
         .diagnostics
         .iter()
@@ -234,7 +247,7 @@ fn vm_external_function_binding_info_parses_as_tagged_fallback() {
         entries[0].value["@struct"].as_str(),
         Some("VMExternalFunctionBindingInfo")
     );
-    assert!(entries[0].value.get("@unparsed").is_none());
+    assert!(!entries[0].value.is_opaque());
     let props = entries[0].value["properties"].as_array().unwrap();
     assert_eq!(props[0]["name"].as_str(), Some("NumOutputs"));
     assert_eq!(props[0]["value"].as_i64(), Some(2));
@@ -288,7 +301,7 @@ fn value_crossing_its_window_falls_back_through_the_read_limit() {
     let report = parse_properties_report(&mut r, &ctx, d.len() as u64, "/properties");
 
     assert_eq!(report.entries.len(), 2);
-    assert!(report.entries[0].value.get("@unparsed").is_some());
+    assert!(report.entries[0].value.is_opaque());
     assert_eq!(report.entries[1].name, "Count");
     assert_eq!(report.entries[1].value.as_i64(), Some(42));
 
